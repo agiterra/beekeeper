@@ -10,6 +10,7 @@ import {
   markPendingCodingSessionTurnDegraded,
   markPendingCodingSessionTurnDeliveryUnknown,
   markPendingCodingSessionTurnInjected,
+  markPendingCodingSessionTurnInterrupted,
   markPendingCodingSessionTurnQueued,
   MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET,
   PENDING_CODING_SESSION_TURN_STALL_MS,
@@ -153,6 +154,35 @@ test("rows are scoped to their own execution", () => {
   assert.equal(resolved.visible.length, 1);
   assert.equal(resolved.visible[0].commandId, "csc-1");
   assert.deepEqual(resolved.consumedKeys, []);
+});
+
+test("an interrupted turn reads as interrupted over every other stage, and is held", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-int" }));
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-int");
+  markPendingCodingSessionTurnInjected(CHANNEL, "csc-int");
+  markPendingCodingSessionTurnInterrupted(CHANNEL, "csc-int");
+  // Idempotent: a replayed receipt is the same fact.
+  markPendingCodingSessionTurnInterrupted(CHANNEL, "csc-int");
+  const [row] = readPendingCodingSessionTurns();
+  assert.equal(row.interruptedByProvider, true);
+  assert.equal(row.published, true);
+  assert.equal(pendingCodingSessionTurnState(row, 1_000), "interrupted");
+  assert.equal(
+    pendingCodingSessionTurnState(
+      row,
+      1_000 + PENDING_CODING_SESSION_TURN_STALL_MS + 1,
+    ),
+    "interrupted",
+    "a signed interruption outranks the stall clock",
+  );
+  assert.equal(
+    heldPendingCodingSessionTurns(CHANNEL, TARGET).some(
+      (held) => held.commandId === "csc-int",
+    ),
+    true,
+    "held until the terminal receipt or the person's dismissal",
+  );
+  resetPendingCodingSessionTurns();
 });
 
 test("a published turn goes stalled rather than spinning forever", () => {

@@ -598,9 +598,13 @@ pub fn command_outcome(
         .iter()
         .filter(|item| item.command_id == command_id && &item.target == target)
         .filter_map(|item| match item.stage {
+            // An interrupted turn did start: the wake was delivered, and
+            // its terminal is a `failed` under the same command id, not a
+            // second delivery.
             Some(
                 status @ (ReceiptStatus::TurnQueued
                 | ReceiptStatus::TurnStarted
+                | ReceiptStatus::TurnInterrupted
                 | ReceiptStatus::TurnDropped
                 | ReceiptStatus::TurnRefused),
             ) => Some(status),
@@ -609,7 +613,8 @@ pub fn command_outcome(
         .max_by_key(|status| match status {
             ReceiptStatus::TurnQueued => 1,
             ReceiptStatus::TurnStarted => 2,
-            ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused => 3,
+            ReceiptStatus::TurnInterrupted => 3,
+            ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused => 4,
             _ => 0,
         })
 }

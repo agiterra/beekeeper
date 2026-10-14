@@ -15,6 +15,15 @@ import {
   readComposeRef,
   readPackRef,
 } from "./codingSessionPackRef";
+import {
+  type CodingSessionMetadataHandover,
+  readMetadataHandover,
+} from "./codingSessionMetadataHandover";
+import {
+  CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+  MAX_ERROR_MESSAGE_BYTES,
+  parseTurnReceipt,
+} from "./codingSessionTurnReceiptDecode";
 import { readSeatBeeStamp, type SeatBeeStamp } from "./codingSessionSeatBee";
 import {
   decodeWithSessionRewind,
@@ -36,8 +45,7 @@ import {
   parseBoundedJson,
 } from "./codingSessionWireDecode";
 
-export const CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA =
-  "buzz-coding-session-lifecycle-receipt/v1" as const;
+export { CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA } from "./codingSessionTurnReceiptDecode";
 export const CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION = "cslr1-1" as const;
 export const BEEKEEPER_CODING_SESSION_METADATA_SCHEMA =
   "buzz-coding-session-metadata/v1" as const;
@@ -46,31 +54,12 @@ export const CODING_SESSION_METADATA_TAG_VERSION = "csm1-1" as const;
 const MAX_RECEIPT_CONTENT_BYTES = 16 * 1024;
 const MAX_METADATA_CONTENT_BYTES = 32 * 1024;
 const MAX_RECEIPT_COMMAND_ID_BYTES = 256;
-/** A provider's own turn id, bounded exactly like the command id it answers. */
-const MAX_RECEIPT_TURN_ID_BYTES = 256;
 /**
  * A lifecycle receipt's error code, bounded as `validate_lifecycle_receipt`'s
  * generic check bounds it (`crates/beekeeper-core/src/coding_session_payload.rs:826`,
  * `MAX_IDENTIFIER_BYTES`).
  */
 const MAX_ERROR_CODE_BYTES = 256;
-/**
- * A **turn** failure code, bounded at `MAX_RECEIPT_ERROR_CODE_BYTES`
- * (`coding_session_payload.rs:278`) — 64, the narrower of the two. The
- * asymmetry is the writer's: `is_receipt_error_code` is applied only to
- * `turn_dropped`/`turn_refused`/`turn_degraded`/`turn_delivery_unknown`, whose
- * code vocabulary is deliberately open and therefore kept tight. This reader
- * used 256 for both until lane 216, so it accepted turn codes the writer's own
- * validator — and therefore the relay — call malformed.
- */
-const MAX_TURN_ERROR_CODE_BYTES = 64;
-/**
- * `1024 + '…'.len_utf8()` — `validate_lifecycle_receipt`
- * (`coding_session_payload.rs:829`) bounds a receipt error message at exactly
- * this, the width of a message a host truncated with an ellipsis. This reader
- * used the generic 2 KiB reference bound.
- */
-const MAX_ERROR_MESSAGE_BYTES = 1024 + 3;
 const MAX_REFERENCE_BYTES = 2 * 1024;
 const MAX_LABEL_BYTES = 2 * 1024;
 
@@ -173,6 +162,19 @@ type CodingSessionLifecycleReceiptEnvelope =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
+      status: "turn_interrupted";
+      session: CodingSessionCommandTarget;
+      error: null;
+      /**
+       * Always `"unconfirmed"`: the provider could not establish whether the
+       * turn's process is still working. The only value the key may hold —
+       * a confirmed quiescence is the terminal `failed`, not this receipt.
+       */
+      quiescence: "unconfirmed";
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
       status: "continuation_registered" | "model_applied";
       session: CodingSessionCommandTarget;
       error: null;
@@ -242,6 +244,11 @@ export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   // SV-35: a `thread.model.set` was accepted at the boundary. Terminal, no
   // turn; the model in effect is read from 44223, never from this receipt.
   "model_applied",
+  // The provider restarted while this turn's process was still present
+  // (NIP-CSL § turn_interrupted): neither finished nor proved ended. Carries
+  // `quiescence: "unconfirmed"`; one terminal `failed` under the same
+  // command id follows once the witness proves the process gone.
+  "turn_interrupted",
 ] as const;
 
 /** A per-stage turn status, as opposed to a generation lifecycle status. */
@@ -370,9 +377,19 @@ export type BeekeeperCodingSessionMetadataV1 = {
    * `composeRef` was readable by no desktop reader at all.
    */
   handover?: Readonly<CodingSessionMetadataHandover>;
+  /**
+   * The operator's label for the credentials this execution's runtime was
+   * given (`RuntimeDescriptor.credentialSource`, HEADLESS_PLUGGABLE_SLICE
+   * § Step 1): an opaque name such as `acme-vault`, never a secret or a
+   * path. Absent for an ambient login. Omit-when-absent like `routing`: an
+   * explicit `null` or a blank label is refused, matching the Rust decoder.
+   */
+  credentialSource?: string;
 };
 
 /** How much of one crew session's turn allowance has been spent (D9). */
+export type { CodingSessionMetadataHandover } from "./codingSessionMetadataHandover";
+
 export type CodingSessionTurnBudget = {
   /** Turns started under this umbrella, as the provider durably counted them. */
   used: number;
@@ -424,9 +441,10 @@ export function codingSessionMetadataSemanticKey(
 
 /**
  * The five keys every 44224 carries. `turn_started` and `turn_injected` are
- * the two exceptions: they carry these plus `turnId`, and nothing else.
- * Exact-key discipline is absolute in both directions — an unexpected key is
- * a rejection, never a partial accept.
+ * two exceptions: they carry these plus `turnId`, and nothing else;
+ * `turn_interrupted` is the third, carrying `quiescence` instead. Exact-key
+ * discipline is absolute in both directions — an unexpected key is a
+ * rejection, never a partial accept.
  */
 const RECEIPT_ENVELOPE_KEYS = [
   "schema",
@@ -454,7 +472,9 @@ function parseReceiptEnvelope(
   const expectedKeys =
     value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]
-      : RECEIPT_ENVELOPE_KEYS;
+      : value.status === "turn_interrupted"
+        ? [...RECEIPT_ENVELOPE_KEYS, "quiescence"]
+        : RECEIPT_ENVELOPE_KEYS;
   if (
     !hasExactKeys(value, expectedKeys) ||
     value.schema !== CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA ||
@@ -554,78 +574,6 @@ function parseReceiptEnvelope(
 }
 
 /**
- * The turn half of the receipt decoder.
- *
- * `session` is the 44220's own target for every turn status — a turn receipt
- * always names the execution it was addressed to, even when the answer is
- * "that generation is stale" — so an absent or malformed target is a
- * rejection rather than a nullable field.
- */
-function parseTurnReceipt(
-  value: Record<string, unknown>,
-  status: CodingSessionTurnReceiptStatus,
-): Readonly<CodingSessionLifecycleReceipt> | null {
-  const session = decodeTarget(value.session);
-  if (!session) return null;
-  const commandId = value.commandId as string;
-  if (
-    status === "turn_queued" ||
-    status === "interrupt_delivered" ||
-    // A registration carries no error for the same reason a queued turn does
-    // not: everything a CI continuation can be refused for happens later, as
-    // a turn stage of this same command.
-    status === "continuation_registered" ||
-    status === "model_applied"
-  ) {
-    if (value.error !== null) return null;
-    return Object.freeze({
-      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
-      commandId,
-      status,
-      session,
-      error: null,
-    });
-  }
-  // The two six-key statuses: the turn that began, or the running turn an
-  // input was injected into. Same bound, same rule — a blank or missing id
-  // names no turn.
-  if (status === "turn_started" || status === "turn_injected") {
-    if (
-      value.error !== null ||
-      !boundedNonempty(value.turnId, MAX_RECEIPT_TURN_ID_BYTES)
-    ) {
-      return null;
-    }
-    return Object.freeze({
-      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
-      commandId,
-      status,
-      session,
-      error: null,
-      turnId: value.turnId,
-    });
-  }
-  if (
-    !isPlainRecord(value.error) ||
-    !hasExactKeys(value.error, ["code", "message"]) ||
-    !boundedNonempty(value.error.code, MAX_TURN_ERROR_CODE_BYTES) ||
-    !boundedNonempty(value.error.message, MAX_ERROR_MESSAGE_BYTES)
-  ) {
-    return null;
-  }
-  return Object.freeze({
-    schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
-    commandId,
-    status,
-    session,
-    error: Object.freeze({
-      code: value.error.code,
-      message: value.error.message,
-    }),
-  });
-}
-
-/**
  * A seat actor as the wire defines it: lowercase 64-hex, or an explicit null.
  *
  * The same bound `validate_actor_pubkey` applies in
@@ -634,56 +582,6 @@ function parseTurnReceipt(
  * where the Rust half refuses one, so the desktop would resolve a seat no key
  * can hold while the pulse fold silently dropped the same signed event.
  */
-/** The fence disclosure a 44223 carries: `SessionMetadataHandover` exactly. */
-export type CodingSessionMetadataHandover = {
-  /** `active` while the claim stands; `voided` once the claimant lost it. */
-  state: "active" | "voided";
-  claimant: string;
-  bodyPubkey: string;
-  acceptedEventId: string;
-};
-
-const HEX64 = /^[0-9a-f]{64}$/;
-
-/**
- * Read a `handover`, or null for anything that is not exactly one.
- *
- * Four keys, all required, each a lowercase 64-hex id, and a two-token
- * `state` — `SessionMetadataHandover` in
- * `crates/beekeeper-core/src/coding_session_payload.rs` is `deny_unknown_fields`
- * and every field is required. There is no `none` token: absence of the whole
- * key is how a provider says no claim stands, so a partial object is refused
- * rather than read loosely.
- */
-function readMetadataHandover(
-  value: unknown,
-): Readonly<CodingSessionMetadataHandover> | null {
-  if (
-    !isPlainRecord(value) ||
-    !hasExactKeys(value, [
-      "state",
-      "claimant",
-      "bodyPubkey",
-      "acceptedEventId",
-    ]) ||
-    (value.state !== "active" && value.state !== "voided") ||
-    typeof value.claimant !== "string" ||
-    !HEX64.test(value.claimant) ||
-    typeof value.bodyPubkey !== "string" ||
-    !HEX64.test(value.bodyPubkey) ||
-    typeof value.acceptedEventId !== "string" ||
-    !HEX64.test(value.acceptedEventId)
-  ) {
-    return null;
-  }
-  return Object.freeze({
-    state: value.state,
-    claimant: value.claimant,
-    bodyPubkey: value.bodyPubkey,
-    acceptedEventId: value.acceptedEventId,
-  });
-}
-
 function isSeatActorPubkeyOrNull(value: unknown): value is string | null {
   return (
     value === null ||
@@ -731,6 +629,7 @@ export function parseBeekeeperCodingSessionMetadata(
     "packRef",
     "composeRef",
     "handover",
+    "credentialSource",
     ...factFields,
   ] as const;
   if (
@@ -822,6 +721,17 @@ export function parseBeekeeperCodingSessionMetadata(
   if (Object.hasOwn(value, "packRef") && readPackRef(value.packRef) === null) {
     return null;
   }
+  // The descriptor's credential label: a non-blank bounded string when
+  // present. Null or blank is a producer inventing a shape, not an ambient
+  // login — the Rust decoder refuses both by name.
+  if (
+    Object.hasOwn(value, "credentialSource") &&
+    (typeof value.credentialSource !== "string" ||
+      value.credentialSource.trim().length === 0 ||
+      !boundedNullable(value.credentialSource, MAX_LABEL_BYTES))
+  ) {
+    return null;
+  }
   // `composeRef` describes how the `packRef` pack was composed, so it is
   // refused alone, as null, or malformed — exactly the Rust decoder's rule.
   if (
@@ -895,6 +805,9 @@ export function parseBeekeeperCodingSessionMetadata(
             value.handover,
           ) as CodingSessionMetadataHandover,
         }
+      : {}),
+    ...(Object.hasOwn(value, "credentialSource")
+      ? { credentialSource: value.credentialSource as string }
       : {}),
     ...(hasFacts
       ? {

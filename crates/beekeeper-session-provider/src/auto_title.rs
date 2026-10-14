@@ -634,6 +634,10 @@ pub(crate) struct AcpTitleGenerator {
     pub agent_args: Vec<String>,
     /// The descriptor's `cli_env`.
     pub cli_env: Vec<(String, String)>,
+    /// The descriptor's `credentialEnv`: the variable names a plugged runtime
+    /// accepts from the credentials file. Empty for a known runtime word,
+    /// which resolves through its built-in list.
+    pub credential_env: Vec<String>,
     /// The title model (`RuntimeDescriptor::effective_title_model`).
     pub model: String,
     /// The test fixtures' runtime profile; `None` in production.
@@ -643,10 +647,11 @@ pub(crate) struct AcpTitleGenerator {
 impl TitleGenerator for AcpTitleGenerator {
     async fn generate(&self, message: &str) -> Result<Option<GeneratedTitle>, String> {
         let scratch = TitleScratch::create(&self.state_dir)?;
-        let cli_env = crate::runtime_credentials::environment_for(
+        let cli_env = crate::runtime_credentials::environment_with(
             &self.state_dir,
             &self.runtime_instance,
             &self.runtime,
+            &self.credential_env,
             self.cli_env.clone(),
         )
         .map_err(|failure| failure.message)?;
@@ -830,6 +835,7 @@ impl crate::Provider {
                 .iter()
                 .map(|env| (env.name.clone(), env.value.clone()))
                 .collect(),
+            credential_env: descriptor.credential_env.clone(),
             model,
             runtime_profile_override: self.config.runtime_profile_override,
         };

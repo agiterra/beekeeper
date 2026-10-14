@@ -37,6 +37,8 @@ pub mod project_action_grant;
 /// NIP-PW: ingest admission for project work records (kind 44249) —
 /// structure only, as for its 4424x siblings.
 pub mod project_work;
+/// Provider-signed ephemeral presence heartbeat admission (kind 24224).
+pub mod provider_presence;
 #[allow(dead_code, missing_docs)]
 pub mod push_lease;
 /// NIP-43 relay membership admin command handler (kinds 9030–9032).

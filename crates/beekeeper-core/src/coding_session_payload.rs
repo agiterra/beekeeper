@@ -286,7 +286,7 @@ pub const HANDOVER_FENCED: &str = "HANDOVER_FENCED";
 /// Answered by the **provider**, and only from an accepted deletion it
 /// verified: a relay-signed deletion receipt naming this genesis, or a kind 5
 /// signed by the record's own founder together with an authenticated read
-/// showing the relay applied it (`docs/HANDOVER_IMPL.md` §3.2). A missing or
+/// showing the relay applied it (`docs/nips/NIP-HO.md` § Retirement). A missing or
 /// failed read is never retirement authority — "I could not check" and "it was
 /// deleted" are different answers, and only one of them stops a session.
 ///
@@ -306,6 +306,30 @@ pub const MODEL_NOT_OFFERED: &str = "MODEL_NOT_OFFERED";
 /// (or a required mode could not be re-asserted after it). The execution keeps
 /// its previous model.
 pub const MODEL_SWITCH_FAILED: &str = "MODEL_SWITCH_FAILED";
+
+// ── Interrupted turns and credential custody (HEADLESS_PLUGGABLE_SLICE § Step 2,
+// NIP-CSL § turn_interrupted, NIP-CSE) ───────────────────────────────────────
+
+/// Turn-stage receipt status: the provider restarted and found the turn's
+/// recorded process group still present, so it can neither continue the turn
+/// nor prove it ended. Carries `quiescence: "unconfirmed"`; a terminal
+/// `failed` receipt under the same `commandId` follows once the group is
+/// proved absent. The wire string of [`ReceiptStatus::TurnInterrupted`].
+pub const TURN_INTERRUPTED_STATUS: &str = "turn_interrupted";
+/// The extra key a `turn_interrupted` receipt carries.
+pub const RECEIPT_QUIESCENCE_FIELD: &str = "quiescence";
+/// The only value `quiescence` takes today.
+pub const QUIESCENCE_UNCONFIRMED: &str = "unconfirmed";
+/// Error code on the terminal `failed` receipt that closes an interrupted
+/// turn, and on the synthesized `result` item.
+pub const TURN_INTERRUPTED_BY_RESTART: &str = "TURN_INTERRUPTED_BY_RESTART";
+/// Turn/lifecycle error code: the runtime's credentials no longer
+/// authenticate. The item or receipt carrying it also names
+/// `credentialSource` so the operator knows which custody to refresh.
+pub const MODEL_AUTH_FAILED: &str = "MODEL_AUTH_FAILED";
+/// `credentialSource` value when the runtime used the machine's own login
+/// rather than a credentials file the host was given.
+pub const CREDENTIAL_SOURCE_AMBIENT_LOGIN: &str = "ambient-login";
 /// Transcript status slug published after a successful `thread.model.set`.
 pub const MODEL_SWITCHED_STATUS: &str = "model_switched";
 
@@ -332,18 +356,24 @@ pub const MAX_RECEIPT_ERROR_CODE_BYTES: usize = 64;
 ///
 /// ## Accepted JSON shapes
 ///
-/// There are exactly two, and the strict decoder accepts nothing between or
+/// There are exactly four, and the strict decoder accepts nothing between or
 /// beyond them:
 ///
 /// 1. The five keys `{schema, commandId, status, session, error}` — every
 ///    lifecycle status, plus `turn_queued`, `turn_dropped`, `turn_refused`.
-/// 2. Those five plus `turnId` — `turn_started` and nothing else.
+/// 2. Those five plus `turnId` — `turn_started` and `turn_injected`.
+/// 3. Those five plus `rewind` — the receipt answering a `session.rewind`.
+/// 4. Those five plus `quiescence` — `turn_interrupted` and nothing else.
 ///
-/// `turnId` is present *exactly* when the status is `turn_started`: a started
-/// receipt without one names no turn, and any other status carrying one claims
-/// a turn that has not begun. The key is additive and omitted rather than
-/// serialized as `null`, so shape 1 is byte-identical to the shape shipped
-/// before the turn vocabulary existed.
+/// `turnId` is present *exactly* when the status is `turn_started` or
+/// `turn_injected`: a started receipt without one names no turn, and any
+/// other status carrying one claims a turn that has not begun. `quiescence`
+/// is present *exactly* when the status is `turn_interrupted`, and its only
+/// value is [`QUIESCENCE_UNCONFIRMED`]: the provider found the turn's process
+/// group still present after its own restart and will not call the turn
+/// ended until the witness proves the group gone. Every additive key is
+/// omitted rather than serialized as `null`, so shape 1 is byte-identical to
+/// the shape shipped before the turn vocabulary existed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifecycleReceipt {
@@ -368,6 +398,12 @@ pub struct LifecycleReceipt {
     /// or `failed` with [`REWIND_NOT_RESTARTED`]. Omitted otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewind: Option<crate::coding_session_rewind::ReceiptRewind>,
+    /// Whether the interrupted turn's process group is proved gone, present
+    /// exactly when `status` is `turn_interrupted`. Always
+    /// [`QUIESCENCE_UNCONFIRMED`] today: a confirmed quiescence is reported
+    /// as the terminal `failed` receipt instead, not as a second value here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiescence: Option<String>,
 }
 
 /// Receipt outcomes recognized by current consumers.
@@ -450,6 +486,15 @@ pub enum ReceiptStatus {
     /// disagree.
     #[serde(rename = "model_applied")]
     ModelApplied,
+    /// The provider restarted and found this turn's recorded process group
+    /// still present: it can neither continue the turn nor prove it ended.
+    /// Carries `quiescence: "unconfirmed"`. Not terminal — one `failed`
+    /// receipt with [`TURN_INTERRUPTED_BY_RESTART`] follows under the same
+    /// `commandId` once the group is proved absent (NIP-CSL
+    /// § turn_interrupted). A reader that treated this as `failed` would be
+    /// calling a worktree idle while an adapter may still be writing to it.
+    #[serde(rename = "turn_interrupted")]
+    TurnInterrupted,
 }
 
 impl ReceiptStatus {
@@ -472,7 +517,14 @@ impl ReceiptStatus {
             Self::InterruptDelivered => "interrupt_delivered",
             Self::ContinuationRegistered => "continuation_registered",
             Self::ModelApplied => "model_applied",
+            Self::TurnInterrupted => TURN_INTERRUPTED_STATUS,
         }
+    }
+
+    /// Whether this status carries the sixth `quiescence` key: only
+    /// `turn_interrupted` does.
+    pub const fn carries_quiescence(self) -> bool {
+        matches!(self, Self::TurnInterrupted)
     }
 
     /// Whether this status carries the sixth `turnId` key: `turn_started`
@@ -500,6 +552,7 @@ impl ReceiptStatus {
                 | Self::InterruptDelivered
                 | Self::ContinuationRegistered
                 | Self::ModelApplied
+                | Self::TurnInterrupted
         )
     }
 }
@@ -515,6 +568,23 @@ pub struct ReceiptError {
 }
 
 impl LifecycleReceipt {
+    /// The provider restarted and found this turn's process group still
+    /// present: `turn_interrupted` with `quiescence: "unconfirmed"`. A
+    /// terminal `failed` receipt under the same `command_id` follows once the
+    /// witness proves the group absent.
+    pub fn turn_interrupted(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnInterrupted,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: None,
+            rewind: None,
+            quiescence: Some(QUIESCENCE_UNCONFIRMED.to_owned()),
+        }
+    }
+
     /// A session was created and any requested first turn was delivered.
     pub fn created(command_id: &str, target: &CodingSessionTarget) -> Self {
         Self {
@@ -525,6 +595,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -545,6 +616,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -561,6 +633,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -574,6 +647,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -594,6 +668,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -607,6 +682,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -624,6 +700,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -641,6 +718,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: Some(turn_id.to_owned()),
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -659,6 +737,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: Some(turn_id.to_owned()),
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -687,6 +766,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -715,6 +795,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -746,6 +827,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -764,6 +846,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -782,6 +865,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -795,6 +879,7 @@ impl LifecycleReceipt {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 
@@ -823,6 +908,7 @@ impl LifecycleReceipt {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         }
     }
 }
@@ -850,11 +936,18 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
     const REWIND_FIELD: &str = "rewind";
     let carries_turn_id = object.contains_key(TURN_ID_FIELD);
     let carries_rewind = object.contains_key(REWIND_FIELD);
-    let expected_len = FIELDS.len() + usize::from(carries_turn_id) + usize::from(carries_rewind);
+    let carries_quiescence = object.contains_key(RECEIPT_QUIESCENCE_FIELD);
+    let expected_len = FIELDS.len()
+        + usize::from(carries_turn_id)
+        + usize::from(carries_rewind)
+        + usize::from(carries_quiescence);
     if object.len() != expected_len
         || FIELDS.iter().any(|field| !object.contains_key(*field))
         || object.keys().any(|field| {
-            !FIELDS.contains(&field.as_str()) && field != TURN_ID_FIELD && field != REWIND_FIELD
+            !FIELDS.contains(&field.as_str())
+                && field != TURN_ID_FIELD
+                && field != REWIND_FIELD
+                && field != RECEIPT_QUIESCENCE_FIELD
         })
     {
         return Err("coding-session lifecycle receipt has missing or unsupported fields".into());
@@ -874,6 +967,13 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
         return Err(
             "receipt turnId key is present exactly when status is turn_started or turn_injected"
                 .into(),
+        );
+    }
+    // Same key-presence rule for the sixth key: an explicit `"quiescence":
+    // null` is a producer inventing a shape, not an interrupted turn.
+    if carries_quiescence != receipt.status.carries_quiescence() {
+        return Err(
+            "receipt quiescence key is present exactly when status is turn_interrupted".into(),
         );
     }
     validate_lifecycle_receipt(&receipt)?;
@@ -941,6 +1041,25 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
             );
         }
     }
+    // `quiescence` is a closed one-value vocabulary carried by exactly one
+    // status: the interrupted turn says it cannot confirm the group is gone.
+    match (
+        receipt.quiescence.as_deref(),
+        receipt.status.carries_quiescence(),
+    ) {
+        (Some(QUIESCENCE_UNCONFIRMED), true) => {}
+        (Some(other), true) => {
+            return Err(format!(
+                "receipt quiescence must be {QUIESCENCE_UNCONFIRMED:?}, not {other:?}"
+            ));
+        }
+        (None, false) => {}
+        _ => {
+            return Err(
+                "receipt quiescence is present exactly when status is turn_interrupted".into(),
+            );
+        }
+    }
     let valid_shape = match receipt.status {
         ReceiptStatus::Created | ReceiptStatus::Resumed | ReceiptStatus::Stopped => {
             receipt.session.is_some() && receipt.error.is_none()
@@ -995,6 +1114,9 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
         ReceiptStatus::ContinuationRegistered | ReceiptStatus::ModelApplied => {
             receipt.session.is_some() && receipt.error.is_none()
         }
+        // Names the execution and carries no error: the failure, if it turns
+        // out to be one, is the later terminal receipt's to report.
+        ReceiptStatus::TurnInterrupted => receipt.session.is_some() && receipt.error.is_none(),
     };
     if !valid_shape {
         return Err("lifecycle receipt status/session/error shape is inconsistent".into());
@@ -1378,6 +1500,15 @@ pub struct SessionMetadata {
     /// staged before this key existed. Never present without `packRef`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose_ref: Option<ComposeRef>,
+    /// The operator's label for the credentials this execution's runtime was
+    /// given (`RuntimeDescriptor::credential_source`, HEADLESS_PLUGGABLE_SLICE
+    /// § Step 1): an opaque name such as `acme-vault`, never a secret and
+    /// never a path. Absent when the descriptor set none, which is the
+    /// ambient-login case the `MODEL_AUTH_FAILED` remedy reads as "log in on
+    /// this computer". Like `routing`, an explicit null is refused **naming
+    /// the key**: a host with no label omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_source: Option<String>,
 }
 
 /// Whether the claim this metadata discloses still stands.
@@ -1828,6 +1959,14 @@ const METADATA_HANDOVER_FIELD: &str = "handover";
 /// composition of nothing is not a fact. An explicit null is refused
 /// **naming the key**, like every other amendment.
 const METADATA_COMPOSE_REF_FIELD: &str = "composeRef";
+/// The pluggable-runtime amendment's one additive key: the descriptor's
+/// `credentialSource` label. Independent of the other nine, so it doubles the
+/// accepted shape count again. An explicit null is refused **naming the
+/// key**: a descriptor with no label omits it.
+const METADATA_CREDENTIAL_SOURCE_FIELD: &str = "credentialSource";
+/// Upper bound on a `credentialSource` label: it is an operator name, not a
+/// document.
+const MAX_CREDENTIAL_SOURCE_BYTES: usize = 128;
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
@@ -1892,6 +2031,14 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     {
         return Err("coding-session metadata composeRef must not be null".to_string());
     }
+    let has_credential_source = object.contains_key(METADATA_CREDENTIAL_SOURCE_FIELD);
+    if has_credential_source
+        && object
+            .get(METADATA_CREDENTIAL_SOURCE_FIELD)
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err("coding-session metadata credentialSource must not be null".to_string());
+    }
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -1929,6 +2076,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_compose_ref {
         expected.push(METADATA_COMPOSE_REF_FIELD);
+    }
+    if has_credential_source {
+        expected.push(METADATA_CREDENTIAL_SOURCE_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -2034,6 +2184,14 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
     }
     if let Some(handover) = &metadata.handover {
         handover.validate()?;
+    }
+    if let Some(source) = metadata.credential_source.as_deref() {
+        if source.trim().is_empty() || source.len() > MAX_CREDENTIAL_SOURCE_BYTES {
+            return Err(format!(
+                "metadata credentialSource must be a non-blank label of at most \
+                 {MAX_CREDENTIAL_SOURCE_BYTES} bytes"
+            ));
+        }
     }
     if let Some(compose_ref) = &metadata.compose_ref {
         if metadata.pack_ref.is_none() {
@@ -3094,6 +3252,7 @@ mod tests {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -3169,6 +3328,7 @@ mod tests {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -3476,6 +3636,45 @@ mod tests {
         let mut extra = with.clone();
         extra["composeRef"]["command"] = serde_json::Value::String("rm".into());
         assert!(decode_coding_session_metadata(&extra.to_string()).is_err());
+    }
+
+    /// The pluggable-runtime amendment (HEADLESS_PLUGGABLE_SLICE § Step 1):
+    /// `credentialSource` is absent on every pre-amendment 44223 and on every
+    /// ambient-login execution, round-trips exactly when present, refuses an
+    /// explicit null by name, and refuses a blank label.
+    #[test]
+    fn decode_metadata_accepts_the_credential_source_shape_and_refuses_a_null() {
+        let without = pack_ref_base();
+        let decoded_without =
+            decode_coding_session_metadata(&without.to_string()).expect("pre-amendment form");
+        assert!(decoded_without.credential_source.is_none());
+        let encoded_without = serde_json::to_value(&decoded_without).expect("re-encode");
+        assert!(!encoded_without
+            .as_object()
+            .expect("an object")
+            .contains_key("credentialSource"));
+
+        let mut with = without.clone();
+        with["credentialSource"] = serde_json::Value::String("acme-vault".into());
+        let decoded = decode_coding_session_metadata(&with.to_string()).expect("labelled form");
+        assert_eq!(decoded.credential_source.as_deref(), Some("acme-vault"));
+        let encoded = serde_json::to_value(&decoded).expect("re-encode");
+        assert_eq!(
+            encoded.get("credentialSource"),
+            Some(&serde_json::Value::String("acme-vault".into()))
+        );
+
+        let mut null_source = without.clone();
+        null_source["credentialSource"] = serde_json::Value::Null;
+        let error = decode_coding_session_metadata(&null_source.to_string())
+            .expect_err("an explicit null is refused");
+        assert!(error.contains("credentialSource"), "{error}");
+
+        let mut blank = without.clone();
+        blank["credentialSource"] = serde_json::Value::String("   ".into());
+        let error = decode_coding_session_metadata(&blank.to_string())
+            .expect_err("a blank label is refused");
+        assert!(error.contains("credentialSource"), "{error}");
     }
 
     /// The handover amendment: the key is absent on every unclaimed session,
@@ -4066,6 +4265,7 @@ mod tests {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(
@@ -4428,6 +4628,7 @@ mod tests {
             ReceiptStatus::TurnInjected,
             ReceiptStatus::TurnDeliveryUnknown,
             ReceiptStatus::InterruptDelivered,
+            ReceiptStatus::TurnInterrupted,
         ] {
             assert!(status.is_turn_stage(), "{status:?}");
             assert_eq!(
@@ -4873,6 +5074,79 @@ mod tests {
             decode_coding_session_lifecycle_receipt(&wire)
                 .unwrap_or_else(|error| panic!("{code} rejected: {error}"));
         }
+    }
+
+    /// HEADLESS_PLUGGABLE_SLICE § Step 2: `turn_interrupted` is a six-key
+    /// turn stage whose sixth key is `quiescence: "unconfirmed"` — present
+    /// exactly on that status, refused as a null, refused with any other
+    /// value, and never terminal.
+    #[test]
+    fn turn_interrupted_is_a_six_key_receipt_with_an_unconfirmed_quiescence() {
+        let receipt = LifecycleReceipt::turn_interrupted("turn-1", &target());
+        let encoded = serde_json::to_value(&receipt).expect("encode");
+        assert_eq!(encoded["status"], TURN_INTERRUPTED_STATUS);
+        assert_eq!(encoded[RECEIPT_QUIESCENCE_FIELD], QUIESCENCE_UNCONFIRMED);
+        assert!(encoded["error"].is_null());
+        assert_eq!(
+            encoded.as_object().map(|object| object.len()),
+            Some(6),
+            "{encoded}"
+        );
+        let wire = serde_json::to_string(&receipt).expect("encode");
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&wire).expect("decodes"),
+            receipt
+        );
+        assert!(ReceiptStatus::TurnInterrupted.is_turn_stage());
+        assert!(ReceiptStatus::TurnInterrupted.carries_quiescence());
+        assert!(!ReceiptStatus::TurnInterrupted.carries_turn_id());
+        assert_eq!(ReceiptStatus::TurnInterrupted.as_str(), "turn_interrupted");
+
+        // Without the sixth key the status has nothing to say about quiescence.
+        let mut five = encoded.clone();
+        five.as_object_mut()
+            .expect("object")
+            .remove(RECEIPT_QUIESCENCE_FIELD);
+        assert!(decode_coding_session_lifecycle_receipt(&five.to_string())
+            .expect_err("a turn_interrupted without quiescence is refused")
+            .contains("quiescence"));
+        // An explicit null is a producer inventing a shape.
+        let mut null = encoded.clone();
+        null[RECEIPT_QUIESCENCE_FIELD] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&null.to_string()).is_err());
+        // The vocabulary is closed: "confirmed" is reported as the terminal
+        // `failed` receipt, never as a second quiescence value.
+        let mut confirmed = encoded.clone();
+        confirmed[RECEIPT_QUIESCENCE_FIELD] = serde_json::Value::String("confirmed".into());
+        assert!(
+            decode_coding_session_lifecycle_receipt(&confirmed.to_string())
+                .expect_err("an unknown quiescence value is refused")
+                .contains("quiescence")
+        );
+        // No other status may carry the key.
+        let mut queued = serde_json::to_value(LifecycleReceipt::turn_queued("turn-1", &target()))
+            .expect("encode");
+        queued[RECEIPT_QUIESCENCE_FIELD] = serde_json::Value::String(QUIESCENCE_UNCONFIRMED.into());
+        assert!(decode_coding_session_lifecycle_receipt(&queued.to_string()).is_err());
+        // An interrupted turn carries no error: the failure is the terminal
+        // receipt's to report, under TURN_INTERRUPTED_BY_RESTART.
+        let mut errored = receipt.clone();
+        errored.error = Some(ReceiptError {
+            code: TURN_INTERRUPTED_BY_RESTART.into(),
+            message: "x".into(),
+        });
+        assert!(decode_coding_session_lifecycle_receipt(
+            &serde_json::to_string(&errored).expect("e")
+        )
+        .is_err());
+        let terminal = LifecycleReceipt::turn_refused(
+            "turn-1",
+            &target(),
+            TURN_INTERRUPTED_BY_RESTART,
+            "the adapter's process group is gone",
+        );
+        decode_coding_session_lifecycle_receipt(&serde_json::to_string(&terminal).expect("e"))
+            .expect("the terminal receipt decodes");
     }
 
     /// SV-35: the `model_switched` row carries exactly its five keys.

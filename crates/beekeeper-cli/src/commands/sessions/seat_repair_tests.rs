@@ -356,6 +356,7 @@ fn wire(options: WireOptions) -> Wire {
         }),
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let receipt_keys = options.receipt_signer.clone().unwrap_or(provider.clone());
     let receipt = build_coding_session_lifecycle_receipt(
@@ -398,6 +399,7 @@ fn wire(options: WireOptions) -> Wire {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let metadata = build_coding_session_metadata(
             channel,
@@ -920,6 +922,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
             }),
             turn_id: None,
             rewind: None,
+            quiescence: None,
         };
         let keys = extra
             .receipt_signer
@@ -962,6 +965,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let metadata = build_coding_session_metadata(
             channel,
@@ -1050,6 +1054,7 @@ async fn a_forged_later_receipt_cannot_deny_the_repair() {
         error: None,
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let forged = build_coding_session_lifecycle_receipt(
         channel,

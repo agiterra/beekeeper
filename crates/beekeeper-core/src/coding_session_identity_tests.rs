@@ -291,6 +291,7 @@ fn the_accessors_type_the_reads_on_every_carrier() {
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     let alias = metadata
         .provider_alias()

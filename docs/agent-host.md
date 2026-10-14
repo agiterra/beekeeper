@@ -63,6 +63,7 @@ inherits the host's environment, so the switch is set where the host runs
 | variable | default | effect |
 | --- | --- | --- |
 | `BEEKEEPER_CSP_AUTO_TITLE` | on | `off` stops this host generating titles; a runtime opts out alone with `"titleModel": null` in `BEEKEEPER_CSP_RUNTIMES` |
+| `BEEKEEPER_CSP_CHECKPOINT_ON_STOP` | off | `1`/`true`/`on`/`yes`: before a `session.stop` reaches quiescence, publish one kind-44231 checkpoint of the execution's worktree if it changed since the last one (see "Checkpoint before stop") |
 
 The person's own choice (SV-56) is a file in the provider's state directory,
 `session-title-mode.json` — `{"version":1,"mode":"agent"|"my-model"|"off"}` —
@@ -84,6 +85,30 @@ The provider reads the file live — before a titling job starts and again just
 before it signs — so a change takes effect without a restart, and switching to
 Off while a title is being generated drops that title. The startup log line
 says which mode the file holds.
+
+**Checkpoint before stop (`checkpointOnStop`).** Off by default. With
+`BEEKEEPER_CSP_CHECKPOINT_ON_STOP` on, a `session.stop` first measures the
+execution's worktree; when its tree differs from the one the last kind-44231
+checkpoint recorded, the provider runs the existing end-of-turn checkpoint
+once for the turn the edits belong to (the open turn, or the turn whose
+coverage is still open), waits for it to publish, and only then begins the
+stop's quiescence. An unchanged worktree takes no checkpoint; a worktree
+that changed with no turn to attribute it to takes none and says so in the
+provider log (`csp::checkpoint`), because a `turn` checkpoint must name a
+turn. A capture that fails never blocks the stop. In `host.json` the switch
+is spelled `checkpointOnStop: true`; the host exports it as the environment
+variable above beside the other `BEEKEEPER_CSP_*` settings.
+
+**Presence.** While it runs — idle included — the provider signs a kind-24224
+presence heartbeat into every channel it serves every 30 seconds (a 90-second
+TTL). This is how `bee` and the desktop tell an idle provider from a dead one
+when no execution holds a lease: `status` reports `providerPresence` and an
+`execution` word that says `idle` when presence is live *and* the heartbeat's
+`liveTargets` names the execution, `absent` when presence is live but does not
+name it (the provider is up; this execution is not among what it runs), and
+`disconnected` only when the last heartbeat has expired or none is visible
+(NIP-CSL § Provider presence). An `absent` execution is never shown as idle
+or offered a Stop.
 
 ## On a Mac
 

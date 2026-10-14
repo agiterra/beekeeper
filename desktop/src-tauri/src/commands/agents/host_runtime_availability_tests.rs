@@ -109,6 +109,7 @@ fn fixture() -> (Relay, Keys, Keys, Uuid, CodingSessionTarget) {
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     let membership = EventBuilder::new(Kind::Custom(39002), "")
         .tags([
@@ -155,6 +156,73 @@ fn lease(provider: &Keys, channel: Uuid, target: &CodingSessionTarget, age: u64)
         .sign_with_keys(provider)
         .expect("signed lease")
 }
+/// The presence fold the desktop status text reads: live wins over expired,
+/// expired over none, `providerState` rides only with a live row, and rows
+/// that never carried the field leave presence absent rather than "none".
+#[test]
+fn presence_fold_prefers_live_then_expired_and_discloses_absence() {
+    use serde_json::json;
+    let folded = fold_runtime_rows(&[
+        json!({"runtime_available": false, "providerPresence": "expired"}),
+        json!({"runtime_available": false, "providerPresence": "live", "providerState": "idle"}),
+    ]);
+    assert_eq!(
+        folded,
+        HostRuntimeObservation {
+            runtime_available: false,
+            provider_presence: Some("live".into()),
+            provider_state: Some("idle".into()),
+            execution: None,
+        }
+    );
+    let expired = fold_runtime_rows(&[
+        json!({"runtime_available": false, "providerPresence": "none"}),
+        json!({"runtime_available": false, "providerPresence": "expired", "providerState": "busy"}),
+    ]);
+    assert_eq!(expired.provider_presence.as_deref(), Some("expired"));
+    assert_eq!(
+        expired.provider_state, None,
+        "state rides only with live presence"
+    );
+    let none = fold_runtime_rows(&[json!({"runtime_available": true, "providerPresence": "none"})]);
+    assert_eq!(none.provider_presence.as_deref(), Some("none"));
+    assert!(none.runtime_available);
+    let unreported = fold_runtime_rows(&[json!({"runtime_available": false})]);
+    assert_eq!(unreported.provider_presence, None);
+    assert_eq!(fold_runtime_rows(&[]).provider_presence, None);
+}
+
+/// A live provider that names none of the pair's executions is `absent`,
+/// never `idle`; one idle row outranks any number of absent ones, and a
+/// live lease outranks both.
+#[test]
+fn execution_fold_says_absent_over_a_live_provider_that_does_not_claim_the_execution() {
+    use serde_json::json;
+    let absent = fold_runtime_rows(&[
+        json!({"runtime_available": false, "providerPresence": "live", "providerState": "idle", "execution": "absent"}),
+    ]);
+    assert_eq!(absent.provider_presence.as_deref(), Some("live"));
+    assert_eq!(absent.execution.as_deref(), Some("absent"));
+    let mixed = fold_runtime_rows(&[
+        json!({"runtime_available": false, "providerPresence": "live", "execution": "absent"}),
+        json!({"runtime_available": false, "providerPresence": "live", "execution": "idle"}),
+    ]);
+    assert_eq!(mixed.execution.as_deref(), Some("idle"));
+    let live = fold_runtime_rows(&[
+        json!({"runtime_available": true, "providerPresence": "live", "execution": "live"}),
+        json!({"runtime_available": false, "providerPresence": "live", "execution": "absent"}),
+    ]);
+    assert_eq!(live.execution.as_deref(), Some("live"));
+    let disconnected = fold_runtime_rows(&[
+        json!({"runtime_available": false, "providerPresence": "expired", "execution": "disconnected"}),
+    ]);
+    assert_eq!(disconnected.execution.as_deref(), Some("disconnected"));
+    assert_eq!(
+        fold_runtime_rows(&[json!({"runtime_available": false})]).execution,
+        None
+    );
+}
+
 #[tokio::test]
 async fn signed_lease_projection_distinguishes_live_expired_missing_wrong_scope_and_unreadable() {
     let (mut client, actor, provider, channel, target) = fixture();

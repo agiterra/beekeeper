@@ -605,8 +605,22 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test: test-genesis test-git-push-gate test-ci-completion
+test: test-genesis test-git-push-gate test-ci-completion foreign-client-check
     ./scripts/run-tests.sh all
+
+# The relay as a foreign Nostr client sees it: composes the real
+# beekeeper-relay binary (its own scratch database, dropped on exit; Redis
+# logical DB 14, never DB 0 or the dev database) and the built `bee` (used
+# once, to create a channel), then drives the relay with only Node and
+# `nostr-tools` — `conformance/foreign-client/` — asserting NIP-11
+# `supported_kinds`, NIP-98 auth, membership-scoped reads, a member's admitted
+# intent, an outsider's refusal by name, an honest host-step claim refusal,
+# and the offline host-step verifier. See scripts/foreign-client-check.sh for
+# what each step proves and what it does not (no provider, no model, no
+# relay-signed 46013).
+foreign-client-check: _ensure-services
+    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin beekeeper-relay
+    ./scripts/foreign-client-check.sh
 
 # The push gate's Postgres-backed acceptance cases: the binding gate, the
 # project/channel roster grants, the seat inheritance cap, and the
@@ -748,7 +762,7 @@ test-ci-continuation: _ensure-services
     cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin beekeeper-relay -p beekeeper-session-provider --bin beekeeper-session-provider
     cargo test -p beekeeper-session-provider --test ci_continuation_composition -- --ignored --test-threads=1
 
-# Absent-participant handover (docs/HANDOVER_IMPL.md §6): composes the real
+# Absent-participant handover (docs/nips/NIP-HO.md): composes the real
 # beekeeper-relay binary (its own scratch database, dropped on exit; Redis logical
 # DB 14, never DB 0 or the dev database), the built `bee` CLI, and **two**
 # real beekeeper-session-provider processes with distinct keys, state dirs and

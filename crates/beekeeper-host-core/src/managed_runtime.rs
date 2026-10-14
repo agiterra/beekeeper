@@ -23,6 +23,8 @@ pub fn descriptor() -> RuntimeDescriptor {
         allowed_models: vec!["default".into()],
         discover_models: false,
         capabilities: Some(Capabilities::v1_baseline()),
+        credential_env: Vec::new(),
+        credential_source: None,
         steer_idle_guard: None,
         title_model: Some(None),
     }

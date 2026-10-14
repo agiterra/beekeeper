@@ -108,7 +108,7 @@ pub async fn handle_req(
     if session_lease_filter_missing_explicit_channel(&filters) {
         conn.send(RelayMessage::closed(
             &sub_id,
-            "restricted: coding-session lease queries require explicit #h",
+            "restricted: coding-session lease and provider-presence queries require explicit #h",
         ));
         return;
     }
@@ -197,7 +197,7 @@ pub async fn handle_req(
     if session_lease_filter_has_inaccessible_channel(&filters, &accessible_channels) {
         conn.send(RelayMessage::closed(
             &sub_id,
-            "restricted: coding-session lease channel is not accessible",
+            "restricted: coding-session lease or provider-presence channel is not accessible",
         ));
         return;
     }
@@ -567,6 +567,23 @@ fn filter_requests_session_lease(filter: &Filter) -> bool {
     })
 }
 
+/// Whether a filter asks for provider presence heartbeats (kind 24224), which
+/// are answered from the Redis register under the same explicit-channel rules
+/// as leases.
+pub(crate) fn filter_requests_provider_presence(filter: &Filter) -> bool {
+    filter.kinds.as_ref().is_some_and(|kinds| {
+        kinds.iter().any(|kind| {
+            kind.as_u16() as u32 == beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_PRESENCE
+        })
+    })
+}
+
+/// Lease or presence: the two register-backed ephemeral kinds a cold `REQ`
+/// serves from Redis rather than Postgres.
+fn filter_requests_ephemeral_register(filter: &Filter) -> bool {
+    filter_requests_session_lease(filter) || filter_requests_provider_presence(filter)
+}
+
 fn session_lease_snapshot_failure_frame(sub_id: &str) -> String {
     RelayMessage::closed(sub_id, "error: coding-session lease snapshot unavailable")
 }
@@ -574,7 +591,7 @@ fn session_lease_snapshot_failure_frame(sub_id: &str) -> String {
 pub(crate) fn session_lease_filter_missing_explicit_channel(filters: &[Filter]) -> bool {
     let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
     filters.iter().any(|filter| {
-        if !filter_requests_session_lease(filter) {
+        if !filter_requests_ephemeral_register(filter) {
             return false;
         }
         filter.generic_tags.get(&h).is_none_or(|values| {
@@ -594,7 +611,7 @@ pub(crate) fn session_lease_filter_has_inaccessible_channel(
 ) -> bool {
     let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
     filters.iter().any(|filter| {
-        filter_requests_session_lease(filter)
+        filter_requests_ephemeral_register(filter)
             && filter.generic_tags.get(&h).is_none_or(|values| {
                 values.iter().any(|value| {
                     value.parse::<uuid::Uuid>().map_or(true, |channel_id| {
@@ -619,7 +636,7 @@ async fn send_session_lease_snapshots(
     for (index, filter) in filters
         .iter()
         .enumerate()
-        .filter(|(_, filter)| filter_requests_session_lease(filter))
+        .filter(|(_, filter)| filter_requests_ephemeral_register(filter))
     {
         let Some(channel_values) = filter.generic_tags.get(&h) else {
             continue;
@@ -631,16 +648,35 @@ async fn send_session_lease_snapshots(
             .filter_map(|value| value.parse::<uuid::Uuid>().ok())
             .filter(|channel_id| accessible_channels.contains(channel_id))
         {
-            for record in state
-                .pubsub
-                .session_lease_snapshot(&conn.tenant, channel_id)
-                .await
-                .map_err(|error| error.to_string())?
-            {
+            // Both registers are revalidated before anything is sent: Redis is
+            // a retention mechanism, never a signature or authority oracle.
+            let mut events = Vec::new();
+            if filter_requests_session_lease(filter) {
+                for record in state
+                    .pubsub
+                    .session_lease_snapshot(&conn.tenant, channel_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    events.push(validate_session_lease_snapshot_record(&record, channel_id)?);
+                }
+            }
+            if filter_requests_provider_presence(filter) {
+                for record in state
+                    .pubsub
+                    .provider_presence_snapshot(&conn.tenant, channel_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
+                    events.push(validate_provider_presence_snapshot_record(
+                        &record, channel_id,
+                    )?);
+                }
+            }
+            for event in events {
                 if filter_sent >= limit {
                     break;
                 }
-                let event = validate_session_lease_snapshot_record(&record, channel_id)?;
                 let stored =
                     beekeeper_core::event::StoredEvent::new(event.clone(), Some(channel_id));
                 if !filters_match(std::slice::from_ref(filter), &stored)
@@ -658,6 +694,51 @@ async fn send_session_lease_snapshots(
         }
     }
     Ok(counts)
+}
+
+/// Revalidate one Redis-backed presence record before returning its
+/// provider event: intact signature, matching ids, a valid envelope, and the
+/// relay facts (channel, provider key, instance, seq, capped expiry) agreeing
+/// with what the signed event says. A mismatch is a source failure, never
+/// skipped into an empty snapshot.
+pub(crate) fn validate_provider_presence_snapshot_record(
+    record: &beekeeper_pubsub::provider_presence::ProviderPresenceRecord,
+    expected_channel_id: uuid::Uuid,
+) -> Result<nostr::Event, String> {
+    use beekeeper_pubsub::provider_presence::retained_ttl_secs;
+    if record.channel_id != expected_channel_id {
+        return Err("provider presence record channel does not match snapshot scope".into());
+    }
+    let expected_expiry = record
+        .accepted_at
+        .checked_add(retained_ttl_secs(record.ttl_secs).max(1))
+        .ok_or_else(|| "provider presence record expiry overflows".to_owned())?;
+    if record.expires_at != expected_expiry {
+        return Err("provider presence record expiry does not match the capped TTL".into());
+    }
+    let event: nostr::Event = serde_json::from_str(&record.event_json)
+        .map_err(|error| format!("invalid provider presence event in Redis: {error}"))?;
+    beekeeper_core::verification::verify_event(&event)
+        .map_err(|error| format!("provider presence event signature is invalid: {error}"))?;
+    if event.id.to_hex() != record.event_id {
+        return Err("provider presence record event id does not match signed event".into());
+    }
+    if event.pubkey.to_hex() != record.provider_pubkey {
+        return Err("provider presence record provider key does not match signed event".into());
+    }
+    let presence = beekeeper_sdk::coding_session::validate_provider_presence_envelope(
+        &event,
+        event.created_at.as_secs(),
+    )
+    .map_err(|error| format!("invalid provider presence envelope in Redis: {error}"))?;
+    if presence.channel_id != expected_channel_id
+        || presence.payload.instance_id != record.instance_id
+        || presence.payload.seq != record.seq
+        || presence.payload.ttl_secs != record.ttl_secs
+    {
+        return Err("provider presence record fields do not match signed event".into());
+    }
+    Ok(event)
 }
 
 /// Revalidate one Redis-backed lease record before returning its provider event.
@@ -2242,6 +2323,101 @@ mod tests {
         let mut invalid_proof = record;
         invalid_proof.proof.authority_receipt_event_id = "not-an-event-id".into();
         assert!(validate_session_lease_snapshot_record(&invalid_proof, channel).is_err());
+    }
+
+    /// Mirror of the lease record test for the presence register: a cold
+    /// 24224 is served only when the Redis facts and the signed event agree.
+    #[test]
+    fn cold_presence_record_requires_intact_provider_event_and_matching_relay_facts() {
+        use beekeeper_pubsub::provider_presence::ProviderPresenceRecord;
+        use beekeeper_sdk::coding_session::{
+            build_coding_session_provider_presence, ProviderPresence, ProviderPresenceState,
+        };
+
+        let channel = uuid::Uuid::new_v4();
+        let keys = Keys::generate();
+        let payload =
+            ProviderPresence::new("provider-1", 7, 90, ProviderPresenceState::Idle, vec![])
+                .expect("presence payload");
+        let event = build_coding_session_provider_presence(channel, &payload)
+            .expect("presence builder")
+            .sign_with_keys(&keys)
+            .expect("sign presence");
+        let record = ProviderPresenceRecord {
+            channel_id: channel,
+            provider_pubkey: keys.public_key().to_hex(),
+            instance_id: "provider-1".into(),
+            seq: 7,
+            ttl_secs: 90,
+            event_id: event.id.to_hex(),
+            event_json: serde_json::to_string(&event).expect("serialize event"),
+            accepted_at: event.created_at.as_secs(),
+            expires_at: event.created_at.as_secs() + 90,
+        };
+
+        assert_eq!(
+            validate_provider_presence_snapshot_record(&record, channel).expect("valid record"),
+            event
+        );
+
+        let mut wrong_id = record.clone();
+        wrong_id.event_id = "33".repeat(32);
+        assert!(validate_provider_presence_snapshot_record(&wrong_id, channel).is_err());
+
+        let mut wrong_channel = record.clone();
+        wrong_channel.channel_id = uuid::Uuid::new_v4();
+        assert!(validate_provider_presence_snapshot_record(&wrong_channel, channel).is_err());
+
+        let mut wrong_seq = record.clone();
+        wrong_seq.seq = 8;
+        assert!(validate_provider_presence_snapshot_record(&wrong_seq, channel).is_err());
+
+        let mut wrong_key = record.clone();
+        wrong_key.provider_pubkey = Keys::generate().public_key().to_hex();
+        assert!(validate_provider_presence_snapshot_record(&wrong_key, channel).is_err());
+
+        // The relay caps retention: an hour-long heartbeat expires at ten
+        // minutes, and a record claiming otherwise is refused.
+        let mut uncapped = record.clone();
+        uncapped.ttl_secs = 3600;
+        uncapped.expires_at = uncapped.accepted_at + 3600;
+        assert!(validate_provider_presence_snapshot_record(&uncapped, channel).is_err());
+
+        let mut invalid_signature = record;
+        let mut event_json = serde_json::to_value(&event).expect("event value");
+        event_json["content"] = serde_json::json!("tampered");
+        invalid_signature.event_json = event_json.to_string();
+        assert!(validate_provider_presence_snapshot_record(&invalid_signature, channel).is_err());
+    }
+
+    /// Presence queries are gated exactly like lease queries: explicit,
+    /// canonical, accessible `#h` or the subscription is closed by name.
+    #[test]
+    fn presence_filters_share_the_lease_register_gates() {
+        let channel = uuid::Uuid::new_v4();
+        let presence_kind = beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_PRESENCE;
+        let unscoped: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [presence_kind],
+        }))
+        .expect("filter");
+        let scoped: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [presence_kind],
+            "#h": [channel.to_string()],
+        }))
+        .expect("filter");
+        assert!(session_lease_filter_missing_explicit_channel(&[unscoped]));
+        assert!(!session_lease_filter_missing_explicit_channel(
+            std::slice::from_ref(&scoped)
+        ));
+        assert!(filter_requests_provider_presence(&scoped));
+        assert!(session_lease_filter_has_inaccessible_channel(
+            std::slice::from_ref(&scoped),
+            &[]
+        ));
+        assert!(!session_lease_filter_has_inaccessible_channel(
+            std::slice::from_ref(&scoped),
+            &[channel]
+        ));
     }
 
     #[test]

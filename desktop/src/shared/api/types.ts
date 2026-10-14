@@ -200,29 +200,12 @@ export type RelayAgent = {
   respondToAllowlist: string[];
 };
 
-export type ManagedAgentRuntimeLifecycle =
-  | "starting"
-  | "listening"
-  | "waking"
-  | "ready"
-  | "host_managed"
-  | "failed"
-  | "stopped";
-
-export type ManagedAgentRuntimeStatus = {
-  pubkey: string;
-  /** Exact submitted descriptor, present only on startup reconcile results. */
-  requestedRelayUrl?: string;
-  /** Canonical, backend-owned pair identity component. Do not normalize in TS. */
-  relayUrl: string;
-  localSetup: boolean;
-  lifecycle: ManagedAgentRuntimeLifecycle;
-  /** Verified signed relay availability; null/absent means unconfirmed. */
-  runtimeAvailable?: boolean | null;
-  pid: number | null;
-  error: string | null;
-  logPath: string | null;
-};
+export type {
+  ManagedAgentExecutionWord,
+  ManagedAgentRuntimeLifecycle,
+  ManagedAgentRuntimeStatus,
+  ProviderPresence,
+} from "./managedAgentRuntime";
 
 export type ManagedAgentBackend =
   | { type: "local" }

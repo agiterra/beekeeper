@@ -487,6 +487,8 @@ fn legacy_claude_descriptor(lookup: &impl Fn(&'static str) -> Option<String>) ->
         allowed_models,
         discover_models,
         capabilities: None,
+        credential_env: Vec::new(),
+        credential_source: None,
     }
 }
 
@@ -833,6 +835,54 @@ mod tests {
             config.runtimes[1].allowed_models,
             vec!["default".to_owned()]
         );
+    }
+
+    /// The plug reaches the sidecar through the same list: a runtime word
+    /// this build has never seen, its driver, the variables it reads and the
+    /// operator's label, with nothing in `config.rs` naming any of them.
+    #[test]
+    fn a_plugged_runtime_in_the_list_keeps_its_credential_env_and_source() {
+        let mut vars = minimal();
+        vars.insert(
+            "BEEKEEPER_CSP_RUNTIMES",
+            serde_json::json!([{
+                "instanceRef": "acme-primary",
+                "driver": "acme-acp",
+                "runtime": "acme",
+                "agentCommand": "/opt/acme/bin/acme-acp",
+                "credentialEnv": ["ACME_TOKEN"],
+                "credentialSource": "acme-vault"
+            }])
+            .to_string(),
+        );
+        let config = load(&vars).expect("env should load");
+        let acme = config.runtime("acme-primary").expect("acme descriptor");
+        assert_eq!(acme.credential_env, vec!["ACME_TOKEN".to_owned()]);
+        assert_eq!(acme.credential_source.as_deref(), Some("acme-vault"));
+        assert_eq!(
+            acme.effective_credential_env(),
+            Some(vec!["ACME_TOKEN".to_owned()])
+        );
+        // A malformed variable name in the list is a host bug and refuses startup.
+        let mut bad = minimal();
+        bad.insert(
+            "BEEKEEPER_CSP_RUNTIMES",
+            serde_json::json!([{
+                "instanceRef": "acme-primary",
+                "driver": "acme-acp",
+                "runtime": "acme",
+                "agentCommand": "/opt/acme/bin/acme-acp",
+                "credentialEnv": ["ACME-TOKEN"]
+            }])
+            .to_string(),
+        );
+        assert!(matches!(
+            load(&bad),
+            Err(ConfigError::Invalid {
+                name: "BEEKEEPER_CSP_RUNTIMES",
+                ..
+            })
+        ));
     }
 
     #[test]

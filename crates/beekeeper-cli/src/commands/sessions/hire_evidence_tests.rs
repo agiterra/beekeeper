@@ -94,6 +94,7 @@ fn signed_hire() -> (
         error: None,
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let receipt = build_coding_session_lifecycle_receipt(
         channel,
@@ -129,6 +130,7 @@ fn signed_hire() -> (
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     let metadata = build_coding_session_metadata(
         channel,
@@ -365,6 +367,7 @@ fn provider_instance_must_match_request_create_receipt_and_metadata() {
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     let wrong_metadata = build_coding_session_metadata(
         Uuid::parse_str(&channel).expect("channel UUID"),

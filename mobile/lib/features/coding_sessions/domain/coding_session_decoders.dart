@@ -268,7 +268,8 @@ CodingSessionDecoded<CodingSessionMetadata> decodeCodingSessionMetadata(
 ///
 /// Exactly five keys — `{schema, commandId, status, session, error}` — or six
 /// with `turnId` when and only when the status is `turn_started` or
-/// `turn_injected` — plus SV-29's optional `rewind` on a rewind's answer
+/// `turn_injected`, or with `quiescence` (always `unconfirmed`) when and only
+/// when it is `turn_interrupted` — plus SV-29's optional `rewind` on a rewind's answer
 /// ([codingSessionRewindReceiptAcceptable]). An unexpected key is a rejection, never a partial accept.
 /// An unrecognised status string fails closed, as it always has.
 CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
@@ -317,6 +318,7 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
   final expected = [
     ...envelope,
     if (status.carriesTurnId) 'turnId',
+    if (status.carriesQuiescence) 'quiescence',
     if (hasRewind) 'rewind',
   ];
   if (!hasExactKeys(payload, expected) ||
@@ -393,6 +395,17 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
     }
     turnId = payload['turnId'] as String;
   }
+  String? quiescence;
+  if (status.carriesQuiescence) {
+    // The only value the key may hold: a confirmed quiescence is the
+    // terminal `failed`, not this receipt.
+    if (payload['quiescence'] != 'unconfirmed') {
+      return const CodingSessionDecoded.failed(
+        CodingSessionDecodeReason.malformedPayload,
+      );
+    }
+    quiescence = 'unconfirmed';
+  }
   return CodingSessionDecoded.ok(
     CodingSessionReceipt(
       ref: ref,
@@ -401,6 +414,7 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
       session: target,
       error: error,
       turnId: turnId,
+      quiescence: quiescence,
     ),
   );
 }
@@ -819,6 +833,7 @@ _ReceiptErrorExpectation? _receiptErrorExpectation(
   CodingSessionReceiptStatus.turnQueued ||
   CodingSessionReceiptStatus.turnStarted ||
   CodingSessionReceiptStatus.modelApplied ||
+  CodingSessionReceiptStatus.turnInterrupted ||
   CodingSessionReceiptStatus.turnInjected => const _ReceiptErrorExpectation(
     mustHaveError: false,
   ),

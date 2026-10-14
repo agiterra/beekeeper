@@ -3474,6 +3474,7 @@ mod tests {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         }
     }
 

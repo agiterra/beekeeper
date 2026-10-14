@@ -900,7 +900,9 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
 /// Whether an event uses the strict coding-session membership/project-write
 /// gate rather than conversational open-channel admission.
 pub(crate) fn requires_strict_coding_session_membership(kind: u32) -> bool {
-    kind == KIND_CODING_SESSION_LEASE || is_coding_session_kind(kind)
+    kind == KIND_CODING_SESSION_LEASE
+        || kind == beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_PRESENCE
+        || is_coding_session_kind(kind)
 }
 
 /// Maximum signed content size for each coding-session kind, in bytes.

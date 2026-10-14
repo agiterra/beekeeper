@@ -308,14 +308,180 @@ async fn runtime_lease(row: &Responsibility, client: &impl RelayTransport) -> Re
     }
     Ok(winning.is_some_and(|(_, state)| state == CodingSessionLeaseState::Live))
 }
+/// What the provider's presence heartbeats (kind 24224) say about the
+/// provider instance behind one responsibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderPresence {
+    /// A verified heartbeat from the provider's instance is within its TTL.
+    Live,
+    /// Heartbeats were seen, the newest is past its TTL.
+    Expired,
+    /// No heartbeat from that provider instance is visible in the channel.
+    None,
+}
+
+impl ProviderPresence {
+    /// The exact wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Expired => "expired",
+            Self::None => "none",
+        }
+    }
+}
+
+/// The newest verified presence heartbeat per provider instance, judged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PresenceObservation {
+    /// Live, expired or none.
+    pub presence: ProviderPresence,
+    /// `idle`/`busy` from the newest heartbeat, when one was seen.
+    pub state: Option<beekeeper_sdk::coding_session::ProviderPresenceState>,
+    /// The newest heartbeat's `seq`, when one was seen.
+    pub seq: Option<u64>,
+    /// The newest heartbeat's `liveTargets`: every generation the provider
+    /// says is open there. Empty when no heartbeat was seen.
+    pub live_targets: Vec<CodingSessionTarget>,
+}
+
+/// Fold raw kind-24224 rows into one observation for `provider_authority`'s
+/// `instance_id` in `channel_id` at `now`: only events signed by the
+/// authority, with a valid envelope, in that channel and from that instance
+/// count; the highest `seq` (then `created_at`, then id) wins.
+pub fn presence_from_events(
+    rows: &[Value],
+    provider_authority: &str,
+    instance_id: &str,
+    channel_id: Uuid,
+    now: u64,
+) -> PresenceObservation {
+    use beekeeper_sdk::coding_session::validate_provider_presence_envelope;
+    let mut winning: Option<((u64, nostr::Timestamp, nostr::EventId), bool, _, Vec<_>)> = None;
+    for raw in rows {
+        let Ok(event) = serde_json::from_value::<Event>(raw.clone()) else {
+            continue;
+        };
+        if event.pubkey.to_hex() != provider_authority || event.verify().is_err() {
+            continue;
+        }
+        let Ok(presence) = validate_provider_presence_envelope(&event, now) else {
+            continue;
+        };
+        if presence.channel_id != channel_id || presence.payload.instance_id != instance_id {
+            continue;
+        }
+        let order = (presence.payload.seq, event.created_at, event.id);
+        if winning.as_ref().is_none_or(|(held, _, _, _)| order > *held) {
+            winning = Some((
+                order,
+                presence.live,
+                presence.payload.state,
+                presence.payload.live_targets,
+            ));
+        }
+    }
+    match winning {
+        Some(((seq, _, _), true, state, live_targets)) => PresenceObservation {
+            presence: ProviderPresence::Live,
+            state: Some(state),
+            seq: Some(seq),
+            live_targets,
+        },
+        Some(((seq, _, _), false, state, live_targets)) => PresenceObservation {
+            presence: ProviderPresence::Expired,
+            state: Some(state),
+            seq: Some(seq),
+            live_targets,
+        },
+        None => PresenceObservation {
+            presence: ProviderPresence::None,
+            state: None,
+            seq: None,
+            live_targets: Vec::new(),
+        },
+    }
+}
+
+/// One word for what the responsibility's execution is doing, from the
+/// lease, the terminal receipt and the provider's presence:
+/// `stopped` (exact signed stop), `live` (unexpired lease), `idle` (no lease,
+/// the provider's presence is live and its `liveTargets` names this
+/// execution), `absent` (presence is live but does not name this execution:
+/// the provider is up and this execution is not among what it runs),
+/// `disconnected` (presence expired or absent). `disconnected` is never said
+/// while presence is live, and `idle` is never said over an execution the
+/// live provider does not claim.
+pub fn execution_word(
+    live_lease: bool,
+    stopped: bool,
+    presence: ProviderPresence,
+    named_by_presence: bool,
+) -> &'static str {
+    if stopped {
+        "stopped"
+    } else if live_lease {
+        "live"
+    } else if presence == ProviderPresence::Live {
+        if named_by_presence {
+            "idle"
+        } else {
+            "absent"
+        }
+    } else {
+        "disconnected"
+    }
+}
+
+async fn provider_presence(
+    row: &Responsibility,
+    client: &impl RelayTransport,
+) -> Result<PresenceObservation, Error> {
+    let rows = client
+        .query_all(json!({
+            "kinds":[beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_PRESENCE],
+            "authors":[row.provider_authority],
+            "#h":[row.channel_id]
+        }))
+        .await?;
+    Ok(presence_from_events(
+        &rows,
+        &row.provider_authority,
+        &row.target.instance_id,
+        row.channel_id,
+        nostr::Timestamp::now().as_secs(),
+    ))
+}
+
 /// Inspect signed current responsibilities without executor files/socket.
+///
+/// Each row carries `runtime_available` (an unexpired exact-generation
+/// lease), `providerPresence` (`live`|`expired`|`none` from the provider
+/// instance's kind-24224 heartbeats) and `execution`
+/// ([`execution_word`]): an idle provider with live presence reads `idle`,
+/// and `disconnected` is said only when presence is expired or absent.
 pub async fn status(args: &LifecycleRequest, client: &impl RelayTransport) -> Result<Value, Error> {
     let rows = inventory(args, client).await?;
     let mut observations = Vec::new();
     for row in rows {
         let stopped = terminal(&row, client).await?;
         let live = runtime_lease(&row, client).await?;
-        observations.push(json!({"responsibility":row,"terminalStopped":stopped,"runtimeStatus":row.status,"runtime_available":live && !stopped,"configuration_application":"unconfirmed","availability":if live && !stopped {"verified_unexpired_provider_lease"} else {"no_current_live_lease"}}));
+        let presence = provider_presence(&row, client).await?;
+        let named_by_presence = presence.live_targets.contains(&row.target);
+        let execution = execution_word(live, stopped, presence.presence, named_by_presence);
+        observations.push(json!({
+            "responsibility":row,
+            "terminalStopped":stopped,
+            "runtimeStatus":row.status,
+            "runtime_available":live && !stopped,
+            "providerPresence":presence.presence.as_str(),
+            "providerState":presence.state.map(|state| state.as_str()),
+            "providerPresenceSeq":presence.seq,
+            "execution":execution,
+            "configuration_application":"unconfirmed",
+            "availability":if live && !stopped {"verified_unexpired_provider_lease"} else if execution == "idle" {"idle_with_live_provider_presence"} else if execution == "absent" {"absent_from_live_provider_presence"} else {"no_current_live_lease"}
+        }));
     }
     Ok(
         json!({"agent_pubkey":args.agent_pubkey,"responsibilities":observations,"inventory":"relay_observed","absence_is_not_revocation":true,"configuration_application":"unconfirmed"}),
@@ -1063,6 +1229,9 @@ pub(crate) async fn require_configured_stops(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "lifecycle_presence_tests.rs"]
+mod presence_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod tests;

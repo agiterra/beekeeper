@@ -16,9 +16,17 @@
 //! Mirrors the donor's `encodeStructuredKey`
 //! (`desktop/src/features/agents/ui/buzzSessionProjectionKeys.ts`).
 
+use nostr::{EventBuilder, Kind, Tag};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use beekeeper_core::coding_session_command::CodingSessionTarget;
+use beekeeper_core::kind::{
+    event_kind_u32, KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_PROVIDER_PRESENCE,
+};
+
+use crate::SdkError;
 
 /// Version tag value on every coding-session provider catalog (kind 44222).
 pub const CODING_SESSION_PROVIDER_CATALOG_TAG_VERSION: &str = "cspc1-1";
@@ -37,6 +45,285 @@ pub const MAX_METADATA_CONTENT_BYTES: usize = 32 * 1024;
 pub const MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES: usize = 16 * 1024;
 /// Maximum signed content bytes for a transcript item (kind 44225).
 pub const MAX_TRANSCRIPT_CONTENT_BYTES: usize = 32 * 1024;
+
+// ── Provider presence (kind 24224, NIP-CSL § Provider presence) ─────────────
+
+/// The only supported provider-presence payload schema.
+pub const CODING_SESSION_PROVIDER_PRESENCE_SCHEMA: &str =
+    "buzz-coding-session-provider-presence/v1";
+/// Version tag value (`cspp-v`) on every provider-presence event (kind 24224).
+pub const CODING_SESSION_PROVIDER_PRESENCE_TAG_VERSION: &str = "cspp1-1";
+/// Maximum signed content bytes for a provider-presence event.
+pub const MAX_PROVIDER_PRESENCE_CONTENT_BYTES: usize = 8 * 1024;
+/// Default presence time-to-live, in seconds. The provider publishes every
+/// `ttlSecs / 3`, so two missed heartbeats still read as live.
+pub const DEFAULT_PROVIDER_PRESENCE_TTL_SECS: u64 = 90;
+/// Ceiling on a `ttlSecs` a reader accepts; a larger value cannot make an
+/// absent provider look present for longer than this.
+pub const MAX_PROVIDER_PRESENCE_TTL_SECS: u64 = 3600;
+/// Ceiling on `liveTargets` entries in one presence event.
+pub const MAX_PROVIDER_PRESENCE_LIVE_TARGETS: usize = 256;
+
+/// What the provider is doing at the moment it heartbeats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderPresenceState {
+    /// Running, no turn in flight on any execution in this channel.
+    Idle,
+    /// At least one turn is in flight in this channel.
+    Busy,
+}
+
+impl ProviderPresenceState {
+    /// The exact wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Busy => "busy",
+        }
+    }
+}
+
+/// Strict signed content of a provider-presence event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderPresence {
+    /// Must equal [`CODING_SESSION_PROVIDER_PRESENCE_SCHEMA`].
+    pub schema: String,
+    /// The provider instance heartbeating (the `instanceId` in its targets).
+    pub instance_id: String,
+    /// Monotonic per-process heartbeat counter; a reader keeps the highest.
+    pub seq: u64,
+    /// Seconds after `created_at` during which this heartbeat counts as live.
+    pub ttl_secs: u64,
+    /// Idle or busy at the moment of the heartbeat.
+    pub state: ProviderPresenceState,
+    /// Exact generations with a live actor in this channel at the heartbeat.
+    pub live_targets: Vec<CodingSessionTarget>,
+}
+
+impl ProviderPresence {
+    /// Construct and validate a presence payload suitable for signing.
+    pub fn new(
+        instance_id: &str,
+        seq: u64,
+        ttl_secs: u64,
+        state: ProviderPresenceState,
+        live_targets: Vec<CodingSessionTarget>,
+    ) -> Result<Self, String> {
+        let presence = Self {
+            schema: CODING_SESSION_PROVIDER_PRESENCE_SCHEMA.to_owned(),
+            instance_id: instance_id.to_owned(),
+            seq,
+            ttl_secs,
+            state,
+            live_targets,
+        };
+        presence.validate()?;
+        Ok(presence)
+    }
+
+    /// Validate the schema, identifiers and bounds of this payload.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != CODING_SESSION_PROVIDER_PRESENCE_SCHEMA {
+            return Err("unsupported provider-presence schema".into());
+        }
+        if self.instance_id.trim().is_empty() || self.instance_id.len() > 256 {
+            return Err(
+                "provider-presence instanceId must be a nonempty bounded identifier".into(),
+            );
+        }
+        if self.seq == 0 {
+            return Err("provider-presence seq must be positive".into());
+        }
+        if self.ttl_secs == 0 || self.ttl_secs > MAX_PROVIDER_PRESENCE_TTL_SECS {
+            return Err(format!(
+                "provider-presence ttlSecs must be 1..={MAX_PROVIDER_PRESENCE_TTL_SECS}"
+            ));
+        }
+        if self.live_targets.len() > MAX_PROVIDER_PRESENCE_LIVE_TARGETS {
+            return Err("provider-presence liveTargets exceeds the ceiling".into());
+        }
+        if self
+            .live_targets
+            .iter()
+            .any(|target| target.instance_id != self.instance_id)
+        {
+            return Err("provider-presence liveTargets must belong to instanceId".into());
+        }
+        Ok(())
+    }
+}
+
+/// Strictly decode signed provider-presence content.
+pub fn decode_provider_presence(content: &str) -> Result<ProviderPresence, String> {
+    if content.len() > MAX_PROVIDER_PRESENCE_CONTENT_BYTES {
+        return Err(format!(
+            "provider-presence content exceeds {MAX_PROVIDER_PRESENCE_CONTENT_BYTES} bytes"
+        ));
+    }
+    let presence: ProviderPresence = serde_json::from_str(content)
+        .map_err(|error| format!("malformed provider-presence payload: {error}"))?;
+    presence.validate()?;
+    Ok(presence)
+}
+
+/// A presence event read back from the relay, with its freshness judged
+/// against the reader's clock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedProviderPresence {
+    /// Decoded and validated signed content.
+    pub payload: ProviderPresence,
+    /// Canonical channel UUID from the `h` tag.
+    pub channel_id: Uuid,
+    /// Whether `created_at + ttlSecs` is still ahead of the reader's clock.
+    pub live: bool,
+}
+
+/// Validate a kind-24224 event's kind, ordered tags and content, and judge
+/// its freshness at `now` (Unix seconds). Signature verification is the
+/// caller's: this checks shape, not authorship.
+pub fn validate_provider_presence_envelope(
+    event: &nostr::Event,
+    now: u64,
+) -> Result<ValidatedProviderPresence, String> {
+    if event_kind_u32(event) != KIND_CODING_SESSION_PROVIDER_PRESENCE {
+        return Err("event is not a provider-presence heartbeat (kind 24224)".into());
+    }
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    let [h, version, instance, seq] = tags.as_slice() else {
+        return Err("provider-presence event must carry exactly four tags".into());
+    };
+    let channel_id = match h {
+        [name, value] if name == "h" => Uuid::parse_str(value)
+            .ok()
+            .filter(|parsed| parsed.to_string() == *value)
+            .ok_or_else(|| "provider-presence h tag must be a canonical UUID".to_owned())?,
+        _ => return Err("provider-presence first tag must be h".into()),
+    };
+    if *version != ["cspp-v", CODING_SESSION_PROVIDER_PRESENCE_TAG_VERSION] {
+        return Err("provider-presence cspp-v tag is not cspp1-1".into());
+    }
+    let payload = decode_provider_presence(&event.content)?;
+    if *instance != ["cspp-instance", payload.instance_id.as_str()] {
+        return Err("provider-presence cspp-instance tag does not match content".into());
+    }
+    if *seq != ["cspp-seq", payload.seq.to_string().as_str()] {
+        return Err("provider-presence cspp-seq tag does not match content".into());
+    }
+    let created_at = event.created_at.as_secs();
+    let live = created_at.saturating_add(payload.ttl_secs) > now;
+    Ok(ValidatedProviderPresence {
+        payload,
+        channel_id,
+        live,
+    })
+}
+
+/// Build one provider-presence heartbeat (kind 24224) for `channel_id`.
+pub fn build_coding_session_provider_presence(
+    channel_id: Uuid,
+    presence: &ProviderPresence,
+) -> Result<EventBuilder, SdkError> {
+    presence.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(presence).map_err(|error| {
+        SdkError::InvalidInput(format!("provider-presence serialization: {error}"))
+    })?;
+    if content.len() > MAX_PROVIDER_PRESENCE_CONTENT_BYTES {
+        return Err(SdkError::ContentTooLarge {
+            max: MAX_PROVIDER_PRESENCE_CONTENT_BYTES,
+            got: content.len(),
+        });
+    }
+    let tags = [
+        vec!["h".to_owned(), channel_id.to_string()],
+        vec![
+            "cspp-v".to_owned(),
+            CODING_SESSION_PROVIDER_PRESENCE_TAG_VERSION.to_owned(),
+        ],
+        vec!["cspp-instance".to_owned(), presence.instance_id.clone()],
+        vec!["cspp-seq".to_owned(), presence.seq.to_string()],
+    ]
+    .into_iter()
+    .map(|parts| Tag::parse(parts).map_err(|error| SdkError::InvalidInput(error.to_string())))
+    .collect::<Result<Vec<_>, _>>()?;
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_PROVIDER_PRESENCE as u16),
+        content,
+    )
+    .tags(tags))
+}
+
+/// The latest-ephemeral key one provider instance's heartbeat replaces under
+/// in one channel: a newer heartbeat supersedes an older unsent one.
+pub fn coding_session_provider_presence_semantic_key(
+    channel_id: Uuid,
+    instance_id: &str,
+) -> String {
+    encode_structured_key(
+        "coding-session-provider-presence/v1",
+        &[&channel_id.to_string(), instance_id],
+    )
+}
+
+// ── Receipt vocabulary (NIP-CSL § turn_interrupted, NIP-CSE) ────────────────
+//
+// Defined beside the other codes in `beekeeper-core/src/coding_session_payload.rs`
+// and re-exported here so the provider's existing imports keep resolving.
+pub use beekeeper_core::coding_session_payload::{
+    CREDENTIAL_SOURCE_AMBIENT_LOGIN, MODEL_AUTH_FAILED, QUIESCENCE_UNCONFIRMED,
+    RECEIPT_QUIESCENCE_FIELD, TURN_INTERRUPTED_BY_RESTART, TURN_INTERRUPTED_STATUS,
+};
+
+/// The `csl-key` for a turn-stage receipt whose status is given as a wire
+/// string. Same encoding as `coding_session_turn_receipt_semantic_key`, for
+/// statuses the closed `ReceiptStatus` enum does not yet carry.
+pub fn coding_session_turn_receipt_semantic_key_str(command_id: &str, status: &str) -> String {
+    encode_structured_key("coding-session-lifecycle-receipt/v1", &[command_id, status])
+}
+
+/// Build a `turn_interrupted` receipt (kind 44224): the five receipt keys
+/// plus `quiescence: "unconfirmed"`, under the turn-stage `csl-key`.
+///
+/// The content is `LifecycleReceipt::turn_interrupted` and round-trips through
+/// the strict core decoder. Documented in NIP-CSL § turn_interrupted.
+pub fn build_coding_session_turn_interrupted_receipt(
+    channel_id: Uuid,
+    command_id: &str,
+    target: &CodingSessionTarget,
+) -> Result<EventBuilder, SdkError> {
+    if command_id.trim().is_empty() || command_id.len() > 256 {
+        return Err(SdkError::InvalidInput(
+            "commandId must be a nonempty bounded identifier".into(),
+        ));
+    }
+    let content = serde_json::to_string(
+        &beekeeper_core::coding_session_payload::LifecycleReceipt::turn_interrupted(
+            command_id, target,
+        ),
+    )
+    .map_err(|error| SdkError::InvalidInput(format!("receipt serialization: {error}")))?;
+    let tags = [
+        vec!["h".to_owned(), channel_id.to_string()],
+        vec![
+            "cslr-v".to_owned(),
+            CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION.to_owned(),
+        ],
+        vec!["csl-command".to_owned(), command_id.to_owned()],
+        vec![
+            "csl-key".to_owned(),
+            coding_session_turn_receipt_semantic_key_str(command_id, TURN_INTERRUPTED_STATUS),
+        ],
+    ]
+    .into_iter()
+    .map(|parts| Tag::parse(parts).map_err(|error| SdkError::InvalidInput(error.to_string())))
+    .collect::<Result<Vec<_>, _>>()?;
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16),
+        content,
+    )
+    .tags(tags))
+}
 
 /// Encode a deterministic, unambiguous structured key.
 ///
@@ -232,6 +519,124 @@ mod tests {
         assert_eq!(encode_structured_key("d", &["🐝"]), "d|4:🐝");
         assert_eq!(encode_structured_key("d", &[]), "d|");
         assert_eq!(encode_structured_key("d", &[""]), "d|0:");
+    }
+
+    #[test]
+    fn presence_round_trips_and_judges_freshness_from_created_at_plus_ttl() {
+        let keys = nostr::Keys::generate();
+        let channel = Uuid::new_v4();
+        let mut target = target();
+        target.instance_id = "instance-1".into();
+        let presence = ProviderPresence::new(
+            "instance-1",
+            7,
+            90,
+            ProviderPresenceState::Busy,
+            vec![target.clone()],
+        )
+        .expect("presence");
+        let event = build_coding_session_provider_presence(channel, &presence)
+            .expect("builder")
+            .sign_with_keys(&keys)
+            .expect("signed");
+        assert_eq!(
+            u32::from(event.kind.as_u16()),
+            KIND_CODING_SESSION_PROVIDER_PRESENCE
+        );
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+        assert_eq!(tags[0], ["h", &channel.to_string()]);
+        assert_eq!(tags[1], ["cspp-v", "cspp1-1"]);
+        assert_eq!(tags[2], ["cspp-instance", "instance-1"]);
+        assert_eq!(tags[3], ["cspp-seq", "7"]);
+        let content: serde_json::Value = serde_json::from_str(&event.content).expect("json");
+        assert_eq!(content["schema"], CODING_SESSION_PROVIDER_PRESENCE_SCHEMA);
+        assert_eq!(content["state"], "busy");
+        assert_eq!(content["ttlSecs"], 90);
+        assert_eq!(content["liveTargets"][0]["sessionId"], "session-1");
+
+        let at = event.created_at.as_secs();
+        let fresh = validate_provider_presence_envelope(&event, at + 89).expect("fresh");
+        assert!(fresh.live);
+        assert_eq!(fresh.channel_id, channel);
+        assert_eq!(fresh.payload, presence);
+        let stale = validate_provider_presence_envelope(&event, at + 90).expect("stale");
+        assert!(!stale.live, "ttl is exclusive at the boundary");
+    }
+
+    #[test]
+    fn presence_refuses_foreign_targets_zero_seq_and_wrong_tags() {
+        let foreign = target();
+        assert!(
+            ProviderPresence::new("other", 1, 90, ProviderPresenceState::Idle, vec![foreign])
+                .is_err()
+        );
+        assert!(ProviderPresence::new("i", 0, 90, ProviderPresenceState::Idle, vec![]).is_err());
+        assert!(ProviderPresence::new("i", 1, 0, ProviderPresenceState::Idle, vec![]).is_err());
+        assert!(ProviderPresence::new("i", 1, 3601, ProviderPresenceState::Idle, vec![]).is_err());
+        let keys = nostr::Keys::generate();
+        let presence =
+            ProviderPresence::new("i", 2, 90, ProviderPresenceState::Idle, vec![]).expect("ok");
+        let forged = EventBuilder::new(
+            Kind::Custom(KIND_CODING_SESSION_PROVIDER_PRESENCE as u16),
+            serde_json::to_string(&presence).expect("json"),
+        )
+        .tags([
+            Tag::parse(["h", &Uuid::new_v4().to_string()]).expect("h"),
+            Tag::parse(["cspp-v", "cspp1-1"]).expect("v"),
+            Tag::parse(["cspp-instance", "i"]).expect("i"),
+            Tag::parse(["cspp-seq", "3"]).expect("seq"),
+        ])
+        .sign_with_keys(&keys)
+        .expect("signed");
+        assert!(validate_provider_presence_envelope(&forged, 0)
+            .expect_err("seq tag disagrees with content")
+            .contains("cspp-seq"));
+    }
+
+    #[test]
+    fn turn_interrupted_receipt_carries_the_sixth_key_under_a_turn_stage_csl_key() {
+        let keys = nostr::Keys::generate();
+        let channel = Uuid::new_v4();
+        let event = build_coding_session_turn_interrupted_receipt(channel, "turn-1", &target())
+            .expect("builder")
+            .sign_with_keys(&keys)
+            .expect("signed");
+        let content: serde_json::Value = serde_json::from_str(&event.content).expect("json");
+        assert_eq!(content["status"], TURN_INTERRUPTED_STATUS);
+        assert_eq!(content["quiescence"], QUIESCENCE_UNCONFIRMED);
+        assert_eq!(content["commandId"], "turn-1");
+        assert!(content["error"].is_null());
+        assert_eq!(content["session"]["sessionId"], "session-1");
+        assert_eq!(
+            content.as_object().map(|o| o.len()),
+            Some(6),
+            "five receipt keys plus quiescence"
+        );
+        let key = event
+            .tags
+            .iter()
+            .find(|t| t.as_slice().first().is_some_and(|n| n == "csl-key"))
+            .expect("csl-key")
+            .as_slice()[1]
+            .clone();
+        assert_eq!(
+            key,
+            encode_structured_key(
+                "coding-session-lifecycle-receipt/v1",
+                &["turn-1", "turn_interrupted"]
+            )
+        );
+        // The closed core decoder accepts the status and its sixth key.
+        let decoded =
+            beekeeper_core::coding_session_payload::decode_coding_session_lifecycle_receipt(
+                &event.content,
+            )
+            .expect("the strict decoder accepts turn_interrupted");
+        assert_eq!(
+            decoded.status,
+            beekeeper_core::coding_session_payload::ReceiptStatus::TurnInterrupted
+        );
+        assert_eq!(decoded.quiescence.as_deref(), Some(QUIESCENCE_UNCONFIRMED));
     }
 
     #[test]

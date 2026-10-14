@@ -322,6 +322,7 @@ fn metadata_event(target: &CodingSessionTarget, status: SessionStatus, created_a
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     json!({
         "id": format!("{created_at:064}"),

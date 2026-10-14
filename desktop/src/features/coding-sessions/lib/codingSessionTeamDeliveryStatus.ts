@@ -209,9 +209,12 @@ function commandViews(
       progress:
         progress === null
           ? null
-          : // An injected input is inside a turn that is running; for this
-            // delivery's purposes that is "started", not "queued".
-            progress.stage === "started" || progress.stage === "injected"
+          : // An injected input is inside a turn that is running, and an
+            // interrupted turn did start; for this delivery's purposes both
+            // are "started", not "queued".
+            progress.stage === "started" ||
+              progress.stage === "injected" ||
+              progress.stage === "interrupted"
             ? "started"
             : "queued",
       failure: failure
@@ -246,9 +249,12 @@ function commandViews(
       progress:
         progress === null
           ? null
-          : // An injected input is inside a turn that is running; for this
-            // delivery's purposes that is "started", not "queued".
-            progress.stage === "started" || progress.stage === "injected"
+          : // An injected input is inside a turn that is running, and an
+            // interrupted turn did start; for this delivery's purposes both
+            // are "started", not "queued".
+            progress.stage === "started" ||
+              progress.stage === "injected" ||
+              progress.stage === "interrupted"
             ? "started"
             : "queued",
       failure: failure

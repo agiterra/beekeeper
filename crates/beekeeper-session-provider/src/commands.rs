@@ -2068,6 +2068,8 @@ mod tests {
             allowed_models: vec!["default".into()],
             discover_models: false,
             capabilities: None,
+            credential_env: Vec::new(),
+            credential_source: None,
         }
     }
 

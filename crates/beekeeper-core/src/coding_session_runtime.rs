@@ -75,9 +75,112 @@ pub struct RuntimeDescriptor {
         deserialize_with = "deserialize_present_nullable"
     )]
     pub title_model: Option<Option<String>>,
+    /// The environment variable names this runtime accepts from the restricted
+    /// credentials file (`bee host commission --credential-file`).
+    ///
+    /// Empty means "the built-in defaults for this runtime word", which exist
+    /// only for `claude` and `codex` (see
+    /// [`RuntimeDescriptor::effective_credential_env`]). Any other runtime
+    /// that is to be started with file custody has to say which variables it
+    /// reads; a descriptor that names none and has no defaults is refused at
+    /// adapter start with `MODEL_AUTH_UNAVAILABLE`, never started against an
+    /// ambient login. Names only — the values live in the credentials file and
+    /// never cross the wire. Omitted when empty, so an older sidecar still
+    /// parses the list under `deny_unknown_fields`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_env: Vec<String>,
+    /// An opaque operator label for where this runtime's credential comes
+    /// from (`"acme-vault"`, `"ops-key-2026q4"`), echoed into session
+    /// metadata (44223) and auth-failure receipts so a reader can tell which
+    /// custody a failure is about. A label, never a secret and never a path.
+    /// Omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_source: Option<String>,
+}
+
+/// The environment variables the `claude` runtime word accepts from the
+/// credentials file when its descriptor names none.
+pub const CLAUDE_CREDENTIAL_ENV: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+];
+
+/// The environment variables the `codex` runtime word accepts from the
+/// credentials file when its descriptor names none.
+pub const CODEX_CREDENTIAL_ENV: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY"];
+
+/// Upper bound on `credentialEnv` entries per descriptor.
+pub const MAX_CREDENTIAL_ENV: usize = 16;
+
+/// The built-in credential variable list for a runtime word, if it has one.
+///
+/// Only `claude` and `codex` do; every other word must declare
+/// `credentialEnv` on its descriptor.
+pub fn default_credential_env(runtime: &str) -> Option<&'static [&'static str]> {
+    match runtime {
+        "claude" => Some(CLAUDE_CREDENTIAL_ENV),
+        "codex" => Some(CODEX_CREDENTIAL_ENV),
+        _ => None,
+    }
+}
+
+/// Whether `name` is a well-formed environment variable name for
+/// `credentialEnv`: ASCII letters, digits and underscores, not starting with
+/// a digit, at most 64 bytes — and not one of the names
+/// [`credential_env_name_rejection`] refuses.
+pub fn is_valid_credential_env_name(name: &str) -> bool {
+    credential_env_name_rejection(name).is_none()
+}
+
+/// Why `name` may not appear in `credentialEnv`, or `None` when it may.
+///
+/// A credentials file is loaded into the runtime's environment, so a name
+/// that would redirect the loader, the dynamic linker or Beekeeper's own
+/// seat variables is refused by name: `HOME`, `PATH`, and anything under
+/// `BEEKEEPER_`, `BUZZ_`, `LD_` or `DYLD_`. The message is the one the
+/// commission command and the descriptor parser both print.
+pub fn credential_env_name_rejection(name: &str) -> Option<String> {
+    let well_formed = !name.is_empty()
+        && name.len() <= 64
+        && !name.as_bytes()[0].is_ascii_digit()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    if !well_formed {
+        return Some(format!(
+            "credentialEnv entry {name:?} is not an environment variable name"
+        ));
+    }
+    if name == "HOME" || name == "PATH" {
+        return Some(format!(
+            "credentialEnv may not name {name}: it would redirect the runtime itself, not a credential"
+        ));
+    }
+    for reserved in ["BEEKEEPER_", "BUZZ_", "LD_", "DYLD_"] {
+        if name.starts_with(reserved) {
+            return Some(format!(
+                "credentialEnv may not name {name}: the {reserved}* namespace is reserved \
+                 (seat identity, relay, and the dynamic linker are never credentials)"
+            ));
+        }
+    }
+    None
 }
 
 impl RuntimeDescriptor {
+    /// The environment variable names this runtime accepts from the
+    /// credentials file: the descriptor's own `credentialEnv` when it names
+    /// any, else the built-in list for its runtime word, else `None` — which
+    /// the credential loader turns into a refusal naming the fix.
+    pub fn effective_credential_env(&self) -> Option<Vec<String>> {
+        if !self.credential_env.is_empty() {
+            return Some(self.credential_env.clone());
+        }
+        default_credential_env(&self.runtime)
+            .map(|names| names.iter().map(|name| (*name).to_owned()).collect())
+    }
+
     /// The model the auto-title one-shot uses, or `None` when titling is
     /// disabled for this runtime.
     ///
@@ -178,6 +281,31 @@ pub fn parse_runtime_descriptors(json: &str) -> Result<Vec<RuntimeDescriptor>, S
                 .allowed_models
                 .push(descriptor.default_model.clone());
         }
+        if descriptor.credential_env.len() > MAX_CREDENTIAL_ENV {
+            return Err(format!(
+                "credentialEnv must name at most {MAX_CREDENTIAL_ENV} variables (instanceRef {:?})",
+                descriptor.instance_ref
+            ));
+        }
+        for name in &descriptor.credential_env {
+            if let Some(reason) = credential_env_name_rejection(name) {
+                return Err(format!(
+                    "{reason} (instanceRef {:?})",
+                    descriptor.instance_ref
+                ));
+            }
+        }
+        if descriptor
+            .credential_source
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty() || label.len() > 128)
+        {
+            return Err(format!(
+                "credentialSource must be a non-empty label of at most 128 bytes \
+                 (instanceRef {:?})",
+                descriptor.instance_ref
+            ));
+        }
     }
     Ok(descriptors)
 }
@@ -208,6 +336,119 @@ mod tests {
         assert_eq!(descriptor.allowed_models, vec!["default".to_owned()]);
         assert!(!descriptor.discover_models);
         assert!(descriptor.capabilities.is_none());
+        assert!(descriptor.credential_env.is_empty());
+        assert!(descriptor.credential_source.is_none());
+        // Known words keep their built-in credential lists when none is named.
+        assert_eq!(
+            descriptor.effective_credential_env().as_deref(),
+            Some(
+                &[
+                    "ANTHROPIC_API_KEY".to_owned(),
+                    "ANTHROPIC_AUTH_TOKEN".to_owned(),
+                    "CLAUDE_CODE_OAUTH_TOKEN".to_owned()
+                ][..]
+            )
+        );
+        // ...and neither key is written back, so an older sidecar still parses it.
+        let serialized = serde_json::to_value(descriptor).expect("serialize");
+        let object = serialized.as_object().expect("object");
+        assert!(!object.contains_key("credentialEnv"));
+        assert!(!object.contains_key("credentialSource"));
+    }
+
+    /// The plug: any runtime word, with the variables it reads named on the
+    /// descriptor and an operator label that is echoed but never a secret.
+    #[test]
+    fn credential_env_and_source_round_trip_and_are_validated() {
+        let mut entry = minimal("acme-primary");
+        entry["driver"] = serde_json::json!("acme-acp");
+        entry["runtime"] = serde_json::json!("acme");
+        entry["agentCommand"] = serde_json::json!("/opt/acme/bin/acme-acp");
+        entry["credentialEnv"] = serde_json::json!(["ACME_TOKEN", "ACME_REGION"]);
+        entry["credentialSource"] = serde_json::json!("acme-vault");
+        let descriptors =
+            parse_runtime_descriptors(&serde_json::json!([entry.clone()]).to_string())
+                .expect("parse");
+        let descriptor = &descriptors[0];
+        assert_eq!(
+            descriptor.credential_env,
+            vec!["ACME_TOKEN".to_owned(), "ACME_REGION".to_owned()]
+        );
+        assert_eq!(descriptor.credential_source.as_deref(), Some("acme-vault"));
+        assert_eq!(
+            descriptor.effective_credential_env(),
+            Some(vec!["ACME_TOKEN".to_owned(), "ACME_REGION".to_owned()])
+        );
+        let serialized = serde_json::to_value(descriptor).expect("serialize");
+        assert_eq!(
+            serialized["credentialEnv"],
+            serde_json::json!(["ACME_TOKEN", "ACME_REGION"])
+        );
+        assert_eq!(serialized["credentialSource"], "acme-vault");
+        assert_eq!(
+            parse_runtime_descriptors(&serde_json::json!([serialized]).to_string())
+                .expect("reparse"),
+            descriptors
+        );
+
+        // An unknown word with nothing named has no list: the loader refuses.
+        let mut bare = minimal("acme-primary");
+        bare["runtime"] = serde_json::json!("acme");
+        let bare =
+            parse_runtime_descriptors(&serde_json::json!([bare]).to_string()).expect("parse");
+        assert_eq!(bare[0].effective_credential_env(), None);
+
+        // A descriptor's own list overrides a known word's defaults.
+        let mut narrowed = minimal("claude-primary");
+        narrowed["credentialEnv"] = serde_json::json!(["ANTHROPIC_API_KEY"]);
+        let narrowed =
+            parse_runtime_descriptors(&serde_json::json!([narrowed]).to_string()).expect("parse");
+        assert_eq!(
+            narrowed[0].effective_credential_env(),
+            Some(vec!["ANTHROPIC_API_KEY".to_owned()])
+        );
+
+        // Names that are not environment variable names, and blank labels.
+        for bad in ["", "1TOKEN", "ACME-TOKEN", "ACME TOKEN", "ACME=1"] {
+            let mut entry = entry.clone();
+            entry["credentialEnv"] = serde_json::json!([bad]);
+            assert!(
+                parse_runtime_descriptors(&serde_json::json!([entry]).to_string()).is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+        // Well-formed names that would redirect the runtime, the linker or
+        // the seat rather than carry a credential: refused by name, and the
+        // reason says which namespace.
+        for (reserved, expect) in [
+            ("HOME", "would redirect the runtime"),
+            ("PATH", "would redirect the runtime"),
+            ("BEEKEEPER_PRIVATE_KEY", "BEEKEEPER_* namespace is reserved"),
+            ("BUZZ_AUTH_TAG", "BUZZ_* namespace is reserved"),
+            ("LD_PRELOAD", "LD_* namespace is reserved"),
+            ("DYLD_INSERT_LIBRARIES", "DYLD_* namespace is reserved"),
+        ] {
+            assert!(!is_valid_credential_env_name(reserved), "{reserved}");
+            let reason = credential_env_name_rejection(reserved).expect(reserved);
+            assert!(reason.contains(expect), "{reserved}: {reason}");
+            let mut entry = entry.clone();
+            entry["credentialEnv"] = serde_json::json!([reserved]);
+            let error = parse_runtime_descriptors(&serde_json::json!([entry]).to_string())
+                .expect_err(reserved);
+            assert!(error.contains(expect), "{reserved}: {error}");
+        }
+        // Prefix-shaped names that are not in the namespaces stay allowed.
+        for fine in ["HOMEPAGE_TOKEN", "PATHWAY_KEY", "LDAP_PASSWORD", "BUZZWORD"] {
+            assert!(is_valid_credential_env_name(fine), "{fine}");
+        }
+        let mut blank = entry.clone();
+        blank["credentialSource"] = serde_json::json!("   ");
+        assert!(parse_runtime_descriptors(&serde_json::json!([blank]).to_string()).is_err());
+        let mut many = entry;
+        many["credentialEnv"] = serde_json::json!((0..MAX_CREDENTIAL_ENV + 1)
+            .map(|index| format!("V{index}"))
+            .collect::<Vec<_>>());
+        assert!(parse_runtime_descriptors(&serde_json::json!([many]).to_string()).is_err());
     }
 
     #[test]

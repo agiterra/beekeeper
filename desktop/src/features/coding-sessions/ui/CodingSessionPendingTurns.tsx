@@ -365,6 +365,9 @@ export function describePendingCodingSessionTurn(
   // Published, signed, and the provider's. There is no client-side cancel for
   // it and there is no 44220 that unsends one.
   const irrevocable = "it cannot be recalled";
+  if (state === "interrupted") {
+    return "Interrupted, outcome unconfirmed — the provider restarted while this turn was running; a final answer follows once its process is proved gone";
+  }
   if (state === "unknown") {
     const detail = deliveryUnknown?.message.trim() || deliveryUnknown?.code;
     return detail

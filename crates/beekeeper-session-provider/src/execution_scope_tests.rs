@@ -442,7 +442,7 @@ fn the_scope_digest_binds_project_seat_and_tree_but_not_wake_data() {
 }
 
 #[test]
-fn runtimes_are_decided_by_driver_and_unverified_ones_are_refused() {
+fn runtimes_are_decided_by_driver_and_only_a_missing_adapter_is_refused() {
     assert_eq!(
         RuntimeProfile::for_driver("claude-agent-acp"),
         RuntimeProfile::Claude
@@ -451,8 +451,43 @@ fn runtimes_are_decided_by_driver_and_unverified_ones_are_refused() {
         RuntimeProfile::for_driver("codex-acp"),
         RuntimeProfile::Codex
     );
+    // Any other slug is a plugged runtime: the generic managed profile on
+    // every platform, never a refusal by name.
+    for driver in ["goose-acp", "acme-acp", "never-heard-of-it"] {
+        assert_eq!(
+            RuntimeProfile::for_driver(driver),
+            RuntimeProfile::GenericManaged,
+            "{driver}"
+        );
+        assert_eq!(
+            RuntimeProfile::for_launch(driver, "/opt/acme/bin/acme-acp"),
+            RuntimeProfile::GenericManaged,
+            "{driver}"
+        );
+    }
     assert_eq!(
-        RuntimeProfile::for_driver("goose-acp"),
+        RuntimeProfile::for_driver("  "),
+        RuntimeProfile::Unsupported
+    );
+    // Unsupported is reserved for a launch with nothing to run.
+    assert_eq!(
+        RuntimeProfile::for_launch("acme-acp", ""),
+        RuntimeProfile::Unsupported
+    );
+    assert_eq!(
+        RuntimeProfile::for_launch("managed-acp", PLACEHOLDER_ADAPTER_COMMAND),
+        RuntimeProfile::Unsupported
+    );
+    assert_eq!(
+        RuntimeProfile::for_launch(
+            "managed-acp",
+            &format!("/opt/beekeeper/{PLACEHOLDER_ADAPTER_COMMAND}")
+        ),
+        RuntimeProfile::Unsupported
+    );
+    // A known slug with a placeholder command is still nothing to run.
+    assert_eq!(
+        RuntimeProfile::for_launch("claude-agent-acp", " "),
         RuntimeProfile::Unsupported
     );
     let fx = fixture();

@@ -95,6 +95,13 @@ enum CodingSessionPendingPhase {
   /// running. Settled exactly like [started] — nothing is owed.
   injected,
 
+  /// A `turn_interrupted` named it: the turn ran, the provider restarted
+  /// while its process was still present, and the outcome is unconfirmed
+  /// until the terminal `failed` under the same `commandId`. Neither settled
+  /// nor failed: the words are not handed back (the turn may still be
+  /// working), and the row says so.
+  interrupted,
+
   /// A `turn_delivery_unknown` named it: a native steer was written to the
   /// runtime and nothing establishes whether it arrived. Terminal — the
   /// provider will not resend it — but not a failure: the words may already
@@ -149,6 +156,9 @@ class CodingSessionPendingTurnView {
   /// person, not a receipt, retires this row.
   bool get deliveryUnknown =>
       phase == CodingSessionPendingPhase.deliveryUnknown;
+
+  /// The provider's restart interrupted the turn; its outcome is unconfirmed.
+  bool get interrupted => phase == CodingSessionPendingPhase.interrupted;
 }
 
 /// Receipt codes that mean "the generation you named is gone", which is the
@@ -180,11 +190,25 @@ CodingSessionPendingTurnView settleCodingSessionPendingTurn(
             : left.ref.eventId.compareTo(right.ref.eventId);
       });
 
+  // An interruption is the provider's latest word about a turn that did
+  // start, and it outranks the `turn_started` that preceded it; read it
+  // before the signed-order walk, which returns at the first start.
+  if (own.any(
+    (receipt) => receipt.status == CodingSessionReceiptStatus.turnInterrupted,
+  )) {
+    return CodingSessionPendingTurnView(
+      turn: turn,
+      phase: CodingSessionPendingPhase.interrupted,
+    );
+  }
   CodingSessionReceipt? degraded;
   CodingSessionReceipt? unknown;
   var queued = false;
   for (final receipt in own) {
     switch (receipt.status) {
+      case CodingSessionReceiptStatus.turnInterrupted:
+        // Handled above; unreachable here.
+        break;
       case CodingSessionReceiptStatus.turnStarted:
         return CodingSessionPendingTurnView(
           turn: turn,

@@ -211,12 +211,56 @@ pub(crate) async fn observe_host_runtime_availability(
     actor: &str,
     relay: &str,
 ) -> Option<bool> {
+    observe_host_runtime(app, actor, relay)
+        .await
+        .map(|observed| observed.runtime_available)
+}
+
+/// What the management `status` read says about one host-managed pair: the
+/// lease-backed availability and the provider's presence heartbeat, folded
+/// across the pair's responsibilities. `None` when status could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HostRuntimeObservation {
+    /// Any responsibility holds a verified unexpired execution lease.
+    pub runtime_available: bool,
+    /// `live` if any responsibility's provider presence is live, else
+    /// `expired` if any is expired, else `none`; absent when no
+    /// responsibility row carried the field.
+    pub provider_presence: Option<String>,
+    /// `idle`/`busy` from the first responsibility whose presence is live.
+    pub provider_state: Option<String>,
+    /// The strongest `execution` word across the responsibilities
+    /// (`live` > `idle` > `absent` > anything else, first seen): `absent`
+    /// means the provider's presence is live but names none of this pair's
+    /// executions, which must not read as idle. Absent when no row carried
+    /// the field.
+    pub execution: Option<String>,
+}
+
+/// [`observe_host_runtime_availability`] plus the presence fields the desktop
+/// status text needs to say idle rather than disconnected.
+pub(crate) async fn observe_host_runtime(
+    app: &AppHandle,
+    actor: &str,
+    relay: &str,
+) -> Option<HostRuntimeObservation> {
     let ctx = context().ok()?;
     stop_intent::require_host_ownership(&ctx, actor, relay).ok()?;
     let transport = Transport::owner(app, relay).ok()?;
-    availability_from_transport(actor, &transport).await
+    runtime_from_transport(actor, &transport).await
 }
+/// Lease-only view of [`runtime_from_transport`], kept for the availability
+/// tests that pin the signed-lease projection.
+#[cfg(test)]
 async fn availability_from_transport(actor: &str, client: &impl RelayTransport) -> Option<bool> {
+    runtime_from_transport(actor, client)
+        .await
+        .map(|observed| observed.runtime_available)
+}
+async fn runtime_from_transport(
+    actor: &str,
+    client: &impl RelayTransport,
+) -> Option<HostRuntimeObservation> {
     let request = beekeeper_agent_management::LifecycleRequest {
         agent_pubkey: actor.into(),
         ..Default::default()
@@ -224,10 +268,42 @@ async fn availability_from_transport(actor: &str, client: &impl RelayTransport) 
     let observed = beekeeper_agent_management::status(&request, client)
         .await
         .ok()?;
-    observed
-        .get("responsibilities")
-        .and_then(Value::as_array)
-        .map(|rows| rows.iter().any(|row| row["runtime_available"] == true))
+    let rows = observed.get("responsibilities").and_then(Value::as_array)?;
+    Some(fold_runtime_rows(rows))
+}
+/// Fold management `status` responsibility rows into one observation. Pure,
+/// so the presence rule is testable without a transport.
+pub(crate) fn fold_runtime_rows(rows: &[Value]) -> HostRuntimeObservation {
+    let runtime_available = rows.iter().any(|row| row["runtime_available"] == true);
+    let presence_of = |row: &Value| row["providerPresence"].as_str().map(str::to_owned);
+    let live_row = rows
+        .iter()
+        .find(|row| presence_of(row).as_deref() == Some("live"));
+    let provider_presence = if live_row.is_some() {
+        Some("live".to_owned())
+    } else if rows
+        .iter()
+        .any(|row| presence_of(row).as_deref() == Some("expired"))
+    {
+        Some("expired".to_owned())
+    } else {
+        rows.iter().find_map(presence_of)
+    };
+    let execution_of = |row: &Value| row["execution"].as_str().map(str::to_owned);
+    let execution = ["live", "idle", "absent"]
+        .iter()
+        .find(|word| {
+            rows.iter()
+                .any(|row| execution_of(row).as_deref() == Some(word))
+        })
+        .map(|word| (*word).to_owned())
+        .or_else(|| rows.iter().find_map(execution_of));
+    HostRuntimeObservation {
+        runtime_available,
+        provider_presence,
+        provider_state: live_row.and_then(|row| row["providerState"].as_str().map(str::to_owned)),
+        execution,
+    }
 }
 #[cfg(test)]
 #[path = "host_runtime_availability_tests.rs"]

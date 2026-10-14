@@ -5,6 +5,7 @@ import {
   markPendingCodingSessionTurnDegraded,
   markPendingCodingSessionTurnDeliveryUnknown,
   markPendingCodingSessionTurnInjected,
+  markPendingCodingSessionTurnInterrupted,
   markPendingCodingSessionTurnQueued,
 } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import type { CodingSessionCommandRefusal } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
@@ -301,12 +302,17 @@ function CodingSessionTurnRefusalWatcher({
   const degradedMessage = degraded?.message ?? null;
   const started = stage === "started";
   const injected = stage === "injected";
+  // The provider restarted with this turn's process still present. Not
+  // started-and-done, not refused: the row says so and waits for the
+  // terminal `failed` under this command id.
+  const interrupted = stage === "interrupted";
   // Queued and degraded are the two stages that leave the turn in the
   // provider's hands. While it is there, this turn's fate is still open. A
   // delivery-unknown answer is held too: the provider will not act on it
   // again by itself, but a late acknowledgement can reconcile it as injected
   // (or as never delivered), and that receipt has to land on something.
-  const held = queued || degraded !== null || deliveryUnknown !== null;
+  const held =
+    queued || degraded !== null || deliveryUnknown !== null || interrupted;
 
   // The same subscription answers a second question the person can see: the
   // provider signed for this turn and parked it behind work already running.
@@ -333,6 +339,12 @@ function CodingSessionTurnRefusalWatcher({
     if (!injected) return;
     markPendingCodingSessionTurnInjected(channelId, turn.commandId);
   }, [channelId, injected, turn.commandId]);
+  // And the restart case: the row relabels itself "interrupted, outcome
+  // unconfirmed" and is held — the terminal receipt still has to land.
+  React.useEffect(() => {
+    if (!interrupted) return;
+    markPendingCodingSessionTurnInterrupted(channelId, turn.commandId);
+  }, [channelId, interrupted, turn.commandId]);
   // And the answer that is neither: the provider could not establish
   // delivery and will not retry. The row is relabelled and kept — with the
   // words — for the person to dismiss or re-send on their own judgement. The

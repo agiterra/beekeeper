@@ -1239,6 +1239,19 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             .await;
             return;
         }
+        if kind_u32 == beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_PRESENCE {
+            super::provider_presence::handle_provider_presence_event(
+                event,
+                conn_id,
+                pubkey_bytes,
+                channel_ids,
+                &event_id_hex,
+                conn,
+                state,
+            )
+            .await;
+            return;
+        }
         if kind_u32 == beekeeper_core::kind::KIND_CODING_SESSION_LEASE {
             super::session_lease::handle_session_lease_event(
                 event,

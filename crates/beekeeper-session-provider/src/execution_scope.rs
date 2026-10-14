@@ -261,10 +261,14 @@ pub enum RuntimeProfile {
     /// Codex through codex-acp (candidate A).
     Codex,
     /// A protected configured ACP adapter with private generic HOME and explicit env only.
-    /// No vendor login is inherited or native capabilities inferred.
+    /// No vendor login is inherited or native capabilities inferred. Every
+    /// driver that is not Claude or Codex runs this way — a plugged runtime
+    /// gets the boundary, a private home and only the environment its
+    /// descriptor and credential file supply.
     GenericManaged,
-    /// A runtime whose state and context requirements have not been verified
-    /// under the boundary. Refused where a backend exists.
+    /// A launch with no adapter to run: an empty or placeholder command.
+    /// Refused where a backend exists. Never the answer for a driver slug the
+    /// provider merely has not heard of — that is [`Self::GenericManaged`].
     Unsupported,
     /// No model runtime: a host-run project command, which needs the
     /// project's tools and configuration but no model login.
@@ -274,15 +278,47 @@ pub enum RuntimeProfile {
     TestDouble,
 }
 
+/// The adapter command the managed-actor slot carries until protected
+/// settings supply a real one (`beekeeper_host_core::managed_runtime`). A
+/// launch that still names it has no adapter, so it is refused rather than
+/// run as a generic adapter.
+pub const PLACEHOLDER_ADAPTER_COMMAND: &str = "beekeeper-managed-adapter-required";
+
 impl RuntimeProfile {
-    /// The profile for a driver slug.
+    /// The profile for a driver slug: Claude and Codex by name, every other
+    /// slug — including one this build has never seen — the generic managed
+    /// profile. Only a blank slug is [`Self::Unsupported`]; see
+    /// [`Self::for_launch`] for the command-side refusal.
     #[must_use]
     pub fn for_driver(driver: &str) -> Self {
         match driver {
             crate::agent_fence::CLAUDE_DRIVER => Self::Claude,
             "codex-acp" => Self::Codex,
-            _ => Self::Unsupported,
+            blank if blank.trim().is_empty() => Self::Unsupported,
+            _ => Self::GenericManaged,
         }
+    }
+
+    /// The profile for a launch: [`Self::for_driver`] unless the adapter
+    /// command is empty or the managed-actor placeholder, which has nothing
+    /// to run and is [`Self::Unsupported`].
+    #[must_use]
+    pub fn for_launch(driver: &str, agent_command: &str) -> Self {
+        if Self::command_is_placeholder(agent_command) {
+            return Self::Unsupported;
+        }
+        Self::for_driver(driver)
+    }
+
+    /// Whether `agent_command` names no adapter at all.
+    #[must_use]
+    pub fn command_is_placeholder(agent_command: &str) -> bool {
+        let command = agent_command.trim();
+        command.is_empty()
+            || std::path::Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == PLACEHOLDER_ADAPTER_COMMAND)
     }
 
     fn model_auth(self) -> ModelAuth {
@@ -658,9 +694,10 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         return Err(refuse(
             EXECUTION_BOUNDARY_UNAVAILABLE,
             format!(
-                "the {} runtime has not been verified to run inside the project execution \
-                 boundary on this Mac, so this project execution was not started. Use a Claude \
-                 or Codex runtime for project work.",
+                "the {} runtime names no adapter to run inside the project execution boundary \
+                 (its command is empty or a placeholder), so this project execution was not \
+                 started. Commission it with an adapter command (bee host commission \
+                 --driver <command>).",
                 inputs.driver
             ),
         ));

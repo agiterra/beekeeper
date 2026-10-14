@@ -838,6 +838,10 @@ fn stage_rank(status: ReceiptStatus) -> u8 {
         // follows a late `turn_started` of a reconciled attempt is the newer
         // fact about the same command.
         ReceiptStatus::TurnInjected => 4,
+        // The provider restarted with this turn's process still present:
+        // later than `turn_started`, earlier than the terminal `failed` that
+        // follows once the witness proves the group gone.
+        ReceiptStatus::TurnInterrupted => 4,
         ReceiptStatus::TurnDropped
         | ReceiptStatus::TurnRefused
         | ReceiptStatus::TurnDeliveryUnknown => 5,
@@ -992,6 +996,13 @@ pub fn fold_delivery(
         // whether to send again — which is why `delivered` is `null` here and
         // not `false`.
         ReceiptStatus::TurnDeliveryUnknown => (None, format!("delivery unknown: {error}")),
+        // The turn was running when the provider restarted and its process
+        // was still present: delivered, outcome unconfirmed until the
+        // terminal `failed` under this same command id.
+        ReceiptStatus::TurnInterrupted => (
+            Some(true),
+            format!("{asked} accepted; the turn was interrupted by a provider restart, outcome unconfirmed"),
+        ),
         ReceiptStatus::InterruptDelivered => (
             Some(true),
             format!("{asked} delivered; the running turn was cancelled"),

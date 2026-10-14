@@ -553,6 +553,7 @@ fn generator_for(state_dir: &Path, script: String) -> AcpTitleGenerator {
         agent_command: "bash".into(),
         agent_args: vec![script],
         cli_env: Vec::new(),
+        credential_env: Vec::new(),
         model: "haiku".into(),
         runtime_profile_override: Some(RuntimeProfile::TestDouble),
     }

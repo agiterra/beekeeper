@@ -85,6 +85,10 @@ pub struct ProviderEnvInputs<'a> {
     /// Turns one crew session may start; `None` keeps the provider default
     /// (200), `Some(0)` removes the budget.
     pub turn_budget: Option<u64>,
+    /// `checkpointOnStop` from host.json: exported as
+    /// `BEEKEEPER_CSP_CHECKPOINT_ON_STOP=1` only when on, so a provider that
+    /// was never asked sees no variable at all rather than a `0`.
+    pub checkpoint_on_stop: bool,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -197,6 +201,14 @@ fn build_canonical_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Stri
         env.insert(
             "BEEKEEPER_CSP_IDLE_TIMEOUT".to_string(),
             idle_timeout.to_string(),
+        );
+    }
+    if inputs.checkpoint_on_stop {
+        // Absent rather than "0" when off: an unset switch and a switch that
+        // somebody turned off are different facts, and only one is a request.
+        env.insert(
+            "BEEKEEPER_CSP_CHECKPOINT_ON_STOP".to_string(),
+            "1".to_string(),
         );
     }
     if let Some(turn_budget) = inputs.turn_budget {

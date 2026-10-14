@@ -108,7 +108,15 @@ export type CodingSessionTurnProgress =
    * `started` because it is the later fact about the same command — and it
    * never opens a turn of its own.
    */
-  | { stage: "injected"; turnId: string };
+  | { stage: "injected"; turnId: string }
+  /**
+   * The provider restarted while the turn's process was still present and
+   * cannot say whether it is still working (`turn_interrupted`, quiescence
+   * unconfirmed). Outranks every other stage: it is the latest fact about
+   * the turn, and the only one that says the outcome is not yet known. The
+   * terminal `failed` under the same command id is what ends it.
+   */
+  | { stage: "interrupted" };
 
 /**
  * How a turn ended without a run the provider can vouch for, in the
@@ -248,6 +256,16 @@ export class CodingSessionTurnReceiptIndex {
     commandId: string,
     providerAuthorityPubkey: string,
   ): CodingSessionTurnProgress | null {
+    if (
+      this.resolve(
+        channelId,
+        commandId,
+        "turn_interrupted",
+        providerAuthorityPubkey,
+      )
+    ) {
+      return { stage: "interrupted" };
+    }
     const injected = this.resolve(
       channelId,
       commandId,

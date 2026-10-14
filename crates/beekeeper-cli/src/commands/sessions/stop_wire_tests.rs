@@ -74,6 +74,7 @@ fn metadata_event(
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     json!({
         "id": id,
@@ -104,6 +105,7 @@ fn signed_receipt(
         error,
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let event = build_coding_session_lifecycle_receipt(
         uuid::Uuid::parse_str(CHANNEL).expect("channel"),

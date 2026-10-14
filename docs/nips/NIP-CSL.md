@@ -839,7 +839,7 @@ transcript remain independently verifiable facts.
 
 A [NIP-CSC](NIP-CSC.md) turn gets its own receipts, distinct from the six
 lifecycle statuses above, so an operator or a sibling agent can watch a turn
-land without polling the transcript. Eight statuses:
+land without polling the transcript. Nine statuses:
 
 - `turn_queued` — the command was accepted into the session's mailbox and has
   not started yet.
@@ -1133,6 +1133,73 @@ Provider outboxes fence each publication by semantic key, current provider
 signing pubkey, and exact event kind, so a signing-key rotation cannot reuse an
 event signed by the previous key.
 
+### Fork amendment: `turn_interrupted` — interrupted, then terminal
+
+`turn_interrupted` is the ninth turn-stage status. A provider that restarts
+and finds a turn recorded open has, until now, synthesized the turn's failed
+`result` at once. When the turn's recorded process group is **still
+present** that result is a guess: the adapter may still be editing the
+worktree. So the provider says what it knows:
+
+1. A `turn_interrupted` receipt under the turn's `commandId`, with the five
+   receipt keys **plus a sixth, `quiescence: "unconfirmed"`** — the only
+   extra key, and the only value it takes. `session` names the execution the
+   turn addressed; `error` is `null`. Keyed by `(commandId, turn_interrupted)`
+   like every turn stage. No transcript `result` is published yet.
+2. The provider keeps asking the existing process witness — `killpg(group,
+   0)`, no signal, no reaper — on its runtime tick. Once the group is proved
+   absent, exactly one terminal receipt follows under the **same**
+   `commandId`: status `failed`, `session: null`, `error.code`
+   `TURN_INTERRUPTED_BY_RESTART`; and the synthesized error `result` item
+   closes the turn in the transcript, carrying `errorCode:
+   "TURN_INTERRUPTED_BY_RESTART"`.
+
+A turn whose recorded group is already absent at recovery (or that recorded
+no group at all) keeps the old behaviour: the synthesized `result` at once
+and no `turn_interrupted`. A reader therefore sees one of two shapes per
+interrupted turn, never both halves of each: either a lone `result`, or
+`turn_interrupted` → `failed` → `result`.
+
+Receipt (the sixth key is literal):
+
+```json
+{
+  "schema": "buzz-coding-session-lifecycle-receipt/v1",
+  "commandId": "turn-cmd-7",
+  "status": "turn_interrupted",
+  "session": { "driver": "claude-agent-acp", "instanceId": "…", "sessionId": "…", "generation": 1 },
+  "error": null,
+  "quiescence": "unconfirmed"
+}
+```
+
+### Fork amendment: `MODEL_AUTH_FAILED` and `credentialSource`
+
+When a turn fails because the runtime's credentials no longer authenticate
+(the Claude CLI's `Failed to authenticate`, `OAuth session expired`, `Not
+logged in`), the turn's error `result` item carries two extra keys:
+
+- `errorCode: "MODEL_AUTH_FAILED"`;
+- `credentialSource`: the operator's label for the credentials file the
+  host was given (the runtime descriptor's `credentialSource`), or
+  `"ambient-login"` when the runtime used the machine's own login.
+
+The `result` sentence is chosen by the source. With ambient login it is the
+remedy that already existed: "Claude's login has expired on this computer.
+Run `claude auth login` in a terminal, then send the next turn." With file
+custody that remedy would be wrong — logging in on this computer does not
+refresh a file — so the sentence names the label, asks for a fresh
+credentials file for it, and says to run `bee host restart`. The raw adapter
+text travels alongside as `detail` in both cases. The lifecycle receipt for
+a create whose initial turn failed this way keeps `INITIAL_TURN_FAILED` (a
+consumer branches on it); the code and source are on the transcript item.
+
+The label is the runtime descriptor's `credentialSource`
+(`bee host commission --credential-source`, `docs/runtime-descriptor.md`),
+read from the descriptor the session runs under and echoed into the
+session's 44223 metadata as `credentialSource`, so the remedy and the
+metadata name the same source. There is no environment-variable override.
+
 ### Fork amendment: the receipt's `rewind` object (SV-29)
 
 A receipt answering a `session.rewind` that passed its checks carries one
@@ -1249,6 +1316,73 @@ and lower sequences are rejected. Cold queries require explicit channel scope
 and return the original provider-signed event only while its public lease is
 unexpired.
 
+## Provider presence
+
+Kind `24224` (`KIND_CODING_SESSION_PROVIDER_PRESENCE`) is a provider-signed,
+channel-scoped ephemeral heartbeat about one **provider instance**, not one
+generation. A lease says "this exact generation has a live actor" and says
+nothing when there is no execution at all, so an idle provider and a dead
+one read the same. Presence tells them apart: the provider publishes one
+heartbeat per channel it serves every `ttlSecs / 3` while it runs — idle
+included — signed by the provider key.
+
+Strict content (`buzz-coding-session-provider-presence/v1`), no unknown keys:
+
+```json
+{
+  "schema": "buzz-coding-session-provider-presence/v1",
+  "instanceId": "provider-instance",
+  "seq": 42,
+  "ttlSecs": 90,
+  "state": "idle",
+  "liveTargets": [
+    { "driver": "claude-agent-acp", "instanceId": "provider-instance", "sessionId": "…", "generation": 1 }
+  ]
+}
+```
+
+`seq` is a positive per-process counter; a reader keeps the highest.
+`ttlSecs` is `1..=3600` (default 90). `state` is `idle` or `busy`: busy when
+any live execution in the channel has a turn in flight. `liveTargets` lists
+every live, unclosed generation of this instance in the channel (at most 256)
+and every entry's `instanceId` equals the heartbeat's.
+
+Tags, exactly four, in this order:
+
+```text
+["h", "<canonical channel UUID>"]
+["cspp-v", "cspp1-1"]
+["cspp-instance", "<instanceId>"]
+["cspp-seq", "<canonical decimal seq>"]
+```
+
+A reader judges freshness itself: a heartbeat is **live** while
+`created_at + ttlSecs > now`, **expired** after, and presence is **none**
+when no verified heartbeat from that instance is visible in the channel.
+`beekeeper-agent-management::status` reports this per responsibility as
+`providerPresence: "live"|"expired"|"none"` (with `providerState` and
+`providerPresenceSeq`) and derives one word, `execution`: `stopped` (exact
+signed stop), `live` (unexpired lease), `idle` (no lease, presence live),
+`disconnected` (presence expired or absent). `disconnected` is never said
+while presence is live. The desktop's host-managed status text follows the
+same rule (`desktop/src/features/agents/managedAgentRuntimeStatus.ts`).
+
+Relay rules are the ones 24223 uses: ephemeral, never inserted into
+Postgres, no replacement semantics, WebSocket fan-out to channel members,
+and **retained in the relay's Redis register** so a cold `REQ` is answered.
+The register is keyed by channel, provider key and `instanceId`; a heartbeat
+is admitted only from a channel member, only while its own `created_at +
+ttlSecs` is still ahead of the relay clock, and only with a `seq` higher than
+the one retained (an equal `seq` with the same id is an idempotent replay;
+with a different id it is refused as a conflict). The relay keeps each
+heartbeat for its `ttlSecs`, **capped at 600 seconds**, measured from
+acceptance — a provider asking for an hour cannot keep a dead instance
+readable for an hour. A `REQ` or `/query` for kind 24224 must name an
+explicit, accessible `#h` (the lease rule); the relay re-verifies the signed
+event against the register's facts before returning it. Readers still judge
+liveness from the event itself (`created_at + ttlSecs > now`), never from
+the fact that the relay returned it.
+
 ## Implementation
 
 | Concern | Location |
@@ -1259,3 +1393,6 @@ unexpired.
 | Envelope validation, membership, size caps | `crates/beekeeper-relay/src/handlers/ingest.rs` |
 | Builders | `crates/beekeeper-sdk/src/builders.rs` |
 | Semantic keys | `crates/beekeeper-sdk/src/coding_session.rs` |
+| Presence payload, builder, envelope validation; `turn_interrupted` builder; `MODEL_AUTH_FAILED` | `crates/beekeeper-sdk/src/coding_session.rs` |
+| Presence heartbeats, interrupted turns, credential source | `crates/beekeeper-session-provider/src/{presence.rs,turn_interrupted.rs,credential_source.rs}` |
+| `providerPresence` / `execution` in `status` | `crates/beekeeper-agent-management/src/lifecycle.rs` |

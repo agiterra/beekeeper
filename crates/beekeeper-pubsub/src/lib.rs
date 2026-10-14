@@ -32,6 +32,8 @@ pub mod nip98_replay;
 pub use nip98_replay::RedisNip98ReplayGuard;
 /// Online/offline presence tracking in Redis.
 pub mod presence;
+/// Redis register for provider-signed presence heartbeats (kind 24224).
+pub mod provider_presence;
 /// Redis PUBLISH for channel event fan-out.
 pub mod publisher;
 /// Redis-backed rate limiter (fixed-window INCR + EXPIRE).
@@ -346,6 +348,40 @@ impl PubSubManager {
             &self.pool, ctx, channel_id, target_key, event, sequence, state, proof,
         )
         .await
+    }
+
+    /// Atomically apply a provider-signed presence heartbeat register update.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn apply_provider_presence(
+        &self,
+        ctx: &TenantContext,
+        channel_id: uuid::Uuid,
+        provider_pubkey: &str,
+        instance_id: &str,
+        event: &nostr::Event,
+        seq: u64,
+        ttl_secs: u64,
+    ) -> Result<provider_presence::PresenceApplyOutcome, PubSubError> {
+        provider_presence::apply_provider_presence(
+            &self.pool,
+            ctx,
+            channel_id,
+            provider_pubkey,
+            instance_id,
+            event,
+            seq,
+            ttl_secs,
+        )
+        .await
+    }
+
+    /// Return current signed presence heartbeats for one explicitly scoped channel.
+    pub async fn provider_presence_snapshot(
+        &self,
+        ctx: &TenantContext,
+        channel_id: uuid::Uuid,
+    ) -> Result<Vec<provider_presence::ProviderPresenceRecord>, PubSubError> {
+        provider_presence::provider_presence_snapshot(&self.pool, ctx, channel_id).await
     }
 
     /// Return current signed lease events for one explicitly scoped channel.

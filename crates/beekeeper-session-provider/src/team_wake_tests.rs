@@ -983,6 +983,13 @@ fn verified_provider_stage_or_exact_prompt_echo_settles_the_wake() {
     );
     context.inbox[0].stage = Some(ReceiptStatus::TurnDegraded);
     assert_eq!(command_outcome(&context, "wake-1", &exact_target), None);
+    // A turn the provider's restart interrupted is an outcome — the wake
+    // was delivered — not a gap to fill with a second wake.
+    context.inbox[0].stage = Some(ReceiptStatus::TurnInterrupted);
+    assert_eq!(
+        command_outcome(&context, "wake-1", &exact_target),
+        Some(ReceiptStatus::TurnInterrupted)
+    );
 
     context.inbox[0].command_id = "desktop-fallback-id".into();
     context.inbox[0].content = expected_content.clone();

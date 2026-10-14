@@ -177,6 +177,8 @@ fn sample_runtimes() -> Vec<beekeeper_core::coding_session_runtime::RuntimeDescr
             allowed_models: vec!["default".into()],
             discover_models: true,
             capabilities: None,
+            credential_env: Vec::new(),
+            credential_source: None,
         },
         RuntimeDescriptor {
             steer_idle_guard: None,
@@ -191,6 +193,8 @@ fn sample_runtimes() -> Vec<beekeeper_core::coding_session_runtime::RuntimeDescr
             allowed_models: vec!["default".into()],
             discover_models: false,
             capabilities: None,
+            credential_env: Vec::new(),
+            credential_source: None,
         },
     ]
 }
@@ -210,6 +214,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     })
 }
@@ -301,6 +306,7 @@ fn env_omits_an_empty_runtime_list() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     });
     assert!(!env.contains_key("BEEKEEPER_CSP_RUNTIMES"));
@@ -340,6 +346,7 @@ fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
         rust_log: None,
         emit_raw_sdk_frames,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     };
 
@@ -372,6 +379,7 @@ fn a_chosen_log_filter_beats_the_default() {
         rust_log,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     };
 
@@ -408,6 +416,7 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     };
 
@@ -447,6 +456,7 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     };
 
@@ -461,6 +471,44 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
 
 /// And the same contract again for the crew turn budget (D9). Zero is the
 /// spelling of "no budget" and is a choice, so it is exported; unset is not.
+#[test]
+fn env_exports_the_checkpoint_on_stop_switch_only_when_it_is_on() {
+    let record = sample_record();
+    let base = |checkpoint_on_stop| ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        context_mcp_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+        augmented_path: None,
+        max_sessions: None,
+        turn_idle_timeout_secs: None,
+        rust_log: None,
+        emit_raw_sdk_frames: false,
+        turn_budget: None,
+        checkpoint_on_stop,
+        app_checkout: None,
+    };
+    let off = build_provider_env(&base(false));
+    assert!(
+        !off.contains_key("BEEKEEPER_CSP_CHECKPOINT_ON_STOP"),
+        "off must be absent, not \"0\": {off:?}"
+    );
+    let on = build_provider_env(&base(true));
+    assert_eq!(
+        on.get("BEEKEEPER_CSP_CHECKPOINT_ON_STOP")
+            .map(String::as_str),
+        Some("1")
+    );
+    // host.json spells it `checkpointOnStop`, and an older file without the
+    // key reads as off.
+    let parsed: serde_json::Value =
+        serde_json::from_str(r#"{"checkpointOnStop": true}"#).expect("json");
+    assert_eq!(parsed["checkpointOnStop"], true);
+}
+
 #[test]
 fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
     let record = sample_record();
@@ -478,6 +526,7 @@ fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget,
+        checkpoint_on_stop: false,
         app_checkout: None,
     };
 
@@ -518,6 +567,7 @@ fn the_checkout_the_app_runs_from_is_handed_to_the_provider() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout,
     };
 
@@ -705,6 +755,8 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
                 allowed_models: vec!["default".into()],
                 discover_models: true,
                 capabilities: None,
+                credential_env: Vec::new(),
+                credential_source: None,
             },
             RuntimeDescriptor {
                 steer_idle_guard: None,
@@ -719,6 +771,8 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
                 allowed_models: vec!["default".into()],
                 discover_models: true,
                 capabilities: None,
+                credential_env: Vec::new(),
+                credential_source: None,
             },
         ],
         augmented_path: None,
@@ -727,6 +781,7 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     });
     let raw = env.get("BEEKEEPER_CSP_RUNTIMES").expect("runtimes in env");

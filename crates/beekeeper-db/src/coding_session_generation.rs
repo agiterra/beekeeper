@@ -433,6 +433,7 @@ mod tests {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         };
         EventBuilder::new(
             Kind::Custom(44_224),
@@ -466,6 +467,7 @@ mod tests {
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         };
         EventBuilder::new(
             Kind::Custom(44_224),

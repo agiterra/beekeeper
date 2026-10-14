@@ -76,6 +76,37 @@ void main() {
       );
     });
 
+    test(
+      'turn_interrupted outranks turn_started and is neither settled nor failed',
+      () {
+        final interrupted = settleCodingSessionPendingTurn(_turn(), [
+          _receipt(CodingSessionReceiptStatus.turnQueued),
+          _receipt(
+            CodingSessionReceiptStatus.turnStarted,
+            createdAt: 11,
+            eventId: 'r2',
+          ),
+          _receipt(
+            CodingSessionReceiptStatus.turnInterrupted,
+            createdAt: 12,
+            eventId: 'r3',
+          ),
+        ]);
+        expect(interrupted.phase, CodingSessionPendingPhase.interrupted);
+        expect(interrupted.interrupted, isTrue);
+        expect(interrupted.settled, isFalse);
+        expect(interrupted.failed, isFalse);
+        // For another command it says nothing about this one.
+        final foreign = settleCodingSessionPendingTurn(_turn(), [
+          _receipt(
+            CodingSessionReceiptStatus.turnInterrupted,
+            commandId: 'csc-9',
+          ),
+        ]);
+        expect(foreign.phase, CodingSessionPendingPhase.published);
+      },
+    );
+
     test('settles on turn_started by commandId, never by text', () {
       final started = settleCodingSessionPendingTurn(_turn(), [
         _receipt(CodingSessionReceiptStatus.turnQueued),

@@ -44,23 +44,26 @@ const codingSessionFoundedHeaderLabel =
 
 /// What a pending turn row says for each phase (D4: settled by receipt, never
 /// by text).
-String codingSessionPendingPhaseLabel(CodingSessionPendingTurnView view) =>
-    switch (view.phase) {
-      CodingSessionPendingPhase.sending => 'Sending…',
-      CodingSessionPendingPhase.published =>
-        'Sent · waiting for the provider\'s receipt',
-      CodingSessionPendingPhase.queued => 'Queued for the next turn',
-      CodingSessionPendingPhase.degraded =>
-        'Delivery downgraded${view.detail == null ? '' : ' — ${view.detail}'}',
-      CodingSessionPendingPhase.started => 'Started',
-      CodingSessionPendingPhase.injected => 'Injected into the running turn',
-      CodingSessionPendingPhase.deliveryUnknown =>
-        'Delivery unknown${view.detail == null ? '' : ' — ${view.detail}'}',
-      CodingSessionPendingPhase.refused =>
-        'Refused${view.detail == null ? '' : ' — ${view.detail}'}',
-      CodingSessionPendingPhase.dropped =>
-        'Dropped${view.detail == null ? '' : ' — ${view.detail}'}',
-    };
+String codingSessionPendingPhaseLabel(
+  CodingSessionPendingTurnView view,
+) => switch (view.phase) {
+  CodingSessionPendingPhase.sending => 'Sending…',
+  CodingSessionPendingPhase.published =>
+    'Sent · waiting for the provider\'s receipt',
+  CodingSessionPendingPhase.queued => 'Queued for the next turn',
+  CodingSessionPendingPhase.degraded =>
+    'Delivery downgraded${view.detail == null ? '' : ' — ${view.detail}'}',
+  CodingSessionPendingPhase.started => 'Started',
+  CodingSessionPendingPhase.injected => 'Injected into the running turn',
+  CodingSessionPendingPhase.interrupted =>
+    'Interrupted, outcome unconfirmed — the provider restarted while this turn was running',
+  CodingSessionPendingPhase.deliveryUnknown =>
+    'Delivery unknown${view.detail == null ? '' : ' — ${view.detail}'}',
+  CodingSessionPendingPhase.refused =>
+    'Refused${view.detail == null ? '' : ' — ${view.detail}'}',
+  CodingSessionPendingPhase.dropped =>
+    'Dropped${view.detail == null ? '' : ' — ${view.detail}'}',
+};
 
 /// The primary send label, per the desktop's `codingSessionComposerModel`.
 ///

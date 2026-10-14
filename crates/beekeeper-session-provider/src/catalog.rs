@@ -298,6 +298,8 @@ mod tests {
             allowed_models: allowed.iter().map(|model| (*model).to_owned()).collect(),
             discover_models: false,
             capabilities: None,
+            credential_env: Vec::new(),
+            credential_source: None,
         }
     }
 
@@ -398,6 +400,8 @@ mod tests {
             allowed_models: vec!["default".into()],
             discover_models: false,
             capabilities: None,
+            credential_env: Vec::new(),
+            credential_source: None,
         };
         // Deliberately out of order: the catalog sorts by instance ref.
         let catalog = build(

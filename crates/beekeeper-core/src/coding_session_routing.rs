@@ -3452,6 +3452,7 @@ mod tests {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let json = serde_json::to_string(&metadata).expect("json");
         assert!(

@@ -778,6 +778,47 @@ Tauri command — for the community being edited, not necessarily the active
 one, so editing an inactive workspace still shows the truth about its own
 relay rather than the currently-connected one's.
 
+### `supported_kinds`
+
+*Added 2026-10-14 (headless pluggable slice, Step 3).*
+
+The document also says **which event kinds this build speaks**, so a foreign
+client can tell before it signs anything whether the relay understands, say,
+a host-step claim:
+
+```json
+"supported_kinds": [
+  {"kind": 44221, "name": "coding_session_lifecycle_command",
+   "schemas": ["buzz-coding-session-lifecycle-command/v1"]},
+  {"kind": 46022, "name": "host_step_claim", "schemas": ["buzz-host-step/v1"]},
+  ...
+]
+```
+
+One entry per `pub const KIND_*` in `crates/beekeeper-core/src/kind.rs`, sorted
+by number. `name` is the constant's name without its `KIND_` prefix,
+lowercased. `schemas` lists the `buzz-…/vN` / `beekeeper-…/vN` content schema
+identifiers the relay accepts under that kind, cited from the constants that
+define them (`beekeeper-core`, `beekeeper-sdk`, or the relay's own
+`APPROVAL_REQUEST_SCHEMA`); it is an **empty array**, never an omitted key,
+for a kind whose content carries no schema string (NIP-01 kinds, NIP-29
+commands, kinds versioned by a tag such as 44226's `csg-v`). Absent only from
+relays that predate the field.
+
+The list is generated, not maintained: `supported_kinds()` in
+`crates/beekeeper-relay/src/nip11.rs` builds it from a table whose rows name
+the constants themselves, and three tests fence it — every registry constant
+has a row, every wire-schema constant in core and the SDK is attributed to a
+kind (or named as a non-event document such as a fold digest), and the JSON
+shape is pinned. Adding a kind without a row, or a schema without a kind,
+fails `cargo test -p beekeeper-relay nip11`.
+
+Presence in the list means the registry names the number and the relay
+applies its rules (ephemeral, replaceable, channel/project scoping, ingest
+validation); it does not promise a dedicated handler for every kind — kind 41
+is listed and unused. Read it with `conformance/foreign-client/foreign-info.mjs`
+(see `docs/INTEGRATING.md`).
+
 ### `limitation.rate_limits`
 
 *Added 2026-09-07 (relay admission split).*

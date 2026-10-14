@@ -363,6 +363,7 @@ fn a_strangers_metadata_cannot_widen_a_missions_binding() {
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let content = serde_json::to_string(&metadata).expect("metadata json");
         beekeeper_core::coding_session_payload::decode_coding_session_metadata(&content)

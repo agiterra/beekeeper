@@ -1494,6 +1494,8 @@ function turnReceipt(status, overrides = {}) {
   };
   if (status === "turn_started") base.turnId = "turn-abc";
   if (status === "turn_injected") base.turnId = "turn-abc";
+  // The third six-key status: quiescence, and only ever "unconfirmed".
+  if (status === "turn_interrupted") base.quiescence = "unconfirmed";
   if (status === "turn_delivery_unknown") {
     base.error = {
       code: "STEER_ACK_LOST",

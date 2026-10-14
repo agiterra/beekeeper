@@ -115,6 +115,7 @@ fn metadata_event(
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     json!({
         "id": id,
@@ -213,6 +214,7 @@ fn receipt_event(
         }),
         turn_id: turn_id.map(str::to_owned),
         rewind: None,
+        quiescence: None,
     };
     json!({
         "id": id,
@@ -1485,6 +1487,7 @@ fn receipt_event_signed_by(
         error: None,
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     json!({
         "id": id,
@@ -4125,6 +4128,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         }),
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let receipt = build_coding_session_lifecycle_receipt(
         channel,
@@ -4159,6 +4163,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     let metadata = build_coding_session_metadata(
         channel,
@@ -4278,6 +4283,7 @@ fn rival_seated_create(
             error: None,
             turn_id: None,
             rewind: None,
+            quiescence: None,
         };
         let receipt = build_coding_session_lifecycle_receipt(
             channel,
@@ -4312,6 +4318,7 @@ fn rival_seated_create(
             pack_ref: None,
             handover: None,
             compose_ref: None,
+            credential_source: None,
         };
         let metadata = build_coding_session_metadata(
             channel,
@@ -4485,6 +4492,7 @@ fn unbound_receipt(channel: &str, command_id: &str, created_at_offset: u64) -> V
         }),
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let channel = Uuid::parse_str(channel).expect("channel UUID");
     let mut event = serde_json::to_value(

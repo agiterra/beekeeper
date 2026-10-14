@@ -1109,7 +1109,7 @@ async fn query_events_authed(
     if crate::handlers::req::session_lease_filter_missing_explicit_channel(&filters) {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
-            "coding-session lease queries require explicit #h",
+            "coding-session lease and provider-presence queries require explicit #h",
         ));
     }
     // NIP-MP Pulse request shape (400 level, not the authorization boundary).
@@ -1156,7 +1156,7 @@ async fn query_events_authed(
     ) {
         return Err(api_error(
             StatusCode::FORBIDDEN,
-            "coding-session lease channel is not accessible",
+            "coding-session lease or provider-presence channel is not accessible",
         ));
     }
 
@@ -2598,7 +2598,8 @@ async fn synthesize_presence(
     Some(Ok(events))
 }
 
-/// Serve kind-24223 filter branches from Redis, preserving provider signatures.
+/// Serve kind-24223 (lease) and kind-24224 (provider presence) filter
+/// branches from their Redis registers, preserving provider signatures.
 async fn synthesize_session_leases(
     state: &AppState,
     tenant: &beekeeper_core::tenant::TenantContext,
@@ -2613,7 +2614,7 @@ async fn synthesize_session_leases(
     (StatusCode, Json<Value>),
 > {
     use beekeeper_core::filter::filters_match;
-    use beekeeper_core::kind::KIND_CODING_SESSION_LEASE;
+    use beekeeper_core::kind::{KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_PROVIDER_PRESENCE};
 
     let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
     let mut events = Vec::new();
@@ -2624,15 +2625,27 @@ async fn synthesize_session_leases(
         let Some(kinds) = filter.kinds.as_ref() else {
             continue;
         };
+        let is_register_kind = |kind: u32| {
+            kind == KIND_CODING_SESSION_LEASE || kind == KIND_CODING_SESSION_PROVIDER_PRESENCE
+        };
         if !kinds
             .iter()
-            .any(|kind| kind.as_u16() as u32 == KIND_CODING_SESSION_LEASE)
+            .any(|kind| is_register_kind(kind.as_u16() as u32))
         {
             continue;
         }
-        if kinds.len() == 1 {
+        if kinds
+            .iter()
+            .all(|kind| is_register_kind(kind.as_u16() as u32))
+        {
             handled.insert(index);
         }
+        let wants_lease = kinds
+            .iter()
+            .any(|kind| kind.as_u16() as u32 == KIND_CODING_SESSION_LEASE);
+        let wants_presence = kinds
+            .iter()
+            .any(|kind| kind.as_u16() as u32 == KIND_CODING_SESSION_PROVIDER_PRESENCE);
         let Some(channel_values) = filter.generic_tags.get(&h) else {
             continue;
         };
@@ -2643,21 +2656,51 @@ async fn synthesize_session_leases(
             .filter_map(|value| value.parse::<uuid::Uuid>().ok())
             .filter(|channel_id| accessible_channels.contains(channel_id))
         {
-            let snapshot = state
-                .pubsub
-                .session_lease_snapshot(tenant, channel_id)
-                .await
-                .map_err(|error| internal_error(&format!("session lease snapshot: {error}")))?;
-            for record in snapshot {
+            let mut register_events = Vec::new();
+            if wants_lease {
+                let snapshot = state
+                    .pubsub
+                    .session_lease_snapshot(tenant, channel_id)
+                    .await
+                    .map_err(|error| internal_error(&format!("session lease snapshot: {error}")))?;
+                for record in snapshot {
+                    register_events.push(
+                        crate::handlers::req::validate_session_lease_snapshot_record(
+                            &record, channel_id,
+                        )
+                        .map_err(|error| {
+                            internal_error(&format!(
+                                "invalid session lease snapshot record: {error}"
+                            ))
+                        })?,
+                    );
+                }
+            }
+            if wants_presence {
+                let snapshot = state
+                    .pubsub
+                    .provider_presence_snapshot(tenant, channel_id)
+                    .await
+                    .map_err(|error| {
+                        internal_error(&format!("provider presence snapshot: {error}"))
+                    })?;
+                for record in snapshot {
+                    register_events.push(
+                        crate::handlers::req::validate_provider_presence_snapshot_record(
+                            &record, channel_id,
+                        )
+                        .map_err(|error| {
+                            internal_error(&format!(
+                                "invalid provider presence snapshot record: {error}"
+                            ))
+                        })?,
+                    );
+                }
+            }
+            for event in register_events {
                 if filter_count >= limit {
                     break;
                 }
-                let event = crate::handlers::req::validate_session_lease_snapshot_record(
-                    &record, channel_id,
-                )
-                .map_err(|error| {
-                    internal_error(&format!("invalid session lease snapshot record: {error}"))
-                })?;
                 let stored =
                     beekeeper_core::event::StoredEvent::new(event.clone(), Some(channel_id));
                 if !filters_match(std::slice::from_ref(filter), &stored) || !seen.insert(event.id) {

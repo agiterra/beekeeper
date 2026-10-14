@@ -112,10 +112,28 @@ async fn restart_wire_backlog_stays_below_quota_and_create_receipt_overtakes_it(
             (1..=21).contains(&background),
             "paced background frames: {background}"
         );
+        // Presence heartbeats (kind 24224, NIP-CSL § Provider presence) are
+        // their own class: one per subscribed channel every `ttlSecs / 3`
+        // (30s), idle included, by design. They are bounded per channel so a
+        // regression in the heartbeat clock shows here, and excluded from the
+        // backlog quota below, which proves the original claim — that the
+        // restart's background rows stay paced and never crowd the wire.
+        let presence = received
+            .iter()
+            .filter(|event| {
+                u32::from(event.kind.as_u16())
+                    == beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_PRESENCE
+            })
+            .count();
         assert!(
-            received.len() < 30,
-            "actual EVENT frames in 60s: {}",
-            received.len()
+            presence <= channels.len() * 3,
+            "presence heartbeats in 60s: {presence} for {} channels",
+            channels.len()
+        );
+        assert!(
+            received.len() - presence < 30,
+            "actual non-presence EVENT frames in 60s: {} ({presence} presence heartbeats besides)",
+            received.len() - presence
         );
         assert!(
             background < 96,

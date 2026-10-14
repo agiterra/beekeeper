@@ -181,6 +181,7 @@ pub(super) fn execution_events(
         bee_stamp: None,
         pack_ref: None,
         compose_ref: None,
+        credential_source: None,
         handover: None,
     };
     let metadata_event = build_coding_session_metadata(
@@ -255,6 +256,7 @@ fn resume_execution_events(
         bee_stamp: None,
         pack_ref: None,
         compose_ref: None,
+        credential_source: None,
         handover: None,
     };
     let metadata_event = build_coding_session_metadata(

@@ -41,8 +41,8 @@ async fn status_for(
         ),
         Err(error) => (ManagedAgentRuntimeLifecycle::Failed, Some(error)),
     };
-    let runtime_available = if lifecycle == ManagedAgentRuntimeLifecycle::HostManaged {
-        crate::commands::agents::headless_management::observe_host_runtime_availability(
+    let observed = if lifecycle == ManagedAgentRuntimeLifecycle::HostManaged {
+        crate::commands::agents::headless_management::observe_host_runtime(
             app,
             &key.pubkey,
             &key.relay_url,
@@ -57,7 +57,16 @@ async fn status_for(
         requested_relay_url: requested,
         local_setup: false,
         lifecycle,
-        runtime_available,
+        runtime_available: observed.as_ref().map(|observed| observed.runtime_available),
+        provider_presence: observed
+            .as_ref()
+            .and_then(|observed| observed.provider_presence.clone()),
+        provider_state: observed
+            .as_ref()
+            .and_then(|observed| observed.provider_state.clone()),
+        execution: observed
+            .as_ref()
+            .and_then(|observed| observed.execution.clone()),
         pid: None,
         error,
         log_path: super::managed_agent_runtime_log_path(app, key)

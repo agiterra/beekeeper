@@ -141,6 +141,7 @@ NostrEvent receiptEvent({
   Map<String, Object?>? error,
   String? turnId,
   Map<String, Object?>? rewind,
+  String? quiescence,
 }) {
   final resolved = status == 'failed' ? null : (forTarget ?? target());
   final payload = <String, Object?>{
@@ -151,6 +152,7 @@ NostrEvent receiptEvent({
     'error': error,
     'turnId': ?turnId,
     'rewind': ?rewind,
+    'quiescence': ?quiescence,
   };
   final receiptStatus = CodingSessionReceiptStatus.fromWire(status)!;
   return event(

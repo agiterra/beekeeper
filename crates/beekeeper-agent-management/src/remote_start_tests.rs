@@ -348,6 +348,7 @@ fn metadata(
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     beekeeper_sdk::build_coding_session_metadata(
         channel,

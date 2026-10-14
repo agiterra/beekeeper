@@ -80,7 +80,7 @@ pub(crate) fn execution_plan_for(
     } else {
         config
             .runtime_profile_override
-            .unwrap_or_else(|| RuntimeProfile::for_driver(facts.driver))
+            .unwrap_or_else(|| RuntimeProfile::for_launch(facts.driver, facts.agent_command))
     };
     inputs.runtime_roots = &runtime_roots;
     inputs.agent_command = facts.agent_command;

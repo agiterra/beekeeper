@@ -40,6 +40,13 @@ pub struct RelayInfo {
     /// Draft/extension protocol identifiers supported by this relay.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supported_extensions: Option<Vec<String>>,
+    /// Every event kind this relay's registry names, with the content
+    /// schema identifiers it understands for each — generated from
+    /// `beekeeper_core::kind` and the schema constants by
+    /// [`supported_kinds`], never retyped. Absent (empty) only in documents
+    /// from relays that predate the field. See `docs/INTEGRATION.md` § NIP-11.
+    #[serde(default)]
+    pub supported_kinds: Vec<SupportedKind>,
     /// NIP-PL executor descriptor. Present only when push delivery is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub push: Option<serde_json::Value>,
@@ -266,6 +273,7 @@ impl RelayInfo {
             contact: None,
             supported_nips,
             supported_extensions: Some(vec!["nip-er".to_string()]),
+            supported_kinds: supported_kinds(),
             push: None,
             software: "https://github.com/agiterra/beekeeper".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -277,6 +285,312 @@ impl RelayInfo {
             build_time: crate::build_info::build_time().to_string(),
         }
     }
+}
+
+/// One entry of the NIP-11 `supported_kinds` list: a kind number the relay's
+/// registry names, the registry's own name for it, and the content schema
+/// identifiers (`buzz-…/v1`, `beekeeper-…/v1`) the relay understands under it.
+///
+/// `schemas` is empty for a kind whose content carries no schema string
+/// (plain NIP-01 kinds, NIP-29 moderation commands, kinds whose envelope is
+/// versioned by a tag such as 44226's `csg-v`) — an empty list is the
+/// disclosed answer "no schema identifier", never "unknown".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportedKind {
+    /// The kind number.
+    pub kind: u32,
+    /// The registry constant's name, lowercased without its `KIND_` prefix
+    /// (`KIND_HOST_STEP_CLAIM` → `host_step_claim`).
+    pub name: String,
+    /// Content schema identifiers accepted under this kind, in table order.
+    pub schemas: Vec<String>,
+}
+
+/// A row of [`SUPPORTED_KIND_TABLE`]: the registry constant and the schema
+/// constants that describe its content. Built only by [`kind_entry!`], which
+/// takes the identifiers themselves, so a renumbered kind or a renamed schema
+/// changes the document without anyone editing this file — and a kind added
+/// to the registry without a row here fails
+/// `supported_kinds_cover_every_registry_constant`.
+struct KindEntry {
+    kind: u32,
+    constant: &'static str,
+    schemas: &'static [&'static str],
+}
+
+macro_rules! kind_entry {
+    ($kind:ident) => {
+        KindEntry {
+            kind: $kind,
+            constant: stringify!($kind),
+            schemas: &[],
+        }
+    };
+    ($kind:ident => [$($schema:expr),+ $(,)?]) => {
+        KindEntry {
+            kind: $kind,
+            constant: stringify!($kind),
+            schemas: &[$($schema),+],
+        }
+    };
+}
+
+/// The registry, one row per `pub const KIND_*` in `beekeeper_core::kind`,
+/// joined to the schema constants whose content travels under that kind.
+///
+/// Ordering here is by registry section, not by number; [`supported_kinds`]
+/// sorts. The relay-private `APPROVAL_REQUEST_SCHEMA` (kind 46010) is the one
+/// schema constant that lives in this crate rather than in core.
+const SUPPORTED_KIND_TABLE: &[KindEntry] = {
+    use beekeeper_core::agents_repo_draft::AGENTS_REPO_DRAFT_SCHEMA;
+    use beekeeper_core::ci_result::CI_RESULT_SCHEMA;
+    use beekeeper_core::coding_session_catalog::CATALOG_SCHEMA;
+    use beekeeper_core::coding_session_checkpoint::CODING_SESSION_CHECKPOINT_SCHEMA;
+    use beekeeper_core::coding_session_command::CODING_SESSION_COMMAND_SCHEMA;
+    use beekeeper_core::coding_session_handover::CODING_SESSION_HANDOVER_SCHEMA;
+    use beekeeper_core::coding_session_lease::CODING_SESSION_LEASE_SCHEMA;
+    use beekeeper_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA;
+    use beekeeper_core::coding_session_observation::CODING_SESSION_OBSERVATION_SCHEMA;
+    use beekeeper_core::coding_session_payload::{
+        LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA, TRANSCRIPT_SCHEMA,
+    };
+    use beekeeper_core::coding_session_policy::CODING_SESSION_POLICY_SCHEMA;
+    use beekeeper_core::coding_session_team_transaction::CODING_SESSION_TEAM_TRANSACTION_SCHEMA;
+    use beekeeper_core::coding_session_title::CODING_SESSION_TITLE_SCHEMA;
+    use beekeeper_core::host_step::HOST_STEP_SCHEMA;
+    use beekeeper_core::kind::*;
+    use beekeeper_core::project_artifact_pin::PROJECT_ARTIFACT_PIN_SCHEMA;
+    use beekeeper_core::project_pack_source::{
+        PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA, PROJECT_PACK_SOURCE_SCHEMA,
+    };
+    use beekeeper_core::project_todo::PROJECT_TODO_SCHEMA;
+    use beekeeper_core::project_work::PROJECT_WORK_SCHEMA;
+    use beekeeper_core::pulse::PULSE_ENTRY_SCHEMA;
+    use beekeeper_core::repository_protection::REPOSITORY_PROTECTION_SCHEMA;
+    use beekeeper_core::workflow_autorun::AUTORUN_SCHEMA;
+
+    use crate::workflow_sink::APPROVAL_REQUEST_SCHEMA;
+
+    &[
+        // NIP-01 / standard kinds
+        kind_entry!(KIND_PROFILE),
+        kind_entry!(KIND_TEXT_NOTE),
+        kind_entry!(KIND_CONTACT_LIST),
+        kind_entry!(KIND_DELETION),
+        kind_entry!(KIND_REACTION),
+        kind_entry!(KIND_CHANNEL_METADATA),
+        kind_entry!(KIND_GIFT_WRAP),
+        kind_entry!(KIND_FILE_METADATA),
+        kind_entry!(KIND_REPORT),
+        kind_entry!(KIND_MUTE_LIST),
+        kind_entry!(KIND_PIN_LIST),
+        kind_entry!(KIND_NIP65_RELAY_LIST_METADATA),
+        kind_entry!(KIND_BOOKMARK_LIST),
+        kind_entry!(KIND_EMOJI_LIST),
+        kind_entry!(KIND_FOLLOW_SET),
+        kind_entry!(KIND_BOOKMARK_SET),
+        kind_entry!(KIND_EMOJI_SET),
+        kind_entry!(KIND_LONG_FORM),
+        kind_entry!(KIND_USER_STATUS),
+        kind_entry!(KIND_READ_STATE),
+        kind_entry!(KIND_AUTH),
+        kind_entry!(KIND_BLOSSOM_AUTH),
+        kind_entry!(KIND_NOSTR_IDENTITY_BINDING),
+        kind_entry!(KIND_HTTP_AUTH),
+        // Agents, personas, teams, reminders, push
+        kind_entry!(KIND_AGENT_PROFILE),
+        kind_entry!(KIND_AGENT_ENGRAM),
+        kind_entry!(KIND_EVENT_REMINDER),
+        kind_entry!(KIND_PUSH_LEASE),
+        kind_entry!(KIND_PRIVATE_MANAGED_AGENT),
+        kind_entry!(KIND_PERSONA),
+        kind_entry!(KIND_TEAM),
+        kind_entry!(KIND_MANAGED_AGENT),
+        kind_entry!(KIND_TEAM_CATALOG),
+        kind_entry!(KIND_PRODUCT_FEEDBACK),
+        // NIP-29 groups, moderation, projects, membership
+        kind_entry!(KIND_NIP29_PUT_USER),
+        kind_entry!(KIND_NIP29_REMOVE_USER),
+        kind_entry!(KIND_NIP29_EDIT_METADATA),
+        kind_entry!(KIND_NIP29_DELETE_EVENT),
+        kind_entry!(KIND_NIP29_CREATE_GROUP),
+        kind_entry!(KIND_NIP29_DELETE_GROUP),
+        kind_entry!(KIND_NIP29_CREATE_INVITE),
+        kind_entry!(KIND_NIP29_JOIN_REQUEST),
+        kind_entry!(KIND_NIP29_LEAVE_REQUEST),
+        kind_entry!(KIND_PROJECT_PUT_MEMBER),
+        kind_entry!(KIND_PROJECT_REMOVE_MEMBER),
+        kind_entry!(KIND_MODERATION_BAN),
+        kind_entry!(KIND_MODERATION_UNBAN),
+        kind_entry!(KIND_MODERATION_TIMEOUT),
+        kind_entry!(KIND_MODERATION_UNTIMEOUT),
+        kind_entry!(KIND_MODERATION_RESOLVE_REPORT),
+        kind_entry!(KIND_NIP43_MEMBERSHIP_LIST),
+        kind_entry!(KIND_NIP43_MEMBER_ADDED),
+        kind_entry!(KIND_NIP43_MEMBER_REMOVED),
+        kind_entry!(KIND_NIP43_LEAVE_REQUEST),
+        kind_entry!(KIND_IA_ARCHIVE_REQUEST),
+        kind_entry!(KIND_IA_UNARCHIVE_REQUEST),
+        kind_entry!(KIND_IA_ARCHIVED),
+        kind_entry!(KIND_IA_UNARCHIVED),
+        kind_entry!(KIND_IA_ARCHIVED_LIST),
+        kind_entry!(KIND_NIP29_GROUP_METADATA),
+        kind_entry!(KIND_NIP29_GROUP_ADMINS),
+        kind_entry!(KIND_NIP29_GROUP_MEMBERS),
+        kind_entry!(KIND_NIP29_GROUP_ROLES),
+        kind_entry!(KIND_PROJECT_MEMBERS),
+        kind_entry!(KIND_THREAD_SUMMARY),
+        kind_entry!(KIND_WINDOW_BOUNDS),
+        kind_entry!(KIND_WORKFLOW_DEF),
+        kind_entry!(KIND_DM_VISIBILITY),
+        // Ephemeral
+        kind_entry!(KIND_PRESENCE_UPDATE),
+        kind_entry!(KIND_PAIRING),
+        kind_entry!(KIND_TYPING_INDICATOR),
+        kind_entry!(KIND_AGENT_OBSERVER_FRAME),
+        kind_entry!(KIND_SHELL_WATCH),
+        kind_entry!(KIND_SHELL_FRAME),
+        kind_entry!(KIND_SHELL_INPUT),
+        kind_entry!(KIND_CODING_SESSION_LEASE => [CODING_SESSION_LEASE_SCHEMA]),
+        // The presence schema lives in the SDK rather than core (NIP-CSL
+        // § Provider presence); the attribution test scans both crates.
+        kind_entry!(KIND_CODING_SESSION_PROVIDER_PRESENCE => [
+            beekeeper_sdk::coding_session::CODING_SESSION_PROVIDER_PRESENCE_SCHEMA,
+        ]),
+        kind_entry!(KIND_HUDDLE_REACTION),
+        // Messaging
+        kind_entry!(KIND_STREAM_MESSAGE),
+        kind_entry!(KIND_STREAM_MESSAGE_V2),
+        kind_entry!(KIND_STREAM_MESSAGE_EDIT),
+        kind_entry!(KIND_STREAM_MESSAGE_PINNED),
+        kind_entry!(KIND_STREAM_MESSAGE_BOOKMARKED),
+        kind_entry!(KIND_STREAM_MESSAGE_SCHEDULED),
+        kind_entry!(KIND_STREAM_REMINDER),
+        kind_entry!(KIND_STREAM_MESSAGE_DIFF),
+        kind_entry!(KIND_CANVAS),
+        kind_entry!(KIND_SYSTEM_MESSAGE),
+        kind_entry!(KIND_CHANNEL_SUMMARY),
+        kind_entry!(KIND_PRESENCE_SNAPSHOT),
+        kind_entry!(KIND_DM_OPEN),
+        kind_entry!(KIND_DM_ADD_MEMBER),
+        kind_entry!(KIND_DM_HIDE),
+        kind_entry!(KIND_DM_CREATED),
+        // Jobs, notifications, metrics
+        kind_entry!(KIND_JOB_REQUEST),
+        kind_entry!(KIND_JOB_ACCEPTED),
+        kind_entry!(KIND_JOB_PROGRESS),
+        kind_entry!(KIND_JOB_RESULT),
+        kind_entry!(KIND_JOB_CANCEL),
+        kind_entry!(KIND_JOB_ERROR),
+        kind_entry!(KIND_MEMBER_ADDED_NOTIFICATION),
+        kind_entry!(KIND_MEMBER_REMOVED_NOTIFICATION),
+        kind_entry!(KIND_AGENT_TURN_METRIC),
+        kind_entry!(KIND_PULSE_ENTRY => [PULSE_ENTRY_SCHEMA]),
+        // Coding sessions (NIP-CS*)
+        kind_entry!(KIND_CODING_SESSION_COMMAND => [CODING_SESSION_COMMAND_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_LIFECYCLE_COMMAND => [CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_PROVIDER_CATALOG => [CATALOG_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_METADATA => [METADATA_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_LIFECYCLE_RECEIPT => [LIFECYCLE_RECEIPT_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_TRANSCRIPT => [TRANSCRIPT_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_GENESIS),
+        kind_entry!(KIND_CODING_SESSION_GOAL),
+        kind_entry!(KIND_CODING_SESSION_AUTHORITY_TRANSITION),
+        kind_entry!(KIND_CODING_SESSION_NAME),
+        kind_entry!(KIND_CODING_SESSION_CLOSURE),
+        kind_entry!(KIND_CODING_SESSION_CHECKPOINT => [CODING_SESSION_CHECKPOINT_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_TEAM_TRANSACTION => [CODING_SESSION_TEAM_TRANSACTION_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_POLICY => [CODING_SESSION_POLICY_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_OBSERVATION => [CODING_SESSION_OBSERVATION_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_HANDOVER => [CODING_SESSION_HANDOVER_SCHEMA]),
+        kind_entry!(KIND_PROJECT_TODO_OP => [PROJECT_TODO_SCHEMA]),
+        kind_entry!(KIND_PROJECT_WORK_RECORD => [PROJECT_WORK_SCHEMA]),
+        kind_entry!(KIND_AGENTS_REPO_DRAFT_OP => [AGENTS_REPO_DRAFT_SCHEMA]),
+        kind_entry!(KIND_PROJECT_ARTIFACT_PIN_OP => [PROJECT_ARTIFACT_PIN_SCHEMA]),
+        kind_entry!(KIND_CODING_SESSION_GENERATED_TITLE => [CODING_SESSION_TITLE_SCHEMA]),
+        // Surfaces and devices
+        kind_entry!(KIND_SURFACE_WATCH),
+        kind_entry!(KIND_SURFACE_FRAME),
+        kind_entry!(KIND_SESSION_PREVIEW_ANNOUNCE),
+        kind_entry!(KIND_SURFACE_SNAPSHOT),
+        kind_entry!(KIND_SESSION_DEVICE_COMMAND),
+        kind_entry!(KIND_SESSION_DEVICE_RECORD),
+        // Forum
+        kind_entry!(KIND_FORUM_POST),
+        kind_entry!(KIND_FORUM_VOTE),
+        kind_entry!(KIND_FORUM_COMMENT),
+        // Workflows, approvals, host steps, CI
+        kind_entry!(KIND_WORKFLOW_TRIGGER),
+        kind_entry!(KIND_APPROVAL_GRANT),
+        kind_entry!(KIND_APPROVAL_DENY),
+        kind_entry!(KIND_WORKFLOW_TRIGGERED),
+        kind_entry!(KIND_WORKFLOW_STEP_STARTED),
+        kind_entry!(KIND_WORKFLOW_STEP_COMPLETED),
+        kind_entry!(KIND_WORKFLOW_STEP_FAILED),
+        kind_entry!(KIND_WORKFLOW_COMPLETED),
+        kind_entry!(KIND_WORKFLOW_FAILED),
+        kind_entry!(KIND_WORKFLOW_CANCELLED),
+        kind_entry!(KIND_CI_RESULT => [CI_RESULT_SCHEMA]),
+        kind_entry!(KIND_WORKFLOW_APPROVAL_REQUESTED => [APPROVAL_REQUEST_SCHEMA]),
+        kind_entry!(KIND_WORKFLOW_APPROVAL_GRANTED),
+        kind_entry!(KIND_WORKFLOW_APPROVAL_DENIED),
+        kind_entry!(KIND_WORKFLOW_HOST_STEP_REQUESTED => [HOST_STEP_SCHEMA]),
+        kind_entry!(KIND_WORKFLOW_HOST_STEP_EXITED => [HOST_STEP_SCHEMA]),
+        kind_entry!(KIND_HOST_STEP_CLAIM => [HOST_STEP_SCHEMA]),
+        kind_entry!(KIND_HOST_STEP_RESULT => [HOST_STEP_SCHEMA]),
+        kind_entry!(KIND_WORKFLOW_AUTORUN_CHANGED => [AUTORUN_SCHEMA]),
+        kind_entry!(KIND_WORKFLOW_AUTORUN_REVOKE => [AUTORUN_SCHEMA]),
+        // Audit, huddles, media
+        kind_entry!(KIND_AUDIT_ENTRY),
+        kind_entry!(KIND_HUDDLE_STARTED),
+        kind_entry!(KIND_HUDDLE_PARTICIPANT_JOINED),
+        kind_entry!(KIND_HUDDLE_PARTICIPANT_LEFT),
+        kind_entry!(KIND_HUDDLE_ENDED),
+        kind_entry!(KIND_HUDDLE_GUIDELINES),
+        kind_entry!(KIND_MEDIA_UPLOAD),
+        // Git (NIP-34), projects, shells, packs, protection
+        kind_entry!(KIND_GIT_REPO_ANNOUNCEMENT),
+        kind_entry!(KIND_GIT_REPO_STATE),
+        kind_entry!(KIND_GIT_PATCH),
+        kind_entry!(KIND_GIT_PULL_REQUEST),
+        kind_entry!(KIND_GIT_PR_UPDATE),
+        kind_entry!(KIND_GIT_ISSUE),
+        kind_entry!(KIND_GIT_STATUS_OPEN),
+        kind_entry!(KIND_GIT_STATUS_MERGED),
+        kind_entry!(KIND_GIT_STATUS_CLOSED),
+        kind_entry!(KIND_GIT_STATUS_DRAFT),
+        kind_entry!(KIND_PROJECT),
+        kind_entry!(KIND_SHELL_SESSION),
+        kind_entry!(KIND_PROJECT_PACK_SOURCE => [
+            PROJECT_PACK_SOURCE_SCHEMA,
+            PROJECT_PACK_SOURCE_CONDITIONAL_SCHEMA,
+        ]),
+        kind_entry!(KIND_GIT_REPO_PROTECTION => [REPOSITORY_PROTECTION_SCHEMA]),
+    ]
+};
+
+/// The NIP-11 `supported_kinds` list, sorted by kind number.
+///
+/// Generated from [`SUPPORTED_KIND_TABLE`]: the registry constants supply the
+/// numbers and the names, the schema constants supply the schema strings.
+/// A kind is listed because the relay's registry names it and applies its
+/// rules (ephemeral, replaceable, channel or project scoping, ingest
+/// validation); listing does not promise a dedicated handler for every kind.
+pub fn supported_kinds() -> Vec<SupportedKind> {
+    let mut kinds: Vec<SupportedKind> = SUPPORTED_KIND_TABLE
+        .iter()
+        .map(|entry| SupportedKind {
+            kind: entry.kind,
+            name: entry
+                .constant
+                .strip_prefix("KIND_")
+                .unwrap_or(entry.constant)
+                .to_ascii_lowercase(),
+            schemas: entry.schemas.iter().map(|s| (*s).to_string()).collect(),
+        })
+        .collect();
+    kinds.sort_by_key(|entry| entry.kind);
+    kinds
 }
 
 /// Axum handler that returns the NIP-11 relay information document as JSON.
@@ -859,6 +1173,310 @@ mod tests {
             DEFAULT_MAX_FRAME_BYTES,
             None,
             test_rate_limits(),
+        );
+    }
+
+    // ── supported_kinds ─────────────────────────────────────────────────
+
+    fn core_src(file: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../beekeeper-core/src")
+            .join(file);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    /// Every `pub const KIND_*: u32 = n;` in the registry, as `(name, n)`.
+    fn registry_constants() -> std::collections::BTreeMap<String, u32> {
+        core_src("kind.rs")
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| {
+                let rest = line.strip_prefix("pub const KIND_")?;
+                let (name, rest) = rest.split_once(": u32 = ")?;
+                let number = rest.strip_suffix(';')?.trim().parse().ok()?;
+                Some((format!("KIND_{name}"), number))
+            })
+            .collect()
+    }
+
+    /// Every `pub const NAME: &str = "value";` (also `pub(crate)`), joined
+    /// across lines so a constant whose literal sits on the next line is
+    /// still seen. Only SCREAMING_CASE names are kept, which is what filters
+    /// out the non-`&str` constants the naive `split_once` would swallow.
+    fn string_constants(source: &str) -> Vec<(String, String)> {
+        let flat = source.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+        let mut out = Vec::new();
+        for marker in ["pub const ", "pub(crate) const "] {
+            for (index, _) in flat.match_indices(marker) {
+                let rest = &flat[index + marker.len()..];
+                let Some((name, after)) = rest.split_once(": &str =") else {
+                    continue;
+                };
+                let name = name.trim();
+                if name.is_empty()
+                    || !name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                {
+                    continue;
+                }
+                let Some(after) = after.trim_start().strip_prefix('"') else {
+                    continue;
+                };
+                let Some((value, _)) = after.split_once('"') else {
+                    continue;
+                };
+                out.push((name.to_string(), value.to_string()));
+            }
+        }
+        out
+    }
+
+    fn is_wire_schema(value: &str) -> bool {
+        let Some((body, version)) = value.rsplit_once("/v") else {
+            return false;
+        };
+        (body.starts_with("buzz-") || body.starts_with("beekeeper-"))
+            && body
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            && !version.is_empty()
+            && version.chars().all(|c| c.is_ascii_digit())
+    }
+
+    /// The registry is the source: a kind added to `kind.rs` without a row in
+    /// `SUPPORTED_KIND_TABLE` fails here, and so does a row naming a constant
+    /// the registry no longer has (that one fails to compile first).
+    #[test]
+    fn supported_kinds_cover_every_registry_constant() {
+        let registry = registry_constants();
+        assert!(
+            registry.len() > 100,
+            "registry scan found only {} constants — the parser is broken",
+            registry.len()
+        );
+        let table: std::collections::BTreeMap<String, u32> = SUPPORTED_KIND_TABLE
+            .iter()
+            .map(|entry| (entry.constant.to_string(), entry.kind))
+            .collect();
+        let missing: Vec<_> = registry
+            .iter()
+            .filter(|(name, _)| !table.contains_key(*name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "kinds in beekeeper_core::kind with no supported_kinds row: {missing:?}"
+        );
+        assert_eq!(
+            table.len(),
+            SUPPORTED_KIND_TABLE.len(),
+            "a constant is listed twice in SUPPORTED_KIND_TABLE"
+        );
+        assert_eq!(registry, table, "table numbers must be the registry's");
+        let mut numbers: Vec<u32> = table.values().copied().collect();
+        numbers.sort_unstable();
+        numbers.dedup();
+        assert_eq!(numbers.len(), table.len(), "two constants share a number");
+    }
+
+    /// Every wire schema constant in core and the SDK is attributed to a
+    /// kind, or named below as a document that never travels as event
+    /// content. A new `buzz-…/v1` constant with neither home fails here.
+    #[test]
+    fn supported_kinds_attribute_every_wire_schema_constant() {
+        // Schema identifiers that are real constants but are not event
+        // content: fold digests (outputs of a fold over events), projection
+        // responses, and files or tokens read outside the relay. Named by
+        // constant so a rename breaks the build rather than the fence.
+        let non_event_schemas: &[&str] = &[
+            beekeeper_core::agents_repo_draft_fold::AGENTS_REPO_DRAFT_DIGEST_SCHEMA,
+            beekeeper_core::project_artifact_pin_fold::PROJECT_ARTIFACT_PIN_DIGEST_SCHEMA,
+            beekeeper_core::project_todo_fold::PROJECT_TODO_DIGEST_SCHEMA,
+            beekeeper_core::project_work_fold::PROJECT_WORK_COVERAGE_SCHEMA,
+            beekeeper_core::pulse_fold::PULSE_DIGEST_SCHEMA,
+            beekeeper_core::pulse_declared_work::PULSE_DECLARED_WORK_SCHEMA,
+            beekeeper_core::pulse_declared_work::PULSE_DECLARED_WORK_REQUEST_SCHEMA,
+            beekeeper_core::pulse_mission::PULSE_MISSION_ROWS_SCHEMA,
+            // A signed claims token handed to a session as an env var.
+            beekeeper_core::preview_grant::PREVIEW_GRANT_SCHEMA,
+            // Files in a project's agents repository / checkout.
+            beekeeper_core::project_plan::PROJECT_PLAN_SCHEMA,
+            beekeeper_core::sandbox_manifest::SANDBOX_SCHEMA,
+        ];
+        let attributed: std::collections::BTreeSet<&str> = SUPPORTED_KIND_TABLE
+            .iter()
+            .flat_map(|entry| entry.schemas.iter().copied())
+            .collect();
+        for schema in non_event_schemas {
+            assert!(
+                !attributed.contains(schema),
+                "{schema} is listed both as event content and as a non-event schema"
+            );
+        }
+
+        let mut scanned = Vec::new();
+        for crate_dir in ["../beekeeper-core/src", "../beekeeper-sdk/src"] {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate_dir);
+            let entries = std::fs::read_dir(&dir)
+                .unwrap_or_else(|error| panic!("read_dir {}: {error}", dir.display()));
+            for entry in entries {
+                let path = entry.expect("dir entry").path();
+                let is_source = path.extension().is_some_and(|ext| ext == "rs");
+                let is_test_file = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("_tests.rs"));
+                if !is_source || is_test_file {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("read source");
+                for (name, value) in string_constants(&source) {
+                    if is_wire_schema(&value) {
+                        scanned.push((path.display().to_string(), name, value));
+                    }
+                }
+            }
+        }
+        assert!(
+            scanned.len() >= 20,
+            "schema scan found only {} constants — the parser is broken",
+            scanned.len()
+        );
+        let unattributed: Vec<_> = scanned
+            .iter()
+            .filter(|(_, _, value)| {
+                !attributed.contains(value.as_str()) && !non_event_schemas.contains(&value.as_str())
+            })
+            .collect();
+        assert!(
+            unattributed.is_empty(),
+            "wire schema constants with no kind in SUPPORTED_KIND_TABLE and no entry in \
+             non_event_schemas: {unattributed:#?}"
+        );
+    }
+
+    /// The document shape: `[{kind, name, schemas}]`, sorted by kind, names
+    /// derived from the constants, and an empty list — not an omission — for
+    /// a kind whose content carries no schema string.
+    #[test]
+    fn supported_kinds_serialize_sorted_with_registry_names_and_schemas() {
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
+        let json = serde_json::to_value(&info).expect("serialize");
+        let kinds = json["supported_kinds"]
+            .as_array()
+            .expect("supported_kinds is an array");
+        assert_eq!(kinds.len(), SUPPORTED_KIND_TABLE.len());
+        let numbers: Vec<u64> = kinds
+            .iter()
+            .map(|entry| entry["kind"].as_u64().expect("kind is a number"))
+            .collect();
+        let mut sorted = numbers.clone();
+        sorted.sort_unstable();
+        assert_eq!(numbers, sorted, "supported_kinds must be sorted by kind");
+
+        let find = |kind: u32| {
+            kinds
+                .iter()
+                .find(|entry| entry["kind"] == kind)
+                .unwrap_or_else(|| panic!("kind {kind} missing"))
+        };
+        let claim = find(beekeeper_core::kind::KIND_HOST_STEP_CLAIM);
+        assert_eq!(claim["name"], "host_step_claim");
+        assert_eq!(
+            claim["schemas"],
+            serde_json::json!([beekeeper_core::host_step::HOST_STEP_SCHEMA])
+        );
+        let lifecycle = find(beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND);
+        assert_eq!(lifecycle["name"], "coding_session_lifecycle_command");
+        assert_eq!(
+            lifecycle["schemas"],
+            serde_json::json!(["buzz-coding-session-lifecycle-command/v1"])
+        );
+        let genesis = find(beekeeper_core::kind::KIND_CODING_SESSION_GENESIS);
+        assert_eq!(
+            genesis["schemas"],
+            serde_json::json!([]),
+            "a kind without a schema string lists an empty array, never omits the key"
+        );
+        let pack = find(beekeeper_core::kind::KIND_PROJECT_PACK_SOURCE);
+        assert_eq!(
+            pack["schemas"].as_array().map(Vec::len),
+            Some(2),
+            "30624 speaks both pack-source schema revisions"
+        );
+        for entry in kinds {
+            let name = entry["name"].as_str().expect("name is a string");
+            assert!(
+                !name.is_empty() && !name.starts_with("kind_"),
+                "name {name:?} should be the constant without its KIND_ prefix"
+            );
+            assert_eq!(
+                name,
+                name.to_ascii_lowercase(),
+                "names are lowercase: {name}"
+            );
+        }
+        // Round-trip: a document from a relay predating the field still parses.
+        let mut without = json.clone();
+        without
+            .as_object_mut()
+            .expect("object")
+            .remove("supported_kinds");
+        let parsed: RelayInfo = serde_json::from_value(without).expect("older document parses");
+        assert!(parsed.supported_kinds.is_empty());
+    }
+
+    // ── NIP-CSE drift fence ─────────────────────────────────────────────
+
+    /// `docs/nips/NIP-CSE.md` lists exactly the receipt error codes
+    /// `coding_session_payload.rs` defines — a `pub const NAME: &str = "NAME"`
+    /// whose value is its own name. A code added without a row in the table,
+    /// or a row the code no longer backs, fails here.
+    #[test]
+    fn nip_cse_lists_exactly_the_lifecycle_error_codes() {
+        let source = core_src("coding_session_payload.rs");
+        let codes: std::collections::BTreeSet<String> = string_constants(&source)
+            .into_iter()
+            .filter(|(name, value)| name == value)
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            codes.len() >= 40,
+            "error-code scan found only {} codes — the parser is broken",
+            codes.len()
+        );
+        let doc_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/nips/NIP-CSE.md");
+        let doc = std::fs::read_to_string(&doc_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", doc_path.display()));
+        let documented: std::collections::BTreeSet<String> = doc
+            .lines()
+            .filter_map(|line| {
+                // A table row whose first cell is a backticked code.
+                let cell = line.strip_prefix("| `")?;
+                let (code, _) = cell.split_once('`')?;
+                Some(code.to_string())
+            })
+            .filter(|code| {
+                code.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            })
+            .collect();
+        let undocumented: Vec<_> = codes.difference(&documented).collect();
+        let stale: Vec<_> = documented.difference(&codes).collect();
+        assert!(
+            undocumented.is_empty() && stale.is_empty(),
+            "NIP-CSE.md and coding_session_payload.rs disagree — \
+             codes missing from the doc: {undocumented:?}; \
+             rows in the doc with no constant: {stale:?}"
         );
     }
 }

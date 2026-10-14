@@ -202,6 +202,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        checkpoint_on_stop: false,
         app_checkout: None,
     })
 }

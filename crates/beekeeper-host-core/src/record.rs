@@ -110,6 +110,12 @@ pub struct CodingSessionProviderStore {
     /// budget entirely. Machine-wide for the same reason as `max_sessions`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_budget: Option<u64>,
+    /// Publish one worktree checkpoint before a `session.stop` reaches
+    /// quiescence, when the tree changed since the last one. Carried here so a
+    /// recommission rewrites `host.json` with the operator's choice rather
+    /// than silently resetting it; off by default and omitted when off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checkpoint_on_stop: bool,
 }
 
 impl Default for CodingSessionProviderStore {
@@ -120,6 +126,7 @@ impl Default for CodingSessionProviderStore {
             max_sessions: None,
             turn_idle_timeout_secs: None,
             turn_budget: None,
+            checkpoint_on_stop: false,
         }
     }
 }

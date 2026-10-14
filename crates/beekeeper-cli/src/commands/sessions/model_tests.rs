@@ -77,6 +77,7 @@ fn metadata_payload(target: &CodingSessionTarget, model: Option<&str>) -> Sessio
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     }
 }
 
@@ -109,6 +110,7 @@ fn receipt_content(
         error,
         turn_id: None,
         rewind: None,
+        quiescence: None,
     })
     .expect("receipt")
 }

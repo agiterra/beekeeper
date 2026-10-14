@@ -92,6 +92,8 @@ mod git_exclude;
 mod git_probe;
 pub mod host_command;
 // A finished host step wakes the seat that triggered it (ledger 236(g), 240).
+mod checkpoint_on_stop;
+pub mod credential_source;
 pub mod host_result_wake;
 mod lease;
 mod model_catalog;
@@ -102,6 +104,7 @@ mod native_steer_authority;
 mod off_loop;
 pub mod payload;
 pub mod pending_completion;
+mod presence;
 mod preview_grant;
 mod price_table;
 pub mod publish;
@@ -121,6 +124,7 @@ mod team_wake_fetch;
 pub mod transcript;
 pub mod turn_checkpoint;
 mod turn_checkpoint_git;
+mod turn_interrupted;
 pub mod verification_input;
 pub mod wake_relevance;
 pub mod work_brief;
@@ -613,6 +617,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     let mut ticker = tokio::time::interval(RUNTIME_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut lease_ticker = lease::renewal_interval();
+    let mut presence_ticker = presence::ticker();
 
     loop {
         // Read before the select so the borrow ends here: what the loop needs
@@ -635,6 +640,16 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
                 if let Err(error) = provider.flush_pending_leases(&publisher).await {
                     tracing::warn!(target: "csp::lease", "lease renewal handoff failed: {error}");
+                }
+            }
+            _ = presence_ticker.tick() => {
+                // Idle included: presence is what tells a reader "idle" from
+                // "gone" when no execution holds a lease.
+                if let Err(error) = provider.queue_presence() {
+                    tracing::error!(target: "csp::presence", "presence heartbeat construction failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_presence(&publisher).await {
+                    tracing::warn!(target: "csp::presence", "presence heartbeat handoff failed: {error}");
                 }
             }
             event = relay.next_event() => match event {
@@ -751,6 +766,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
                 if let Err(error) = provider.flush_pending_leases(&publisher).await {
                     tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
+                }
+                // A turn interrupted by the last restart closes only once its
+                // recorded group is proved absent; this is the only poll.
+                if let Err(error) = provider.settle_interrupted_turns() {
+                    tracing::warn!(target: "csp::recovery", "interrupted turn settlement failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_presence(&publisher).await {
+                    tracing::warn!(target: "csp::presence", "presence heartbeat handoff failed: {error}");
                 }
                 // Starts the relay read and returns; the answer is applied by
                 // the arm above. Awaiting it here held every other arm —
@@ -1093,6 +1116,11 @@ pub struct Provider {
     projects_fingerprint: Option<(SystemTime, u64)>,
     /// Latest signed lease per exact target not yet handed to the relay task.
     pending_leases: HashMap<String, lease::PendingLease>,
+    /// Presence heartbeats (kind 24224): seq and the newest unsent per channel.
+    presence: presence::PresenceClock,
+    /// `BEEKEEPER_CSP_CHECKPOINT_ON_STOP`: capture the worktree once before
+    /// a stop's quiescence when it changed since the last 44231. Off by default.
+    checkpoint_on_stop: bool,
     /// Exact generations whose first live lease has been handed off only after
     /// their durable facts received positive relay acknowledgements.
     established_leases: HashSet<String>,
@@ -1421,6 +1449,8 @@ impl Provider {
             pending_leases: HashMap::new(),
             established_leases: HashSet::new(),
             first_lease_prerequisites: HashMap::new(),
+            presence: presence::PresenceClock::default(),
+            checkpoint_on_stop: checkpoint_on_stop::checkpoint_on_stop_from_env(),
             #[cfg(test)]
             conversation_ownership_context: None,
             in_flight: HashMap::new(),
@@ -1635,69 +1665,28 @@ impl Provider {
         for record in stranded {
             let target = self.target_for(&record);
             if let Some(open_turn) = &record.open_turn {
-                tracing::warn!(
-                    target: "csp::recovery",
-                    session_id = %record.session_id,
-                    turn_id = %open_turn.turn_id,
-                    "turn was in flight when the provider stopped — synthesizing its result"
-                );
                 if let Some(command_id) = &open_turn.command_id {
                     self.state.consume_command(command_id, now_secs())?;
                 }
-                let already_captured = open_turn.command_id.as_deref().is_some_and(|command_id| {
-                    self.team_wakes.has_terminal_command(command_id, &target)
-                });
-                if !already_captured {
-                    let terminal_at_ms = now_ms();
-                    let terminal = self.enqueue_transcript_with_id(
-                        record.channel_id,
-                        &target,
-                        Some(&open_turn.turn_id),
-                        payload::result_item(
-                            payload::ResultSubtype::Error,
-                            u64::try_from(terminal_at_ms.saturating_sub(open_turn.started_at_ms))
-                                .unwrap_or_default(),
-                            "provider terminated mid-turn",
-                            record_identity_cost(&record),
-                            payload::TurnUsageReport::default(),
-                        ),
-                        Priority::High,
-                    )?;
-                    if open_turn.team_wake_eligible {
-                        if let (
-                            Some((_, terminal_event_id)),
-                            Some(actor),
-                            Some(role),
-                            Some(session_ref),
-                            Some(genesis_ref),
-                            Some(caused_by_command_id),
-                        ) = (
-                            terminal,
-                            record.actor.clone(),
-                            record.role.clone().filter(|role| role != "lead"),
-                            record.session_ref.clone(),
-                            record.genesis_ref.clone(),
-                            open_turn.command_id.clone(),
-                        ) {
-                            let scope = team_wake::WakeScope {
-                                channel_ref: record.channel_id,
-                                session_ref,
-                                genesis_ref,
-                            };
-                            self.team_wakes.capture_terminal(
-                                scope,
-                                team_wake::WakeSource::Terminal {
-                                    terminal_event_id,
-                                    actor_pubkey: actor,
-                                    role,
-                                    caused_by_command_id,
-                                    source_target: target.clone(),
-                                    prompt_at_ms: Some(open_turn.started_at_ms),
-                                    terminal_at_ms,
-                                },
-                            )?;
-                        }
-                    }
+                // The recorded group still present means the turn's process
+                // may still be running: say `turn_interrupted` now and the
+                // terminal only once the witness proves the group absent.
+                if open_turn.command_id.is_some() && self.recorded_group_present(&target) {
+                    tracing::warn!(
+                        target: "csp::recovery",
+                        session_id = %record.session_id,
+                        turn_id = %open_turn.turn_id,
+                        "turn was in flight when the provider stopped and its process group is still present — interrupted, quiescence unconfirmed"
+                    );
+                    self.stage_interrupted_turn(&record, &target, open_turn)?;
+                } else {
+                    tracing::warn!(
+                        target: "csp::recovery",
+                        session_id = %record.session_id,
+                        turn_id = %open_turn.turn_id,
+                        "turn was in flight when the provider stopped — synthesizing its result"
+                    );
+                    self.synthesize_interrupted_terminal(&record, &target, open_turn, None)?;
                 }
             }
             self.state.update_session(&record.session_id, |record| {
@@ -7458,6 +7447,12 @@ impl Provider {
             // Spec § 4.6: how that pack was composed, from the same record;
             // absent for uncomposed packs and records that predate the key.
             compose_ref: record.and_then(|record| record.compose_ref.clone()),
+            // HEADLESS_PLUGGABLE_SLICE § Step 1: the operator's label for the
+            // credentials this runtime was given, from the descriptor the
+            // session runs under. Omitted for an ambient login; never a
+            // secret or a path.
+            credential_source: descriptor
+                .and_then(|descriptor| descriptor.credential_source.clone()),
             // §3.1: who holds this umbrella, and on which body. Read from the
             // record's persisted claim state, so a provider that comes back to
             // an execution somebody else has taken over advertises the fence
@@ -9555,12 +9550,13 @@ impl Provider {
                         )
                     })
                 });
-                let (item, status) = turn_result(
+                let (item, status) = turn_result_with_credentials(
                     &outcome,
                     duration_ms,
                     usage.as_deref(),
                     tool_calls,
                     identity,
+                    self.credential_source_label(&session_id),
                 );
                 let terminal_at_ms = now_ms();
                 let terminal = self.enqueue_transcript_with_id(
@@ -10939,6 +10935,98 @@ fn record_identity_cost(record: &SessionRecord) -> payload::TurnCost {
     cost
 }
 
+impl Provider {
+    /// Close a turn the provider cannot continue: the synthesized error
+    /// `result` item (with `errorCode` when the closer names one) and, for a
+    /// seated turn, the team-wake capture the live path would have made.
+    ///
+    /// Shared by boot recovery (the group already absent) and the deferred
+    /// settlement of a `turn_interrupted` turn (the group proved absent later).
+    pub(crate) fn synthesize_interrupted_terminal(
+        &mut self,
+        record: &SessionRecord,
+        target: &CodingSessionTarget,
+        open_turn: &OpenTurn,
+        error_code: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let already_captured = open_turn
+            .command_id
+            .as_deref()
+            .is_some_and(|command_id| self.team_wakes.has_terminal_command(command_id, target));
+        if already_captured {
+            return Ok(());
+        }
+        let terminal_at_ms = now_ms();
+        let mut item = payload::result_item(
+            payload::ResultSubtype::Error,
+            u64::try_from(terminal_at_ms.saturating_sub(open_turn.started_at_ms))
+                .unwrap_or_default(),
+            "provider terminated mid-turn",
+            record_identity_cost(record),
+            payload::TurnUsageReport::default(),
+        );
+        if let (Some(code), Some(object)) = (error_code, item.as_object_mut()) {
+            object.insert("errorCode".into(), serde_json::json!(code));
+        }
+        let terminal = self.enqueue_transcript_with_id(
+            record.channel_id,
+            target,
+            Some(&open_turn.turn_id),
+            item,
+            Priority::High,
+        )?;
+        if open_turn.team_wake_eligible {
+            if let (
+                Some((_, terminal_event_id)),
+                Some(actor),
+                Some(role),
+                Some(session_ref),
+                Some(genesis_ref),
+                Some(caused_by_command_id),
+            ) = (
+                terminal,
+                record.actor.clone(),
+                record.role.clone().filter(|role| role != "lead"),
+                record.session_ref.clone(),
+                record.genesis_ref.clone(),
+                open_turn.command_id.clone(),
+            ) {
+                let scope = team_wake::WakeScope {
+                    channel_ref: record.channel_id,
+                    session_ref,
+                    genesis_ref,
+                };
+                self.team_wakes.capture_terminal(
+                    scope,
+                    team_wake::WakeSource::Terminal {
+                        terminal_event_id,
+                        actor_pubkey: actor,
+                        role,
+                        caused_by_command_id,
+                        source_target: target.clone(),
+                        prompt_at_ms: Some(open_turn.started_at_ms),
+                        terminal_at_ms,
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The credentials label the auth-failure remedy names for `session_id`:
+    /// the runtime descriptor's `credentialSource` when the operator set one
+    /// (`bee host commission --credential-source`), else `None` — the
+    /// ambient login. The same descriptor field is echoed into the session's
+    /// 44223 metadata by `session_metadata`, so the remedy and the metadata
+    /// can never name different sources. See [`credential_source`].
+    pub(crate) fn credential_source_label(&self, session_id: &str) -> Option<&str> {
+        self.state
+            .session(session_id)
+            .and_then(|record| self.config.runtime(&record.provider_instance_ref))
+            .and_then(|descriptor| descriptor.credential_source.as_deref())
+    }
+}
+
 /// What a turn's result is told about the model behind it (ledger 268(e)).
 #[derive(Debug, Clone, Copy, Default)]
 struct ModelIdentity<'a> {
@@ -10981,12 +11069,27 @@ impl<'a> ModelIdentity<'a> {
 
 /// Map a turn outcome onto its terminal transcript item, the generation's next
 /// status, and whether the session can serve another turn.
+#[cfg(test)]
 fn turn_result(
     outcome: &TurnOutcome,
     duration_ms: u64,
     usage: Option<&TurnUsage>,
     tool_calls: u64,
     identity: ModelIdentity<'_>,
+) -> (serde_json::Value, SessionStatus) {
+    turn_result_with_credentials(outcome, duration_ms, usage, tool_calls, identity, None)
+}
+
+/// [`turn_result`] told where the runtime's credentials came from, so a
+/// recognized authentication failure carries `MODEL_AUTH_FAILED`, its
+/// `credentialSource`, and the remedy that fits that source.
+fn turn_result_with_credentials(
+    outcome: &TurnOutcome,
+    duration_ms: u64,
+    usage: Option<&TurnUsage>,
+    tool_calls: u64,
+    identity: ModelIdentity<'_>,
+    credential_source: Option<&str>,
 ) -> (serde_json::Value, SessionStatus) {
     let cost = match usage {
         Some(usage) => turn_cost(usage, identity),
@@ -11045,16 +11148,20 @@ fn turn_result(
             // the raw provider text as `detail`; an unrecognized one keeps
             // the raw text as `result` and carries no `detail`, so a reader
             // can tell a classified failure from a verbatim one.
-            let sentence = turn_failure_sentence(message);
+            let sentence = turn_failure_sentence(message).map(|ambient| {
+                credential_source::auth_failure_sentence(ambient, credential_source)
+            });
             let mut item = payload::result_item(
                 payload::ResultSubtype::Error,
                 duration_ms,
-                sentence.unwrap_or(message),
+                sentence.as_deref().unwrap_or(message),
                 cost,
                 usage_report,
             );
-            if let (Some(_), Some(object)) = (sentence, item.as_object_mut()) {
+            if let (Some(_), Some(object)) = (sentence.as_ref(), item.as_object_mut()) {
                 object.insert("detail".into(), serde_json::json!(message));
+                // Every recognized failure today is an authentication one.
+                credential_source::stamp_auth_failure(&mut item, credential_source);
             }
             (
                 item,
@@ -11969,7 +12076,7 @@ mod tests {
     #[path = "conversation_tests.rs"]
     mod conversation_tests;
 
-    struct CollectingSink {
+    pub(crate) struct CollectingSink {
         events: Mutex<Vec<Event>>,
     }
 
@@ -11981,13 +12088,13 @@ mod tests {
     }
 
     impl CollectingSink {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
                 events: Mutex::new(Vec::new()),
             }
         }
 
-        fn contents_of(&self, kind: u32) -> Vec<serde_json::Value> {
+        pub(crate) fn contents_of(&self, kind: u32) -> Vec<serde_json::Value> {
             self.events
                 .lock()
                 .expect("lock")
@@ -12756,10 +12863,12 @@ mod tests {
             allowed_models: vec!["claude-sonnet-4-6".into()],
             discover_models: false,
             capabilities: None,
+            credential_env: Vec::new(),
+            credential_source: None,
         }
     }
 
-    fn config_of(
+    pub(crate) fn config_of(
         keys: Keys,
         state_dir: &Path,
         projects: Option<&Path>,
@@ -17754,6 +17863,8 @@ mod tests {
                 allowed_models: vec!["default".into()],
                 discover_models: false,
                 capabilities: None,
+                credential_env: Vec::new(),
+                credential_source: None,
             },
         ];
         let mut provider = Provider::new(config_of_runtimes(
@@ -18153,6 +18264,13 @@ mod tests {
                 !open_turn.team_wake_eligible,
                 "a create's initial turn can never require an assignment report"
             );
+            // The process is genuinely dead before the restart: a group still
+            // present would instead be reported as `turn_interrupted`
+            // (`turn_interrupted.rs` covers that path).
+            first
+                .sessions
+                .shutdown_and_join(&session_id, session::ACTOR_RETIRE_GRACE)
+                .await;
             session_id
         };
 
@@ -19546,15 +19664,26 @@ mod tests {
             .filter(|(command_id, _)| command_id.starts_with("turn-"))
             .collect();
         // Sent order, once each. Arrival order would have answered `third`
-        // first; the already-consumed running turn is silent, as it must be.
+        // first. The already-consumed running turn is not replayed and not
+        // dropped: its abandoned adapter group is still present when the
+        // restarted provider recovers, so recovery answers it once with
+        // `turn_interrupted` (quiescence unconfirmed, HEADLESS_PLUGGABLE_SLICE
+        // § Step 2) rather than guessing it failed; the terminal `failed`
+        // follows only once the witness proves the group gone.
         assert_eq!(
             turns,
             vec![
                 ("turn-second".to_owned(), "turn_dropped".to_owned()),
                 ("turn-third".to_owned(), "turn_dropped".to_owned()),
+                ("turn-running".to_owned(), "turn_interrupted".to_owned()),
             ],
-            "replayed turns are answered in (created_at, id) order, once each"
+            "replayed turns are answered in (created_at, id) order, once each; the \
+             interrupted running turn is answered by recovery, not by replay"
         );
+        let turns: Vec<(String, String)> = turns
+            .into_iter()
+            .filter(|(_, status)| status == "turn_dropped")
+            .collect();
         for (command_id, _) in &turns {
             // Answered, not run: this execution has no live process, and the
             // drop receipt says the sender has to send the turn again. The

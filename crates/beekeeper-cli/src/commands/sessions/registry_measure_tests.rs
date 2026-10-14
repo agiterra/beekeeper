@@ -44,6 +44,8 @@ fn descriptor() -> RuntimeDescriptor {
         allowed_models: vec!["opus[1m]".to_owned(), "sonnet".to_owned()],
         discover_models: false,
         capabilities: Some(Capabilities::v1_for_runtime("claude")),
+        credential_env: Vec::new(),
+        credential_source: None,
     }
 }
 

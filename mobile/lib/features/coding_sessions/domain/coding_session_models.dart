@@ -76,7 +76,14 @@ enum CodingSessionReceiptStatus {
   /// Terminal, five keys, no error, no turn. The model in effect is read from
   /// 44223 `model`, never from this receipt; its refusals are `turn_refused`
   /// (`MODEL_SWITCH_UNSUPPORTED`, `MODEL_NOT_OFFERED`, `MODEL_SWITCH_FAILED`).
-  modelApplied('model_applied');
+  modelApplied('model_applied'),
+
+  /// The provider restarted while this turn's process was still present
+  /// (NIP-CSL § turn_interrupted): neither finished nor proved ended. Six
+  /// keys — `quiescence: "unconfirmed"` is the sixth, and its only value.
+  /// One terminal `failed` under the same `commandId` follows once the
+  /// provider's witness proves the process gone.
+  turnInterrupted('turn_interrupted');
 
   const CodingSessionReceiptStatus(this.wire);
 
@@ -103,7 +110,12 @@ enum CodingSessionReceiptStatus {
       this == CodingSessionReceiptStatus.turnDropped ||
       this == CodingSessionReceiptStatus.turnRefused ||
       this == CodingSessionReceiptStatus.interruptDelivered ||
-      this == CodingSessionReceiptStatus.modelApplied;
+      this == CodingSessionReceiptStatus.modelApplied ||
+      this == CodingSessionReceiptStatus.turnInterrupted;
+
+  /// True for the one status whose sixth key is `quiescence`.
+  bool get carriesQuiescence =>
+      this == CodingSessionReceiptStatus.turnInterrupted;
 
   /// True for the two six-key statuses: `turn_started` names the turn that
   /// began, `turn_injected` the running turn the input joined.
@@ -274,6 +286,10 @@ class CodingSessionReceipt {
   /// `turn_injected` ([CodingSessionReceiptStatus.carriesTurnId]).
   final String? turnId;
 
+  /// `unconfirmed` on `turn_interrupted` alone
+  /// ([CodingSessionReceiptStatus.carriesQuiescence]); null otherwise.
+  final String? quiescence;
+
   const CodingSessionReceipt({
     required this.ref,
     required this.commandId,
@@ -281,6 +297,7 @@ class CodingSessionReceipt {
     required this.session,
     this.error,
     this.turnId,
+    this.quiescence,
   });
 
   /// True for a per-turn stage; see [CodingSessionReceiptStatus.isTurnStage].

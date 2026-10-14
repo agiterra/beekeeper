@@ -171,6 +171,86 @@ test("host ownership uses verified lease availability independently of local set
   );
 });
 
+test("host ownership reads idle, not disconnected, while the provider's presence is live", () => {
+  const host = runtime({
+    lifecycle: "host_managed",
+    localSetup: false,
+    pid: null,
+    runtimeAvailable: false,
+  });
+  // Live presence with no execution lease: the provider is here and idle.
+  assert.equal(
+    agentCommunityAvailability({ ...host, providerPresence: "live" }),
+    "Here",
+  );
+  assert.match(
+    agentCommunityStatusDetail({ ...host, providerPresence: "live" }),
+    /Idle: the provider's presence heartbeat is live/,
+  );
+  assert.equal(
+    managedAgentPairAction({ ...host, providerPresence: "live" }),
+    "stop",
+  );
+  // A live lease still wins over presence for the detail text.
+  assert.match(
+    agentCommunityStatusDetail({
+      ...host,
+      runtimeAvailable: true,
+      providerPresence: "live",
+    }),
+    /signed relay lease/,
+  );
+  // A live heartbeat that does not name this pair's execution is "absent":
+  // not Here, not idle, no Stop on offer — Start is the only honest action.
+  const absent = { ...host, providerPresence: "live", execution: "absent" };
+  assert.equal(agentCommunityAvailability(absent), "Unavailable");
+  assert.match(
+    agentCommunityStatusDetail(absent),
+    /Absent: the provider is running but reports no execution/,
+  );
+  assert.equal(managedAgentPairAction(absent), "start");
+  // The lease still wins over an absent word (the lease is signed per
+  // execution; the heartbeat may predate it).
+  assert.equal(
+    agentCommunityAvailability({ ...absent, runtimeAvailable: true }),
+    "Here",
+  );
+  // The idle word, or no word at all, keeps the idle reading.
+  for (const execution of ["idle", null, undefined]) {
+    assert.equal(
+      agentCommunityAvailability({
+        ...host,
+        providerPresence: "live",
+        execution,
+      }),
+      "Here",
+    );
+  }
+  // Expired or absent presence is the only thing that reads as disconnected.
+  assert.equal(
+    agentCommunityAvailability({ ...host, providerPresence: "expired" }),
+    "Unavailable",
+  );
+  assert.match(
+    agentCommunityStatusDetail({ ...host, providerPresence: "expired" }),
+    /Disconnected: the provider's last presence heartbeat has expired/,
+  );
+  for (const providerPresence of ["none", null, undefined]) {
+    assert.equal(
+      agentCommunityAvailability({ ...host, providerPresence }),
+      "Unavailable",
+    );
+    assert.match(
+      agentCommunityStatusDetail({ ...host, providerPresence }),
+      /No current verified execution lease/,
+    );
+    assert.equal(
+      managedAgentPairAction({ ...host, providerPresence }),
+      "start",
+    );
+  }
+});
+
 test("host pair Start reconciles unavailable execution without claiming termination", () => {
   const host = runtime({
     lifecycle: "host_managed",

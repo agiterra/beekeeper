@@ -68,6 +68,13 @@ pub struct HostConfig {
     /// Turns one crew session may start; `None` keeps the provider default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_budget: Option<u64>,
+    /// Publish one worktree checkpoint before a `session.stop` reaches
+    /// quiescence, when the tree changed since the last one
+    /// (`docs/agent-host.md` § Checkpoint before stop). Exported as
+    /// `BEEKEEPER_CSP_CHECKPOINT_ON_STOP=1`; off by default and omitted from
+    /// the file when off, so an older host.json reads unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checkpoint_on_stop: bool,
 
     /// The `beekeeper-session-provider` binary to run, when the host must be told.
     ///
@@ -147,6 +154,7 @@ mod tests {
             max_sessions: None,
             turn_idle_timeout_secs: None,
             turn_budget: None,
+            checkpoint_on_stop: false,
             provider_command: None,
             written_at: "2026-09-30T00:00:00Z".to_string(),
         }
@@ -195,6 +203,64 @@ mod tests {
                 "expected {expected:?} in {error:?}"
             );
         }
+    }
+
+    /// `host.json` carries a plugged runtime's descriptor whole: the
+    /// variables it reads and the operator's label survive the round trip,
+    /// and a known runtime written without them reads back without them.
+    #[test]
+    fn a_plugged_runtime_descriptor_round_trips_through_host_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("host.json");
+        let mut config = valid();
+        config.runtimes = vec![RuntimeDescriptor {
+            instance_ref: "acme-primary".into(),
+            driver: "acme-acp".into(),
+            runtime: "acme".into(),
+            agent_command: "/opt/acme/bin/acme-acp".into(),
+            agent_args: vec!["--acp".into()],
+            cli_env: None,
+            default_model: "default".into(),
+            allowed_models: vec!["default".into()],
+            discover_models: false,
+            capabilities: None,
+            steer_idle_guard: None,
+            title_model: Some(None),
+            credential_env: vec!["ACME_TOKEN".into()],
+            credential_source: Some("acme-vault".into()),
+        }];
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).expect("encode")).expect("write");
+        let loaded = HostConfig::load(&path)
+            .expect("load")
+            .expect("commissioned");
+        assert_eq!(loaded, config);
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("\"credentialEnv\""));
+        assert!(text.contains("\"credentialSource\""));
+
+        // Written by a commissioning that predates the plug: still readable,
+        // and the descriptor says it names no variables.
+        let legacy = serde_json::json!({
+            "version": HOST_CONFIG_VERSION,
+            "instance": "production",
+            "relayUrl": "wss://hive.example.org",
+            "providerPubkey": "c".repeat(64),
+            "sessionProviderBaseDir": "/data/session-provider",
+            "providerStateDir": "/data/session-provider/cccc",
+            "runtimes": [{
+                "instanceRef": "claude-primary",
+                "driver": "claude-agent-acp",
+                "runtime": "claude",
+                "agentCommand": "/opt/bin/claude-agent-acp"
+            }],
+            "writtenAt": "2026-09-30T00:00:00Z"
+        });
+        std::fs::write(&path, legacy.to_string()).expect("write");
+        let loaded = HostConfig::load(&path)
+            .expect("load")
+            .expect("commissioned");
+        assert!(loaded.runtimes[0].credential_env.is_empty());
+        assert_eq!(loaded.runtimes[0].credential_source, None);
     }
 
     #[test]

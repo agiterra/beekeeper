@@ -101,6 +101,14 @@ export type PendingCodingSessionTurn = {
    * command (a reconciled attempt) outranks it.
    */
   deliveryUnknown?: { code: string; message: string };
+  /**
+   * Set once the provider's own signed `turn_interrupted` receipt names this
+   * command: the provider restarted while the turn's process was still
+   * present and cannot say whether it is still working. The row says so and
+   * stays until the terminal `failed` under the same command id (or the
+   * person's dismissal); it never reads as queued, started or refused.
+   */
+  interruptedByProvider?: boolean;
 };
 
 /**
@@ -117,7 +125,8 @@ export function pendingCodingSessionTurnHeldByProvider(
     pending.queuedByProvider === true ||
     pending.degradedByProvider !== undefined ||
     pending.injectedByProvider === true ||
-    pending.deliveryUnknown !== undefined
+    pending.deliveryUnknown !== undefined ||
+    pending.interruptedByProvider === true
   );
 }
 
@@ -304,6 +313,31 @@ export function markPendingCodingSessionTurnInjected(
     }
     changed = true;
     return { ...entry, published: true, injectedByProvider: true };
+  });
+  if (!changed) return;
+  pendingTurns = next;
+  notify();
+}
+
+/**
+ * Record the provider's signed `turn_interrupted` for a turn this client
+ * sent: outcome unconfirmed until the terminal receipt. Idempotent.
+ */
+export function markPendingCodingSessionTurnInterrupted(
+  channelId: string,
+  commandId: string,
+): void {
+  const key = pendingCodingSessionTurnKey({ channelId, commandId });
+  let changed = false;
+  const next = pendingTurns.map((entry) => {
+    if (
+      pendingCodingSessionTurnKey(entry) !== key ||
+      entry.interruptedByProvider === true
+    ) {
+      return entry;
+    }
+    changed = true;
+    return { ...entry, published: true, interruptedByProvider: true };
   });
   if (!changed) return;
   pendingTurns = next;
@@ -565,6 +599,7 @@ export type PendingCodingSessionTurnEcho = {
 /** What a pending row should say about itself right now. */
 export type PendingCodingSessionTurnState =
   | "sending"
+  | "interrupted"
   | "unknown"
   | "injected"
   | "degraded"
@@ -589,6 +624,9 @@ export function pendingCodingSessionTurnState(
   // its own. Degraded outranks queued: a provider that could not steer
   // publishes both, and the half the person did not ask for is the half
   // worth reading.
+  // Interrupted outranks all of them: it is the provider's latest word, and
+  // the one that says the outcome is not yet known.
+  if (pending.interruptedByProvider === true) return "interrupted";
   if (pending.injectedByProvider === true) return "injected";
   if (pending.deliveryUnknown !== undefined) return "unknown";
   if (pending.degradedByProvider !== undefined) return "degraded";

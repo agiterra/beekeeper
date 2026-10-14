@@ -153,6 +153,7 @@ fn fixture() -> (DisappearingRelay, LifecycleRequest) {
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     let content = serde_json::to_string(&metadata).expect("metadata");
     let observation = beekeeper_sdk::build_coding_session_metadata(channel, &target, &content)
@@ -913,6 +914,7 @@ async fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal
         max_sessions: None,
         turn_idle_timeout_secs: None,
         turn_budget: None,
+        checkpoint_on_stop: false,
         provider_command: None,
         written_at: String::new(),
     };

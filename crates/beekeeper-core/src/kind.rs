@@ -525,6 +525,18 @@ pub const KIND_SHELL_INPUT: u32 = 24312;
 /// its expiring Redis register; it is never inserted into Postgres. See
 /// `docs/nips/NIP-CSL.md`.
 pub const KIND_CODING_SESSION_LEASE: u32 = 24223;
+/// Ephemeral provider-signed presence heartbeat for one provider instance in
+/// one channel (NIP-CSL § Provider presence).
+///
+/// Ordered tags: `h`, `cspp-v` (`cspp1-1`), `cspp-instance`, `cspp-seq`.
+/// Content is `buzz-coding-session-provider-presence/v1`: `instanceId`,
+/// `seq`, `ttlSecs`, `state` (`idle`|`busy`) and `liveTargets`. Published
+/// every `ttlSecs/3` while the provider runs, idle included, so a reader can
+/// tell "idle" from "gone" without a live execution lease. Same ephemeral
+/// rules as [`KIND_CODING_SESSION_LEASE`]: never stored in Postgres, no
+/// replacement semantics, a reader judges freshness from `created_at +
+/// ttlSecs`.
+pub const KIND_CODING_SESSION_PROVIDER_PRESENCE: u32 = 24224;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
@@ -878,10 +890,11 @@ pub const KIND_CODING_SESSION_OBSERVATION: u32 = 44246;
 /// reserved by the Pulse plan, 44244 is the team transaction, 44245 the policy
 /// and 44246 the observation. Both greps were run on 2026-09-08 before this
 /// constant existed: `git grep -c 44247` over this tree matched nothing but
-/// this kind's own contract document (`docs/HANDOVER_IMPL.md`, then untracked),
+/// this kind's own contract document (then `docs/HANDOVER_IMPL.md`, since
+/// rewritten as `docs/nips/NIP-HO.md`),
 /// and `git grep 44247 vanilla/main` (`12201c49b`) matched nothing at all.
 ///
-/// The wire contract is `docs/HANDOVER_IMPL.md` §2.
+/// The wire contract is `docs/nips/NIP-HO.md`.
 pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 
 /// NIP-TD: Project to-do operation — one field-level edit to a shared,
@@ -968,9 +981,8 @@ pub const KIND_PROJECT_TODO_OP: u32 = 44248;
 /// `git grep 44249 vanilla/main` (`12201c49b`) matched nothing at all.
 ///
 /// The wire contract is `conformance/project-work/README.md` § (b), frozen by
-/// ledger item 194; the fold's output type is § (c) of the same file. That
-/// file is normative until `docs/nips/NIP-PW.md` exists, which the lane
-/// implementing this kind writes from it.
+/// ledger item 194; the fold's output type is § (c) of the same file, and
+/// `docs/nips/NIP-PW.md` restates both as the protocol page.
 pub const KIND_PROJECT_WORK_RECORD: u32 = 44249;
 
 /// Agents-repository draft op — one proposed change to one file of a
@@ -1918,6 +1930,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PAIRING,
     KIND_AGENT_OBSERVER_FRAME,
     KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_PROVIDER_PRESENCE,
     KIND_HTTP_AUTH,
     KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
@@ -2206,6 +2219,16 @@ const _: () = assert!(is_ephemeral(KIND_CODING_SESSION_LEASE));
 const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LEASE));
 const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_LEASE));
 const _: () = assert!(KIND_CODING_SESSION_LEASE <= u16::MAX as u32);
+// Provider presence is a heartbeat, not history: ephemeral like the lease,
+// never replaceable, and distinct from it so a presence filter never returns
+// leases or the reverse.
+const _: () = assert!(is_ephemeral(KIND_CODING_SESSION_PROVIDER_PRESENCE));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_PROVIDER_PRESENCE));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_PROVIDER_PRESENCE
+));
+const _: () = assert!(KIND_CODING_SESSION_PROVIDER_PRESENCE <= u16::MAX as u32);
+const _: () = assert!(KIND_CODING_SESSION_PROVIDER_PRESENCE != KIND_CODING_SESSION_LEASE);
 // Compile-time: coding-session kinds are regular stored kinds (not ephemeral,
 // not replaceable). Commands, receipts, metadata, and transcript items are all
 // append-only points in a durable record — a replaced command or a replaced

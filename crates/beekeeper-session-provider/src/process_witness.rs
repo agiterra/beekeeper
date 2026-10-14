@@ -70,6 +70,10 @@ impl crate::Provider {
         session_id: &str,
         target: &CodingSessionTarget,
     ) -> anyhow::Result<()> {
+        // The witness about to be overwritten may be the last proof an
+        // interrupted turn's group is gone: settle that turn first
+        // (`turn_interrupted.rs`), or it never gets its terminal.
+        self.settle_interrupted_turn_before_reopening(session_id)?;
         self.state.update_session(session_id, |record| {
             record.process_witness = Some(ExecutionProcessWitness {
                 target: target.clone(),

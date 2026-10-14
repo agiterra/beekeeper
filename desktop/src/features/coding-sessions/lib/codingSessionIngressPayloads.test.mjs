@@ -142,6 +142,7 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
       "interrupt_delivered",
       "continuation_registered",
       "model_applied",
+      "turn_interrupted",
     ],
   );
   // Literal, not a call compared to itself: the earlier form was true for any
@@ -382,6 +383,34 @@ test("a malformed routing record refuses the payload, it is not dropped", () => 
   }
 });
 
+// HEADLESS_PLUGGABLE_SLICE § Step 1: `credentialSource` is the descriptor's
+// label for the credentials the runtime was given — omit-when-absent, read
+// as an opaque string, refused as null or blank (the Rust decoder's rule).
+test("metadata carrying a credentialSource decodes it; null or blank is refused", () => {
+  const parsed = parseBeekeeperCodingSessionMetadata(
+    metadataContent({ credentialSource: "acme-vault" }),
+  );
+  assert.equal(parsed?.credentialSource, "acme-vault");
+  assert.equal(
+    parseBeekeeperCodingSessionMetadata(
+      metadataContent({ credentialSource: null }),
+    ),
+    null,
+  );
+  assert.equal(
+    parseBeekeeperCodingSessionMetadata(
+      metadataContent({ credentialSource: "   " }),
+    ),
+    null,
+  );
+});
+
+test("a 44223 signed before credentialSource existed still decodes, with the key absent", () => {
+  const parsed = parseBeekeeperCodingSessionMetadata(metadataContent({}));
+  assert.ok(parsed);
+  assert.equal(Object.hasOwn(parsed, "credentialSource"), false);
+});
+
 // LANE-L23's `packRef`: the seventh additive key on 44223, same
 // omit-when-absent contract as `routing` and `beeStamp` (finding 31's rule —
 // every new payload key on an existing kind is read-optional with a stated
@@ -507,6 +536,72 @@ test("a continuation_registered receipt may claim neither a turn nor a failure",
     ),
     null,
   );
+});
+
+// ---------------------------------------------------------------------------
+// `turn_interrupted` (six keys: `quiescence`), NIP-CSL § turn_interrupted
+// ---------------------------------------------------------------------------
+
+test("an interrupted turn decodes as the third six-key status, quiescence unconfirmed", () => {
+  const parsed = parseCodingSessionLifecycleReceipt(
+    receipt({ status: "turn_interrupted", quiescence: "unconfirmed" }),
+  );
+  assert.ok(parsed, "a well-formed turn_interrupted must decode");
+  assert.equal(parsed.status, "turn_interrupted");
+  assert.equal(parsed.quiescence, "unconfirmed");
+  assert.equal(parsed.error, null);
+  assert.deepEqual(parsed.session, SESSION);
+  assert.deepEqual(Object.keys(parsed), [
+    "schema",
+    "commandId",
+    "status",
+    "session",
+    "error",
+    "quiescence",
+  ]);
+  assert.equal(isCodingSessionTurnReceiptStatus("turn_interrupted"), true);
+});
+
+test("quiescence is accepted on turn_interrupted alone, and only as unconfirmed", () => {
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(receipt({ status: "turn_interrupted" })),
+    null,
+    "no quiescence is a five-key claim the status does not make",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({ status: "turn_interrupted", quiescence: "confirmed" }),
+    ),
+    null,
+    "a confirmed quiescence is the terminal failed, not this receipt",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({
+        status: "turn_interrupted",
+        quiescence: "unconfirmed",
+        error: { code: "X", message: "y" },
+      }),
+    ),
+    null,
+    "an interrupted turn ran; it carries no error",
+  );
+  for (const status of ["turn_started", "turn_queued", "created", "failed"]) {
+    assert.equal(
+      parseCodingSessionLifecycleReceipt(
+        receipt({
+          status,
+          quiescence: "unconfirmed",
+          ...(status === "turn_started" ? { turnId: "t" } : {}),
+          ...(status === "failed"
+            ? { session: null, error: { code: "X", message: "y" } }
+            : {}),
+        }),
+      ),
+      null,
+      `${status} may not carry quiescence`,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------

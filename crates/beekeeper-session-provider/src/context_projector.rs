@@ -2949,6 +2949,7 @@ mod tests {
             bee_stamp: None,
             pack_ref: None,
             compose_ref: None,
+            credential_source: None,
             handover: None,
         };
         let metadata_content = serde_json::to_string(&metadata).unwrap();

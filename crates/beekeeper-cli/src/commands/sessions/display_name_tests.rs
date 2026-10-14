@@ -96,6 +96,7 @@ fn execution(session_id: &str, provider: &str, at: i64, title: Option<&str>) -> 
         error: None,
         turn_id: None,
         rewind: None,
+        quiescence: None,
     };
     let metadata = SessionMetadata {
         schema: METADATA_SCHEMA.to_owned(),
@@ -126,6 +127,7 @@ fn execution(session_id: &str, provider: &str, at: i64, title: Option<&str>) -> 
         pack_ref: None,
         handover: None,
         compose_ref: None,
+        credential_source: None,
     };
     vec![
         json!({

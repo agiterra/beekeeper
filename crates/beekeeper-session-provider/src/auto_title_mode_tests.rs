@@ -190,6 +190,7 @@ async fn the_stub_adapter_still_titles_under_agent() {
         agent_command: "bash".into(),
         agent_args: vec![script],
         cli_env: Vec::new(),
+        credential_env: Vec::new(),
         model: "haiku".into(),
         runtime_profile_override: Some(RuntimeProfile::TestDouble),
     };

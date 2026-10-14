@@ -7,11 +7,51 @@ export type AgentCommunityAvailability =
   | "Unavailable";
 // Host ownership alone does not certify runtime/account availability.
 
+/**
+ * A host-managed pair with no live execution lease is idle, not gone, when
+ * the provider's presence heartbeat is live *and names this pair's
+ * execution*. A live heartbeat whose `liveTargets` does not include it
+ * (`execution: "absent"`) is a provider that is up without this execution —
+ * never idle. Only an expired or absent heartbeat (or no presence report at
+ * all) reads as disconnected.
+ */
+export function hostManagedIdleWithLivePresence(
+  runtime: Pick<
+    ManagedAgentRuntimeStatus,
+    "runtimeAvailable" | "providerPresence" | "execution"
+  >,
+): boolean {
+  return (
+    runtime.runtimeAvailable !== true &&
+    runtime.providerPresence === "live" &&
+    runtime.execution !== "absent"
+  );
+}
+
+/**
+ * The provider's heartbeat is live but it does not run this pair's
+ * execution: the only state in which "Here" and "Stop" would both lie.
+ */
+export function hostManagedAbsentFromLivePresence(
+  runtime: Pick<
+    ManagedAgentRuntimeStatus,
+    "runtimeAvailable" | "providerPresence" | "execution"
+  >,
+): boolean {
+  return (
+    runtime.runtimeAvailable !== true &&
+    runtime.providerPresence === "live" &&
+    runtime.execution === "absent"
+  );
+}
+
 export function agentCommunityAvailability(
   runtime: ManagedAgentRuntimeStatus,
 ): AgentCommunityAvailability {
-  if (runtime.lifecycle === "host_managed")
-    return runtime.runtimeAvailable === true ? "Here" : "Unavailable";
+  if (runtime.lifecycle === "host_managed") {
+    if (runtime.runtimeAvailable === true) return "Here";
+    return hostManagedIdleWithLivePresence(runtime) ? "Here" : "Unavailable";
+  }
   if (!runtime.localSetup) return "Needs setup on this device";
 
   switch (runtime.lifecycle) {
@@ -33,6 +73,12 @@ export function agentCommunityStatusDetail(
   if (runtime.lifecycle === "host_managed") {
     if (runtime.runtimeAvailable === true)
       return "Managed by the host. Current execution availability is verified by a signed relay lease.";
+    if (hostManagedIdleWithLivePresence(runtime))
+      return "Managed by the host. Idle: the provider's presence heartbeat is live and no execution is running.";
+    if (hostManagedAbsentFromLivePresence(runtime))
+      return "Managed by the host. Absent: the provider is running but reports no execution for this agent; start it to create one.";
+    if (runtime.providerPresence === "expired")
+      return "Managed by the host. Disconnected: the provider's last presence heartbeat has expired and no execution lease is live.";
     if (runtime.runtimeAvailable === false)
       return "Managed by the host. No current verified execution lease is available in this community.";
     return "Managed by the host. Runtime availability is unconfirmed; relay status could not be verified.";
@@ -60,7 +106,11 @@ export function managedAgentPairAction(
   runtime: ManagedAgentRuntimeStatus | undefined,
 ): ManagedAgentPairAction {
   if (!runtime || runtime.lifecycle === "stopped") return "start";
-  if (runtime.lifecycle === "host_managed" && runtime.runtimeAvailable !== true)
+  if (
+    runtime.lifecycle === "host_managed" &&
+    runtime.runtimeAvailable !== true &&
+    !hostManagedIdleWithLivePresence(runtime)
+  )
     return "start";
   if (runtime.lifecycle === "failed") return "restart";
   return "stop";

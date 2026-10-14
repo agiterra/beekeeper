@@ -111,17 +111,20 @@ struct PendingSessionLeaseRecord<'a> {
     proof: &'a SessionLeaseProof,
 }
 
-mod decimal_u64 {
+/// Canonical decimal text for a `u64` register sequence: what the Lua script
+/// compares with `tonumber`, and what a reader refuses when it is not
+/// canonical. Shared with the provider-presence register.
+pub(crate) mod decimal_u64 {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
-    pub(super) fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         serializer.serialize_str(&value.to_string())
     }
 
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
     where
         D: Deserializer<'de>,
     {

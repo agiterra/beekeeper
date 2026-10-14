@@ -144,6 +144,7 @@ void main() {
         'turn_refused',
         'interrupt_delivered',
         'model_applied',
+        'turn_interrupted',
       ]) {
         final decoded = decodeCodingSessionReceipt(
           receiptEvent(
@@ -152,6 +153,7 @@ void main() {
             turnId: status == 'turn_started' || status == 'turn_injected'
                 ? 'turn-1'
                 : null,
+            quiescence: status == 'turn_interrupted' ? 'unconfirmed' : null,
             error:
                 status == 'turn_dropped' ||
                     status == 'turn_refused' ||
@@ -211,6 +213,58 @@ void main() {
         expect(refused.value!.error!.code, code);
       }
     });
+
+    test(
+      'turn_interrupted carries quiescence, unconfirmed, and nothing else',
+      () {
+        final interrupted = decodeCodingSessionReceipt(
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_interrupted',
+            quiescence: 'unconfirmed',
+          ),
+        );
+        expect(
+          interrupted.value!.status,
+          CodingSessionReceiptStatus.turnInterrupted,
+        );
+        expect(interrupted.value!.quiescence, 'unconfirmed');
+        expect(interrupted.value!.isTurnStage, isTrue);
+        expect(interrupted.value!.error, isNull);
+        // Five keys, a confirmed quiescence, an error, or quiescence on any
+        // other status: all malformed.
+        for (final bad in [
+          receiptEvent(commandId: 'cmd-1', status: 'turn_interrupted'),
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_interrupted',
+            quiescence: 'confirmed',
+          ),
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_interrupted',
+            quiescence: 'unconfirmed',
+            error: {'code': 'X', 'message': 'y'},
+          ),
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_queued',
+            quiescence: 'unconfirmed',
+          ),
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'turn_started',
+            turnId: 'turn-1',
+            quiescence: 'unconfirmed',
+          ),
+        ]) {
+          expect(
+            decodeCodingSessionReceipt(bad).reason,
+            CodingSessionDecodeReason.malformedPayload,
+          );
+        }
+      },
+    );
 
     test('turn_injected is the second six-key status; unknown must say why', () {
       final injected = decodeCodingSessionReceipt(

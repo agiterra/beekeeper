@@ -262,6 +262,8 @@ pub(crate) fn build_runtime_descriptors() -> Vec<RuntimeDescriptor> {
                 allowed_models: vec!["default".to_string()],
                 discover_models: runtime.discover_models,
                 capabilities: None,
+                credential_env: Vec::new(),
+                credential_source: None,
             })
         })
         .collect();

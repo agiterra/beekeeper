@@ -56,6 +56,22 @@ pub struct ManagedAgentRuntimeStatus {
     /// Current signed relay lease observation, independent of host ownership.
     /// `None` means availability could not be confirmed, not a stopped process.
     pub runtime_available: Option<bool>,
+    /// What the provider's kind-24224 presence heartbeats say
+    /// (`live`/`expired`/`none`, NIP-CSL § Provider presence), folded across
+    /// the pair's responsibilities: live if any is live, else expired if any
+    /// expired, else none. Absent when the backend could not read status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_presence: Option<String>,
+    /// `idle`/`busy` from the newest live heartbeat, when one was seen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_state: Option<String>,
+    /// The management `execution` word folded across the pair's
+    /// responsibilities (`live`/`idle`/`absent`/`disconnected`/`stopped`).
+    /// `absent`: the provider's presence is live but it names none of this
+    /// pair's executions — not idle. Absent when the backend could not read
+    /// status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<String>,
     pub pid: Option<u32>,
     pub error: Option<String>,
     pub log_path: Option<String>,

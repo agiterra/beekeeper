@@ -17,7 +17,7 @@ fn config(record: &CodingSessionProviderRecord) -> HostConfig {
                 "defaultModel":"custom-model", "allowedModels":["custom-model"], "discoverModels":false,
                 "capabilities":beekeeper_core_pkg::coding_session_payload::Capabilities::v1_for_runtime("codex")}
         ])).unwrap(),
-        max_sessions:Some(7), turn_idle_timeout_secs:Some(123), turn_budget:Some(91),
+        max_sessions:Some(7), turn_idle_timeout_secs:Some(123), turn_budget:Some(91), checkpoint_on_stop:false,
         provider_command:Some(PathBuf::from("/operator/bin/provider")), written_at:"2026-10-12T00:00:00Z".into(),
     }
 }

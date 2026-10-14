@@ -134,6 +134,15 @@ impl Provider {
         if self.state.unresolved_start_target(&plan.target) {
             return self.refuse_stop(plan.channel_id,&plan.command_id,&LifecycleReceipt::failed(&plan.command_id,"SESSION_QUIESCENCE_UNCONFIRMED","startup effects remain uncertain; no runtime absence is treated as proof of stop"));
         }
+        // `checkpointOnStop` (off by default): one 44231 of the worktree before
+        // the stop's quiescence, only when it changed since the last one. A
+        // capture that fails never blocks the stop; it is logged and disclosed
+        // as an unavailable checkpoint by the existing path.
+        if self.checkpoint_on_stop {
+            if let Err(error) = self.checkpoint_before_stop(&plan).await {
+                tracing::warn!(target: "csp::checkpoint", command_id = %plan.command_id, "checkpoint before stop did not complete: {error}");
+            }
+        }
         let pending_path = match begin_quiescence(
             &self.config,
             &plan.target,
