@@ -1,11 +1,12 @@
-//! Desktop host for the first-party coding-session provider.
+//! Desktop client adapters for the first-party coding-session provider.
 //!
-//! The provider (`beekeeper-session-provider`) is a supervised child process that
-//! answers coding-session commands (kinds 44220/44221) on the relay and
-//! publishes transcripts back. This module owns everything the desktop must do
-//! for it to exist: mint and store its identity, seed the trust allowlist the
-//! consumer reads, assemble its environment, and keep exactly one instance
-//! alive while the app runs.
+//! The provider (`beekeeper-session-provider`) answers coding-session commands
+//! (kinds 44220/44221) on the relay and publishes transcripts back. It is
+//! supervised by `beekeeper-host`, never by this app: the desktop does not
+//! spawn it, keep it alive or stop it on quit. This module owns only the
+//! bounded client-side steps: mint and store its identity in the Keychain,
+//! seed the trust allowlist the consumer reads, assemble commissioning
+//! output, and ask the host to start it.
 //!
 //! # Why this is not a managed agent
 //!

@@ -134,7 +134,7 @@ beekeeper-shell-host = { path = "../../crates/beekeeper-shell-host" }
 # through beekeeper-session-provider, so this adds no transitive weight.
 beekeeper_workflow_pkg = { package = "beekeeper-workflow", path = "../../crates/beekeeper-workflow" }
 # Linked for its *configuration contract* only — the session ceiling's default
-# and the value that means unlimited. The desktop spawns the provider as a
+# and the value that means unlimited. The provider runs as a host-supervised
 # binary; duplicating those numbers here is how a settings panel comes to
 # advertise a default the sidecar stopped using.
 beekeeper_session_provider_pkg = { package = "beekeeper-session-provider", path = "../../crates/beekeeper-session-provider" }
@@ -191,8 +191,9 @@ audioadapter-buffers = "3.0"
 tempfile = "3"
 strip-ansi-escapes = "0.2"
 tracing = "0.1"
-# The desktop app embeds beekeeper-acp and beekeeper-session-provider, which carry ~440
-# tracing call sites between them. Without a subscriber every one of those —
+# The desktop app links beekeeper-session-provider for its contract and ships
+# beekeeper-acp as a sidecar; the linked code carries hundreds of tracing call
+# sites. Without a subscriber every one of those —
 # including the adapter stderr captured for exactly this purpose — is discarded.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"

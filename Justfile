@@ -241,7 +241,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check autodeploy-test sidecar-parity-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check no-tauri-check autodeploy-test sidecar-parity-check
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -326,6 +326,10 @@ file-size-check:
 # reason rather than raising the baseline.
 ignore-reasons-check:
     node scripts/check-ignore-reasons.mjs
+
+# Headless crates never depend on Tauri; the desktop is a client, not the executor.
+no-tauri-check:
+    ./scripts/check-no-tauri-in-crates.sh
 
 # Format all Rust code
 fmt:
