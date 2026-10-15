@@ -220,6 +220,19 @@ impl OwnerCache {
     }
 }
 
+/// How far before its observation an input's own `created_at` may place it
+/// for author authorization. `created_at` is chosen by the author, so an input
+/// claiming to be older than this is judged no earlier than
+/// `observed - MAX_AUTHORIZATION_BACKDATE_SECS`: an expired attestation cannot
+/// be revived by backdating, while ordinary delivery and replay delays within
+/// the window keep the input's own time.
+pub const MAX_AUTHORIZATION_BACKDATE_SECS: u64 = 600;
+
+/// The time at which an input's author authorization is judged.
+pub fn authorization_time(created_at: u64, observed_at: u64) -> u64 {
+    created_at.max(observed_at.saturating_sub(MAX_AUTHORIZATION_BACKDATE_SECS))
+}
+
 /// Check if `author` is the owner OR a sibling (same owner via NIP-OA).
 ///
 /// For unknown authors, queries their kind:0 profile to extract the NIP-OA
@@ -245,30 +258,32 @@ async fn is_owner_or_sibling(
         return true;
     }
 
-    let conditions = match owner_cache.is_known_sibling(author) {
-        Some(cached) => cached,
-        None => {
-            let proof = check_sibling_via_profile(author, my_owner, rest_client).await;
-            owner_cache.cache_sibling_proof(author.to_string(), proof.clone());
-            proof
-        }
-    };
-    match (conditions, authored_at) {
+    let in_force = |conditions: &Option<String>| match (conditions, authored_at) {
         (None, _) => false,
         (Some(_), None) => true,
         (Some(conditions), Some(at)) => {
-            match beekeeper_sdk::nip_oa::auth_tag_time_conditions_hold(&conditions, at) {
-                Ok(()) => true,
-                Err(e) => {
-                    tracing::debug!(
-                        author,
-                        "sibling attestation not in force for this event: {e}"
-                    );
-                    false
-                }
-            }
+            beekeeper_sdk::nip_oa::auth_tag_time_conditions_hold(conditions, at).is_ok()
+        }
+    };
+    let cached = owner_cache.is_known_sibling(author);
+    if let Some(conditions) = &cached {
+        // A cached attestation that is not in force may since have been
+        // renewed (a new kind:0); look once more before refusing.
+        if conditions.is_none() || in_force(conditions) {
+            return in_force(conditions);
         }
     }
+    let proof = check_sibling_via_profile(author, my_owner, rest_client).await;
+    // A refetch may replace a cached attestation with a newer one, but a lookup
+    // that found nothing (possibly a transient failure) never demotes it.
+    if proof.is_some() || cached.is_none() {
+        owner_cache.cache_sibling_proof(author.to_string(), proof.clone());
+    }
+    let allowed = in_force(&proof);
+    if !allowed && proof.is_some() {
+        tracing::debug!(author, "sibling attestation not in force for this event");
+    }
+    allowed
 }
 
 /// Inbound author gate decision: does this author's event fire a turn?
@@ -3117,7 +3132,10 @@ async fn tokio_main() -> Result<()> {
                                     is_dm,
                                     &owner_cache,
                                     &ctx.rest_client,
-                                    Some(beekeeper_event.event.created_at.as_secs()),
+                                    Some(authorization_time(
+                                        beekeeper_event.event.created_at.as_secs(),
+                                        nostr::Timestamp::now().as_secs(),
+                                    )),
                                 )
                                 .await;
                                 if !allowed {
@@ -6165,6 +6183,20 @@ mod author_gate_tests {
     const STRANGER: &str = "33";
 
     /// Owner + a known sibling, none of them on the explicit allowlist.
+    /// An author-chosen created_at cannot backdate an input past the bound.
+    #[test]
+    fn test_authorization_time_bounds_backdating() {
+        // Ordinary delays keep the input's own time.
+        assert_eq!(authorization_time(1_000_000, 1_000_120), 1_000_000);
+        // A claim more than the bound older is judged at the bound.
+        assert_eq!(
+            authorization_time(1_000, 1_000_000),
+            1_000_000 - MAX_AUTHORIZATION_BACKDATE_SECS
+        );
+        // Future-dated input keeps its own (later) time.
+        assert_eq!(authorization_time(2_000_000, 1_000_000), 2_000_000);
+    }
+
     /// B7: a cached sibling attestation is judged at each event's own time.
     #[tokio::test]
     async fn test_sibling_attestation_time_conditions_apply_per_event() {

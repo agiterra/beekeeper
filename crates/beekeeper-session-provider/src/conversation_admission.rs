@@ -104,7 +104,10 @@ impl Provider {
                 &actor,
                 channel,
                 &event.pubkey.to_hex(),
-                Some(event.created_at.as_secs()),
+                Some(beekeeper_acp::authorization_time(
+                    event.created_at.as_secs(),
+                    crate::now_secs(),
+                )),
             )
             .await
         {
