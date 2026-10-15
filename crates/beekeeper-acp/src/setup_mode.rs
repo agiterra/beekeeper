@@ -438,6 +438,7 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
             is_dm,
             &owner_cache,
             &rest_client,
+            Some(beekeeper_event.event.created_at.as_secs()),
         )
         .await;
 

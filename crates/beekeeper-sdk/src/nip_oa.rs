@@ -273,14 +273,88 @@ pub fn verify_auth_tag(
     verify_parsed_auth_tag(&parsed, agent_pubkey)
 }
 
+/// Evaluate a NIP-OA conditions string's time clauses at `created_at`.
+///
+/// Every `created_at<` and `created_at>` clause must hold; both operators are
+/// strict, so equality satisfies neither. `kind=` clauses are not evaluated
+/// here: they constrain which events an agent may sign, not when its owner's
+/// authorization is in force. This is the one evaluator: relay admission and
+/// author gates both call it, each with the timestamp that governs its
+/// decision.
+///
+/// # Errors
+///
+/// Returns [`SdkError::InvalidInput`] for an unparseable bound or an unmet clause.
+pub fn auth_tag_time_conditions_hold(conditions: &str, created_at: u64) -> Result<(), SdkError> {
+    for clause in conditions.split('&') {
+        let satisfied = if let Some(value) = clause.strip_prefix("created_at<") {
+            let bound = value
+                .parse::<u64>()
+                .map_err(|e| SdkError::InvalidInput(format!("invalid created_at< bound: {e}")))?;
+            created_at < bound
+        } else if let Some(value) = clause.strip_prefix("created_at>") {
+            let bound = value
+                .parse::<u64>()
+                .map_err(|e| SdkError::InvalidInput(format!("invalid created_at> bound: {e}")))?;
+            created_at > bound
+        } else {
+            continue;
+        };
+
+        if !satisfied {
+            return Err(SdkError::InvalidInput(format!(
+                "created_at {created_at} does not satisfy {clause}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Verify a NIP-OA credential and evaluate its time conditions at `created_at`,
+/// the timestamp of the signed event whose authorization is being decided.
+///
+/// Returns the owner's [`PublicKey`] and the verified conditions string.
+///
+/// # Errors
+///
+/// Returns [`SdkError::InvalidInput`] when the credential is invalid or a time
+/// condition does not hold at `created_at`.
+pub fn verify_auth_tag_at(
+    auth_tag_json: &str,
+    agent_pubkey: &PublicKey,
+    created_at: u64,
+) -> Result<(PublicKey, String), SdkError> {
+    let parsed = parse_auth_tag_fields(auth_tag_json)?;
+    let owner_pubkey = verify_parsed_auth_tag(&parsed, agent_pubkey)?;
+    auth_tag_time_conditions_hold(&parsed.conditions, created_at)?;
+    Ok((owner_pubkey, parsed.conditions.to_string()))
+}
+
+/// Verify a NIP-OA credential and return its owner and conditions without
+/// evaluating time clauses. Callers that cache an attestation keep the
+/// conditions and evaluate them with [`auth_tag_time_conditions_hold`] at each
+/// decision; a cached signature check is never a standing authorization.
+///
+/// # Errors
+///
+/// Returns [`SdkError::InvalidInput`] when the credential is invalid.
+pub fn verify_auth_tag_conditions(
+    auth_tag_json: &str,
+    agent_pubkey: &PublicKey,
+) -> Result<(PublicKey, String), SdkError> {
+    let parsed = parse_auth_tag_fields(auth_tag_json)?;
+    let owner_pubkey = verify_parsed_auth_tag(&parsed, agent_pubkey)?;
+    Ok((owner_pubkey, parsed.conditions.to_string()))
+}
+
 /// Verify a NIP-OA credential for relay admission at a signed auth event.
 ///
 /// This performs the normal signature and syntax checks, then evaluates every
 /// `created_at<` and `created_at>` clause against the signed NIP-42, NIP-98, or
-/// equivalent authentication event's `created_at`. Both operators are strict:
-/// equality does not satisfy either clause. `kind=` clauses are deliberately
-/// not evaluated at connection admission, matching NIP-AA's connection-wide
-/// credential semantics.
+/// equivalent authentication event's `created_at`: connection authentication is
+/// governed by the time the connection authenticated. `kind=` clauses are
+/// deliberately not evaluated at connection admission, matching NIP-AA's
+/// connection-wide credential semantics.
 ///
 /// # Errors
 ///
@@ -291,32 +365,14 @@ pub fn verify_auth_tag_for_auth_event(
     agent_pubkey: &PublicKey,
     auth_event_created_at: u64,
 ) -> Result<PublicKey, SdkError> {
-    let parsed = parse_auth_tag_fields(auth_tag_json)?;
-    let owner_pubkey = verify_parsed_auth_tag(&parsed, agent_pubkey)?;
-
-    for clause in parsed.conditions.split('&') {
-        let satisfied = if let Some(value) = clause.strip_prefix("created_at<") {
-            let bound = value
-                .parse::<u64>()
-                .map_err(|e| SdkError::InvalidInput(format!("invalid created_at< bound: {e}")))?;
-            auth_event_created_at < bound
-        } else if let Some(value) = clause.strip_prefix("created_at>") {
-            let bound = value
-                .parse::<u64>()
-                .map_err(|e| SdkError::InvalidInput(format!("invalid created_at> bound: {e}")))?;
-            auth_event_created_at > bound
-        } else {
-            continue;
-        };
-
-        if !satisfied {
-            return Err(SdkError::InvalidInput(format!(
-                "auth event created_at {auth_event_created_at} does not satisfy {clause}"
-            )));
-        }
-    }
-
-    Ok(owner_pubkey)
+    verify_auth_tag_at(auth_tag_json, agent_pubkey, auth_event_created_at)
+        .map(|(owner, _)| owner)
+        .map_err(|e| match e {
+            SdkError::InvalidInput(message) if message.starts_with("created_at ") => {
+                SdkError::InvalidInput(format!("auth event {message}"))
+            }
+            other => other,
+        })
 }
 
 /// Parse a NIP-OA `auth` tag JSON string into a [`Tag`] without verifying the
@@ -635,6 +691,63 @@ mod tests {
         assert!(validate_conditions("kind=").is_err());
         assert!(validate_conditions("created_at<").is_err());
         assert!(validate_conditions("created_at>").is_err());
+    }
+
+    /// One evaluator, used by relay admission and author gates, each with the
+    /// timestamp that governs its own decision (B7).
+    #[test]
+    fn test_verify_auth_tag_at_judges_the_authorized_event_time() {
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let agent = agent_keys.public_key();
+        let window =
+            compute_auth_tag(&owner_keys, &agent, "created_at>100&created_at<200").unwrap();
+
+        let (owner, conditions) = verify_auth_tag_at(&window, &agent, 150).unwrap();
+        assert_eq!(owner, owner_keys.public_key());
+        assert_eq!(conditions, "created_at>100&created_at<200");
+        // Expired, not yet valid, and both strict boundaries.
+        assert!(verify_auth_tag_at(&window, &agent, 250).is_err());
+        assert!(verify_auth_tag_at(&window, &agent, 50).is_err());
+        assert!(verify_auth_tag_at(&window, &agent, 200).is_err());
+        assert!(verify_auth_tag_at(&window, &agent, 100).is_err());
+        // An unconditional attestation holds at any time.
+        let open = compute_auth_tag(&owner_keys, &agent, "").unwrap();
+        assert!(verify_auth_tag_at(&open, &agent, 4_000_000_000).is_ok());
+        // kind= constrains signed events, not when authorization is in force.
+        let kind_only = compute_auth_tag(&owner_keys, &agent, "kind=9").unwrap();
+        assert!(verify_auth_tag_at(&kind_only, &agent, 150).is_ok());
+    }
+
+    #[test]
+    fn test_verify_auth_tag_at_rejects_wrong_agent_owner_signature_and_malformed() {
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let agent = agent_keys.public_key();
+        let tag = compute_auth_tag(&owner_keys, &agent, "created_at<200").unwrap();
+        // Another agent cannot borrow this attestation.
+        assert!(verify_auth_tag_at(&tag, &Keys::generate().public_key(), 150).is_err());
+        // A different owner substituted into the tag does not verify.
+        let mut parts: Vec<String> = serde_json::from_str(&tag).unwrap();
+        parts[1] = Keys::generate().public_key().to_hex();
+        let wrong_owner = serde_json::to_string(&parts).unwrap();
+        assert!(verify_auth_tag_at(&wrong_owner, &agent, 150).is_err());
+        // A tampered signature does not verify.
+        let mut parts: Vec<String> = serde_json::from_str(&tag).unwrap();
+        let mut sig = parts[3].clone().into_bytes();
+        sig[0] = if sig[0] == b'0' { b'1' } else { b'0' };
+        parts[3] = String::from_utf8(sig).unwrap();
+        let tampered = serde_json::to_string(&parts).unwrap();
+        assert!(verify_auth_tag_at(&tampered, &agent, 150).is_err());
+        // Malformed shapes.
+        assert!(verify_auth_tag_at("[\"auth\"]", &agent, 150).is_err());
+        assert!(verify_auth_tag_at("not json", &agent, 150).is_err());
+        // Relay admission keeps its contract and message prefix.
+        let err = verify_auth_tag_for_auth_event(&tag, &agent, 250).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("auth event created_at 250 does not satisfy created_at<200"));
+        assert!(verify_auth_tag_for_auth_event(&tag, &agent, 150).is_ok());
     }
 
     // Verify conditions validation is wired into compute and verify

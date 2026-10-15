@@ -60,7 +60,8 @@ async fn ordinary_allowlist_and_private_owner_clamp_are_revalidated() {
         .conversation_author_allowed(
             &actor.public_key().to_hex(),
             channel,
-            &allowed.public_key().to_hex()
+            &allowed.public_key().to_hex(),
+            None,
         )
         .await
         .unwrap());
@@ -68,7 +69,8 @@ async fn ordinary_allowlist_and_private_owner_clamp_are_revalidated() {
         .conversation_author_allowed(
             &actor.public_key().to_hex(),
             channel,
-            &outsider.public_key().to_hex()
+            &outsider.public_key().to_hex(),
+            None,
         )
         .await
         .unwrap());
@@ -77,7 +79,8 @@ async fn ordinary_allowlist_and_private_owner_clamp_are_revalidated() {
         .conversation_author_allowed(
             &actor.public_key().to_hex(),
             channel,
-            &allowed.public_key().to_hex()
+            &allowed.public_key().to_hex(),
+            None,
         )
         .await
         .unwrap());
@@ -85,7 +88,8 @@ async fn ordinary_allowlist_and_private_owner_clamp_are_revalidated() {
         .conversation_author_allowed(
             &actor.public_key().to_hex(),
             channel,
-            &test_operator_keys().public_key().to_hex()
+            &test_operator_keys().public_key().to_hex(),
+            None,
         )
         .await
         .unwrap());
@@ -194,7 +198,8 @@ async fn ordinary_owner_sibling_is_verified_but_unknown_channel_never_widens() {
         .conversation_author_allowed(
             &actor.public_key().to_hex(),
             channel,
-            &sibling.public_key().to_hex()
+            &sibling.public_key().to_hex(),
+            None,
         )
         .await
         .unwrap());
@@ -202,7 +207,8 @@ async fn ordinary_owner_sibling_is_verified_but_unknown_channel_never_widens() {
         .conversation_author_allowed(
             &actor.public_key().to_hex(),
             channel,
-            &stranger.public_key().to_hex()
+            &stranger.public_key().to_hex(),
+            None,
         )
         .await
         .unwrap());

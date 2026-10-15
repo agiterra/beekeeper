@@ -100,7 +100,12 @@ impl Provider {
         drop(ownership);
         // Verify ordinary policy before disclosing any generic responsibility count.
         match self
-            .conversation_author_allowed(&actor, channel, &event.pubkey.to_hex())
+            .conversation_author_allowed(
+                &actor,
+                channel,
+                &event.pubkey.to_hex(),
+                Some(event.created_at.as_secs()),
+            )
             .await
         {
             Ok(true) => {}

@@ -174,11 +174,13 @@ fn resolve_agent_owner(config: &Config) -> Option<String> {
 /// Cache for the agent's owner pubkey + sibling lookups.
 ///
 /// Siblings are other agents whose NIP-OA auth tag proves the same owner.
-/// Lookup results are cached for the process lifetime (attestations are immutable).
+/// A verified attestation is cached with its conditions, never as a bare
+/// "yes": its time clauses are evaluated again for each event it authorizes,
+/// so an attestation that has expired stops admitting new events.
 struct OwnerCache {
     pubkey: Option<String>,
-    /// author_hex → is_sibling (true = same owner, false = not)
-    siblings: std::sync::Mutex<HashMap<String, bool>>,
+    /// author_hex → verified attestation conditions (`None` = not a sibling)
+    siblings: std::sync::Mutex<HashMap<String, Option<String>>>,
 }
 
 impl OwnerCache {
@@ -194,19 +196,26 @@ impl OwnerCache {
         self.pubkey.as_deref()
     }
 
-    /// Check if author is a known sibling (cached result).
-    fn is_known_sibling(&self, author: &str) -> Option<bool> {
-        self.siblings.lock().ok()?.get(author).copied()
+    /// The cached sibling lookup: `Some(None)` = known not a sibling,
+    /// `Some(Some(conditions))` = verified attestation with these conditions.
+    fn is_known_sibling(&self, author: &str) -> Option<Option<String>> {
+        self.siblings.lock().ok()?.get(author).cloned()
     }
 
-    /// Cache a sibling lookup result.
+    /// Cache a sibling lookup result for an unconditional attestation.
+    #[cfg(test)]
     fn cache_sibling(&self, author: String, is_sibling: bool) {
+        self.cache_sibling_proof(author, is_sibling.then(String::new));
+    }
+
+    /// Cache a sibling lookup: the verified attestation's conditions, or `None`.
+    fn cache_sibling_proof(&self, author: String, conditions: Option<String>) {
         if let Ok(mut map) = self.siblings.lock() {
             // Cap at 256 entries to prevent unbounded growth.
             if map.len() >= 256 {
                 map.clear();
             }
-            map.insert(author, is_sibling);
+            map.insert(author, conditions);
         }
     }
 }
@@ -214,11 +223,17 @@ impl OwnerCache {
 /// Check if `author` is the owner OR a sibling (same owner via NIP-OA).
 ///
 /// For unknown authors, queries their kind:0 profile to extract the NIP-OA
-/// auth tag and verify the owner matches. Result is cached.
+/// auth tag and verify the owner matches; the verified conditions are cached.
+/// `authored_at` is the `created_at` of the event being authorized: when it is
+/// given, the attestation's time conditions must hold at that instant (the
+/// same evaluator relay admission uses at authentication time). `None` checks
+/// the attestation without a time decision, for re-checks of an event that was
+/// already admitted at its own time.
 async fn is_owner_or_sibling(
     author: &str,
     owner_cache: &OwnerCache,
     rest_client: &relay::RestClient,
+    authored_at: Option<u64>,
 ) -> bool {
     let my_owner = match owner_cache.get() {
         Some(o) => o,
@@ -230,15 +245,30 @@ async fn is_owner_or_sibling(
         return true;
     }
 
-    // Check sibling cache.
-    if let Some(cached) = owner_cache.is_known_sibling(author) {
-        return cached;
+    let conditions = match owner_cache.is_known_sibling(author) {
+        Some(cached) => cached,
+        None => {
+            let proof = check_sibling_via_profile(author, my_owner, rest_client).await;
+            owner_cache.cache_sibling_proof(author.to_string(), proof.clone());
+            proof
+        }
+    };
+    match (conditions, authored_at) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(conditions), Some(at)) => {
+            match beekeeper_sdk::nip_oa::auth_tag_time_conditions_hold(&conditions, at) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::debug!(
+                        author,
+                        "sibling attestation not in force for this event: {e}"
+                    );
+                    false
+                }
+            }
+        }
     }
-
-    // Query the author's kind:0 profile to check for NIP-OA auth tag.
-    let is_sibling = check_sibling_via_profile(author, my_owner, rest_client).await;
-    owner_cache.cache_sibling(author.to_string(), is_sibling);
-    is_sibling
 }
 
 /// Inbound author gate decision: does this author's event fire a turn?
@@ -265,20 +295,23 @@ async fn author_allowed(
     is_dm: bool,
     owner_cache: &OwnerCache,
     rest_client: &relay::RestClient,
+    authored_at: Option<u64>,
 ) -> bool {
     if is_dm {
         return match respond_to {
             RespondTo::Nobody => false,
-            _ => is_owner_or_sibling(author, owner_cache, rest_client).await,
+            _ => is_owner_or_sibling(author, owner_cache, rest_client, authored_at).await,
         };
     }
     match respond_to {
         RespondTo::Anyone => true,
         RespondTo::Nobody => false,
-        RespondTo::OwnerOnly => is_owner_or_sibling(author, owner_cache, rest_client).await,
+        RespondTo::OwnerOnly => {
+            is_owner_or_sibling(author, owner_cache, rest_client, authored_at).await
+        }
         RespondTo::Allowlist => {
             allowlist.contains(author)
-                || is_owner_or_sibling(author, owner_cache, rest_client).await
+                || is_owner_or_sibling(author, owner_cache, rest_client, authored_at).await
         }
     }
 }
@@ -296,6 +329,10 @@ pub struct OrdinaryAuthorPolicy<'a> {
     pub owner: &'a str,
     /// Private installation policy can narrow, never broaden, the public mode.
     pub enforced_owner_only: bool,
+    /// `created_at` of the signed input being admitted. A sibling's NIP-OA time
+    /// conditions must hold at this instant. `None` only re-checks an input
+    /// that was already admitted at its own time.
+    pub authored_at: Option<u64>,
 }
 
 /// Reuse the harness's author/sibling and DM gate without starting a harness.
@@ -330,6 +367,7 @@ pub async fn ordinary_author_allowed(
         is_dm,
         &OwnerCache::new(Some(policy.owner.into())),
         rest_client,
+        policy.authored_at,
     )
     .await
 }
@@ -364,17 +402,18 @@ pub(crate) async fn is_dm_channel(
 }
 
 /// Query an author's kind:0 profile and check if their NIP-OA auth tag
-/// proves the same owner as us.
+/// proves the same owner as us. Returns the verified attestation's conditions,
+/// which the caller evaluates for the event being authorized.
 async fn check_sibling_via_profile(
     author: &str,
     expected_owner: &str,
     rest_client: &relay::RestClient,
-) -> bool {
+) -> Option<String> {
     let filter = nostr::Filter::new()
         .kind(nostr::Kind::Metadata)
         .author(match nostr::PublicKey::from_hex(author) {
             Ok(pk) => pk,
-            Err(_) => return false,
+            Err(_) => return None,
         })
         .limit(1);
 
@@ -382,28 +421,28 @@ async fn check_sibling_via_profile(
         .await
     {
         Ok(Ok(v)) => v,
-        _ => return false, // timeout or error — fail closed
+        _ => return None, // timeout or error — fail closed
     };
 
     // Look for an "auth" tag in the profile event.
     let events = match resp.as_array() {
         Some(arr) => arr,
-        None => return false,
+        None => return None,
     };
     let event = match events.first() {
         Some(e) => e,
-        None => return false,
+        None => return None,
     };
     let tags = match event.get("tags").and_then(|t| t.as_array()) {
         Some(t) => t,
-        None => return false,
+        None => return None,
     };
 
     // Find ["auth", owner_pk, conditions, sig] and verify the Schnorr signature.
     // Don't trust the relay — verify ourselves.
     let agent_pk = match nostr::PublicKey::from_hex(author) {
         Ok(pk) => pk,
-        Err(_) => return false,
+        Err(_) => return None,
     };
 
     for tag in tags {
@@ -424,10 +463,10 @@ async fn check_sibling_via_profile(
         }
         // Cryptographically verify the NIP-OA attestation signature.
         let tag_json = serde_json::to_string(tag).unwrap_or_default();
-        match beekeeper_sdk::nip_oa::verify_auth_tag(&tag_json, &agent_pk) {
-            Ok(_) => {
-                tracing::debug!(author, expected_owner, "sibling verified via NIP-OA");
-                return true;
+        match beekeeper_sdk::nip_oa::verify_auth_tag_conditions(&tag_json, &agent_pk) {
+            Ok((_, conditions)) => {
+                tracing::debug!(author, expected_owner, %conditions, "sibling verified via NIP-OA");
+                return Some(conditions);
             }
             Err(e) => {
                 tracing::debug!(author, "NIP-OA auth tag verification failed: {e}");
@@ -435,7 +474,7 @@ async fn check_sibling_via_profile(
         }
     }
 
-    false
+    None
 }
 
 /// Observer frames are published at a global rate of AT MOST ONE relay frame
@@ -3078,6 +3117,7 @@ async fn tokio_main() -> Result<()> {
                                     is_dm,
                                     &owner_cache,
                                     &ctx.rest_client,
+                                    Some(beekeeper_event.event.created_at.as_secs()),
                                 )
                                 .await;
                                 if !allowed {
@@ -6125,6 +6165,94 @@ mod author_gate_tests {
     const STRANGER: &str = "33";
 
     /// Owner + a known sibling, none of them on the explicit allowlist.
+    /// B7: a cached sibling attestation is judged at each event's own time.
+    #[tokio::test]
+    async fn test_sibling_attestation_time_conditions_apply_per_event() {
+        let cache = OwnerCache::new(Some(OWNER.into()));
+        cache.cache_sibling_proof(SIBLING.into(), Some("created_at>100&created_at<200".into()));
+        let allowed = |at: Option<u64>| {
+            let cache = &cache;
+            async move {
+                author_allowed(
+                    &RespondTo::OwnerOnly,
+                    &HashSet::new(),
+                    SIBLING,
+                    false,
+                    cache,
+                    &dummy_rest_client(),
+                    at,
+                )
+                .await
+            }
+        };
+        assert!(allowed(Some(150)).await, "inside the window");
+        assert!(
+            !allowed(Some(250)).await,
+            "expired attestation no longer admits new events"
+        );
+        assert!(
+            !allowed(Some(50)).await,
+            "not-yet-valid attestation admits nothing yet"
+        );
+        assert!(
+            allowed(None).await,
+            "a re-check of an admitted event invents no new time"
+        );
+        // The owner is never subject to an attestation.
+        assert!(
+            author_allowed(
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                OWNER,
+                false,
+                &cache,
+                &dummy_rest_client(),
+                Some(250)
+            )
+            .await
+        );
+        // A known non-sibling stays refused at any time.
+        cache.cache_sibling_proof(STRANGER.into(), None);
+        assert!(
+            !author_allowed(
+                &RespondTo::OwnerOnly,
+                &HashSet::new(),
+                STRANGER,
+                false,
+                &cache,
+                &dummy_rest_client(),
+                Some(150)
+            )
+            .await
+        );
+        // Allowlist widening still applies the same rule to siblings, not to listed externals.
+        let listed = HashSet::from([EXTERNAL.to_string()]);
+        assert!(
+            author_allowed(
+                &RespondTo::Allowlist,
+                &listed,
+                EXTERNAL,
+                false,
+                &cache,
+                &dummy_rest_client(),
+                Some(250)
+            )
+            .await
+        );
+        assert!(
+            !author_allowed(
+                &RespondTo::Allowlist,
+                &listed,
+                SIBLING,
+                false,
+                &cache,
+                &dummy_rest_client(),
+                Some(250)
+            )
+            .await
+        );
+    }
+
     fn cache_with_sibling() -> OwnerCache {
         let cache = OwnerCache::new(Some(OWNER.into()));
         cache.cache_sibling(SIBLING.into(), true);
@@ -6144,7 +6272,8 @@ mod author_gate_tests {
                 SIBLING,
                 false,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "a same-owner sibling must fire a turn under Allowlist even when not listed"
@@ -6162,7 +6291,8 @@ mod author_gate_tests {
                 EXTERNAL,
                 false,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "an explicitly allowlisted external pubkey must still be accepted"
@@ -6180,7 +6310,8 @@ mod author_gate_tests {
                 STRANGER,
                 false,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "a non-sibling absent from the allowlist must be dropped"
@@ -6198,7 +6329,8 @@ mod author_gate_tests {
                 OWNER,
                 false,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "the owner must always be accepted under Allowlist"
@@ -6219,7 +6351,8 @@ mod author_gate_tests {
                 STRANGER,
                 false,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "under the default OwnerOnly, a stranger must be dropped — so it can never reach the mode gate to steer"
@@ -6237,7 +6370,8 @@ mod author_gate_tests {
                     who,
                     false,
                     &cache,
-                    &dummy_rest_client()
+                    &dummy_rest_client(),
+                    None,
                 )
                 .await,
                 "under default OwnerOnly, the {label} must be admitted so steering can fire"
@@ -6263,7 +6397,8 @@ mod author_gate_tests {
                 EXTERNAL,
                 true,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "an allowlisted external pubkey must NOT fire a turn inside a DM"
@@ -6280,7 +6415,8 @@ mod author_gate_tests {
                 STRANGER,
                 true,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "respond_to=anyone must still drop non-owner authors inside a DM"
@@ -6303,7 +6439,8 @@ mod author_gate_tests {
                         who,
                         true,
                         &cache,
-                        &dummy_rest_client()
+                        &dummy_rest_client(),
+                        None,
                     )
                     .await,
                     "in a DM under {mode}, the {label} must still be admitted"
@@ -6322,7 +6459,8 @@ mod author_gate_tests {
                 OWNER,
                 true,
                 &cache,
-                &dummy_rest_client()
+                &dummy_rest_client(),
+                None,
             )
             .await,
             "respond_to=nobody must drop everything, DMs included"
@@ -6463,6 +6601,7 @@ mod author_gate_tests {
                 is_dm,
                 &owner_cache,
                 &dummy_rest_client(),
+                None,
             )
             .await,
             "an external author must not pass when startup discovery omitted metadata"

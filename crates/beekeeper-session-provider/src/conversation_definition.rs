@@ -82,11 +82,16 @@ impl Provider {
         Ok((owner, event.clone(), definition))
     }
 
+    /// `authored_at` is the signed input's `created_at` at admission, so a
+    /// sibling's NIP-OA time conditions are judged at the input's own time;
+    /// re-checks of an already admitted input pass `None` rather than invent
+    /// a later timestamp.
     pub(crate) async fn conversation_author_allowed(
         &self,
         actor_hex: &str,
         channel: Uuid,
         author: &str,
+        authored_at: Option<u64>,
     ) -> Result<bool, crate::session::CreateFailure> {
         let (owner, _, definition) = self.conversation_definition_head(actor_hex).await?;
         let settings = crate::managed_configuration::Settings::load(&self.config, Some(actor_hex))?;
@@ -116,6 +121,7 @@ impl Provider {
                 author,
                 owner: &owner.to_hex(),
                 enforced_owner_only,
+                authored_at,
             },
             channel,
             rest,
@@ -158,7 +164,7 @@ impl Provider {
             return Ok(None);
         }
         if !self
-            .conversation_author_allowed(&origin.actor, channel, operator)
+            .conversation_author_allowed(&origin.actor, channel, operator, None)
             .await?
         {
             return Err(failure());
@@ -196,7 +202,7 @@ impl Provider {
             .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
         let (owner, event, definition) = self.conversation_definition_head(&origin.actor).await?;
         if !self
-            .conversation_author_allowed(&origin.actor, origin.channel, operator)
+            .conversation_author_allowed(&origin.actor, origin.channel, operator, None)
             .await?
         {
             return Err(fail("UNAUTHORIZED_OPERATOR"));
