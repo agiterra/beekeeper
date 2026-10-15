@@ -502,6 +502,30 @@ bee agents create --operation-id \"$(uuidgen)\" --channel <UUID> \\\n      \
         #[arg(long, value_enum)]
         respond_to: Option<RespondToArg>,
     },
+    /// Attest a key held outside Beekeeper custody (NIP-OA owner attestation)
+    #[command(
+        after_help = "The external participant's secret key never reaches Beekeeper: this signs, \
+with your own key from bee's existing custody (BEEKEEPER_PRIVATE_KEY, never an argument), \
+the public tag that lets the participant act as itself on your behalf. Beekeeper then shows \
+the participant as the signer and you, separately, as its owner.\n\n\
+Revocation is limited to what NIP-OA, NIP-AA and NIP-IA provide: --expires-at stops the \
+attestation authorizing events created after that time (relay authentication and hosted \
+agents' owner-only gate both check it); removing your relay membership ends the key's \
+NIP-AA access at its next connection; `bee agents archive <PUBKEY>` archives the identity. \
+A published attestation cannot otherwise be withdrawn early, so prefer an expiry.\n\n\
+Examples:\n  \
+bee agents attest <PUBKEY> --expires-at 1798761600 --output frontend-auth-tag.json"
+    )]
+    Attest {
+        /// External participant pubkey (hex)
+        target_pubkey: String,
+        /// Unix time after which the attestation authorizes no new events (created_at<)
+        #[arg(long)]
+        expires_at: Option<u64>,
+        /// Write the tag to this new owner-only file instead of stdout; never overwrites
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+    },
     /// Submit a NIP-IA archive request for an identity (kind 9035)
     #[command(
         after_help = "Auth flow: when target != signer, the CLI fetches the target's kind:0 and \

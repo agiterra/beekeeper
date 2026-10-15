@@ -176,7 +176,81 @@ pub async fn dispatch(command: AgentsCmd, client: &BeekeeperClient) -> Result<()
         }
 
         AgentsCmd::Archived => cmd_archived(client).await,
+
+        AgentsCmd::Attest {
+            target_pubkey,
+            expires_at,
+            output,
+        } => cmd_attest(client, &target_pubkey, expires_at, output.as_deref()),
     }
+}
+
+/// Sign a NIP-OA owner attestation for an externally held key. The tag is
+/// public; the owner key comes from bee's custody and is never written out.
+fn cmd_attest(
+    client: &BeekeeperClient,
+    target_pubkey: &str,
+    expires_at: Option<u64>,
+    output: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    validate_hex64(target_pubkey)?;
+    let target = PublicKey::from_hex(target_pubkey)
+        .map_err(|e| CliError::Usage(format!("invalid target pubkey: {e}")))?;
+    let owner = client.keys();
+    if owner.public_key() == target {
+        return Err(CliError::Usage(
+            "an identity cannot attest itself; attest the external participant's key".into(),
+        ));
+    }
+    let conditions = expires_at
+        .map(|at| format!("created_at<{at}"))
+        .unwrap_or_default();
+    let tag = beekeeper_sdk::nip_oa::compute_auth_tag(owner, &target, &conditions)
+        .map_err(|e| CliError::Other(format!("could not sign the attestation: {e}")))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // An attestation that already authorizes nothing is a mistake, not a credential.
+    beekeeper_sdk::nip_oa::verify_auth_tag_at(&tag, &target, now)
+        .map_err(|e| CliError::Usage(format!("the attestation would not be in force now: {e}")))?;
+    let written = match output {
+        Some(path) => {
+            write_owner_only_new(path, &format!("{tag}\n"))?;
+            Some(path.display().to_string())
+        }
+        None => {
+            println!("{tag}");
+            None
+        }
+    };
+    eprintln!(
+        "{}",
+        json!({
+            "action": "attest",
+            "owner": owner.public_key().to_hex(),
+            "target": target_pubkey,
+            "conditions": conditions,
+            "output": written,
+        })
+    );
+    Ok(())
+}
+
+fn write_owner_only_new(path: &std::path::Path, contents: &str) -> Result<(), CliError> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|e| CliError::Usage(format!("{}: {e} (never overwritten)", path.display())))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|e| CliError::Other(format!("{}: {e}", path.display())))
 }
 
 /// Require `BEEKEEPER_AUTH_TAG` and parse the owner pubkey from it. Used only by
