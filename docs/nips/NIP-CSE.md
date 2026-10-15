@@ -79,6 +79,7 @@ the command at ingest, so no receipt exists and the code appears in the
 | `ACTOR_ROLE_PAIR` | relay, create | ingest rejection | A `role` without an `actor`, or a null seat identity. Structural: refused before storage, so it never appears in a receipt. |
 | `ACTOR_UNAVAILABLE` | provider, create | `failed` | The seated `actor`'s key material is not held on this host; custody is host-local by design. |
 | `UNAUTHORIZED_OPERATOR` | provider, any | `failed` / `turn_refused` | The command signer is not authorized to operate the addressed session. |
+| `OWNER_ATTESTATION_EXPIRED` | provider, turn | `turn_refused` | The author is a same-owner sibling whose NIP-OA attestation is not in force at the input's authorization time (expired, or not yet valid). Refused with a receipt, never dropped, so expiry is not mistaken for the agent being down. |
 | `UNKNOWN_TARGET` | provider, any | `failed` / `turn_refused` | The addressed provider has no execution matching the target. |
 | `STALE_GENERATION` | provider, any | `failed` / `turn_refused` | The command addressed a superseded generation of an existing execution. |
 | `SESSION_CLOSED` | provider, any | `failed` / `turn_refused` | The addressed execution was already durably stopped. |

@@ -430,3 +430,69 @@ async fn configured_activation_replays_original_once(pre_enrollment: bool) {
     relay.shutdown().await;
     server.abort();
 }
+
+#[tokio::test]
+async fn expired_sibling_attestation_is_refused_with_a_receipt_not_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let channel = Uuid::new_v4();
+    let actor = Keys::generate();
+    let sibling = Keys::generate();
+    let (mut host, target) = routed_provider(dir.path(), channel, &actor).await;
+    install_routes(&host, channel, &actor, vec![target]);
+    // A real owner attestation for the sibling whose `created_at<` bound has
+    // already passed: verified, same owner, not in force for a message now.
+    let expired_at = now_secs().saturating_sub(3_600);
+    let auth = beekeeper_sdk::nip_oa::compute_auth_tag(
+        test_operator_keys(),
+        &sibling.public_key(),
+        &format!("created_at<{expired_at}"),
+    )
+    .unwrap();
+    let profile = nostr::EventBuilder::new(Kind::Metadata, "{}")
+        .tags([beekeeper_sdk::nip_oa::parse_auth_tag(&auth).unwrap()])
+        .sign_with_keys(&sibling)
+        .unwrap();
+    let (relay, _, _server) = spawn_test_relay_with_events(
+        &host.config.keys,
+        vec![policy_definition(&actor, "owner-only", vec![]), profile],
+    )
+    .await;
+    host.set_rest_client(relay.rest_client());
+    let event = message(channel, &actor, None, &sibling);
+    host.handle_command_event(channel, &event).await.unwrap();
+    let sink = CollectingSink::new();
+    host.flush(&sink).await.unwrap();
+    // Answered, not dropped: a signed refusal names the expired attestation.
+    let refusal = sink
+        .contents_of(beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .find(|receipt| {
+            receipt["commandId"] == event.id.to_hex() && receipt["status"] == "turn_refused"
+        })
+        .expect("an expired sibling attestation is refused with a receipt");
+    assert_eq!(
+        refusal["error"]["code"],
+        crate::payload::OWNER_ATTESTATION_EXPIRED
+    );
+    assert!(host.state.is_command_refused(&event.id.to_hex()));
+    assert!(!host.state.is_command_consumed(&event.id.to_hex()));
+    // The only thing said in the channel is the refusal notice, in reply to
+    // the refused message; no turn ran and no answer was invented.
+    let replies: Vec<_> = sink
+        .all()
+        .into_iter()
+        .filter(|reply| reply.kind == Kind::Custom(9))
+        .collect();
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert!(replies[0]
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice().get(1) == Some(&event.id.to_hex())));
+    assert!(
+        replies[0]
+            .content
+            .contains(crate::payload::OWNER_ATTESTATION_EXPIRED),
+        "{}",
+        replies[0].content
+    );
+}

@@ -6647,6 +6647,124 @@ mod author_gate_tests {
         );
     }
 
+    /// A REST client whose relay answers every query with `response`, counting
+    /// the requests it served.
+    async fn rest_with_response(
+        response: serde_json::Value,
+    ) -> (
+        relay::RestClient,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test HTTP server");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = std::sync::Arc::new(AtomicUsize::new(0));
+        let server_requests = requests.clone();
+        let body = response.to_string();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = vec![0; 8192];
+                let _ = socket.read(&mut request).await;
+                server_requests.fetch_add(1, Ordering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        let rest = relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url,
+            keys: nostr::Keys::generate(),
+            auth_tag_json: None,
+        };
+        (rest, requests, server)
+    }
+
+    /// B7 end to end: a cached attestation that has expired is refetched, a
+    /// renewed one (a new kind:0 with later conditions) takes effect, and the
+    /// renewal is judged per event like any other.
+    #[tokio::test]
+    async fn test_renewed_sibling_attestation_is_picked_up_by_refetch() {
+        use std::sync::atomic::Ordering;
+        let owner = nostr::Keys::generate();
+        let sibling = nostr::Keys::generate();
+        let sibling_hex = sibling.public_key().to_hex();
+        let renewed = beekeeper_sdk::nip_oa::compute_auth_tag(
+            &owner,
+            &sibling.public_key(),
+            "created_at<2000",
+        )
+        .expect("renewed attestation");
+        let tag: serde_json::Value = serde_json::from_str(&renewed).expect("tag json");
+        let (rest, requests, server) =
+            rest_with_response(serde_json::json!([{ "tags": [tag] }])).await;
+        let cache = OwnerCache::new(Some(owner.public_key().to_hex()));
+        cache.cache_sibling_proof(sibling_hex.clone(), Some("created_at<500".into()));
+        // Expired in the cache, renewed on the relay: admitted after one query.
+        assert_eq!(
+            owner_or_sibling_decision(&sibling_hex, &cache, &rest, Some(1_000)).await,
+            AuthorDecision::Allowed
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        // The renewal is cached: the next event in force needs no query.
+        assert_eq!(
+            owner_or_sibling_decision(&sibling_hex, &cache, &rest, Some(1_500)).await,
+            AuthorDecision::Allowed
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        // Past the renewed bound it is not in force again, and the refetch that
+        // just happened is inside the cooldown: refused on the cache, no query.
+        assert_eq!(
+            owner_or_sibling_decision(&sibling_hex, &cache, &rest, Some(3_000)).await,
+            AuthorDecision::AttestationNotInForce
+        );
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "one refetch per author per cooldown"
+        );
+        server.abort();
+    }
+
+    /// A refetch that finds nothing never demotes the cache and never admits:
+    /// the expired attestation is refused (and the failure is logged), and the
+    /// cooldown keeps a chatty expired sibling from querying per message.
+    #[tokio::test]
+    async fn test_failed_refetch_of_expired_attestation_refuses_without_requerying() {
+        use std::sync::atomic::Ordering;
+        let owner = nostr::Keys::generate();
+        let sibling_hex = nostr::Keys::generate().public_key().to_hex();
+        let (rest, requests, server) = rest_with_response(serde_json::json!([])).await;
+        let cache = OwnerCache::new(Some(owner.public_key().to_hex()));
+        cache.cache_sibling_proof(sibling_hex.clone(), Some("created_at<500".into()));
+        assert_eq!(
+            owner_or_sibling_decision(&sibling_hex, &cache, &rest, Some(1_000)).await,
+            AuthorDecision::AttestationNotInForce
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            cache.is_known_sibling(&sibling_hex),
+            Some(Some("created_at<500".into())),
+            "a lookup that found nothing never demotes the cached attestation"
+        );
+        assert_eq!(
+            owner_or_sibling_decision(&sibling_hex, &cache, &rest, Some(1_001)).await,
+            AuthorDecision::AttestationNotInForce
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "cooldown holds");
+        server.abort();
+    }
+
     async fn lazy_resolver_with_response(
         response: serde_json::Value,
     ) -> (

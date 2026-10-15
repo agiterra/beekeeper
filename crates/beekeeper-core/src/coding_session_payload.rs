@@ -107,6 +107,11 @@ pub const ACTOR_ROLE_PAIR: &str = "ACTOR_ROLE_PAIR";
 pub const ACTOR_UNAVAILABLE: &str = "ACTOR_UNAVAILABLE";
 /// The command signer is not authorized to operate the addressed session.
 pub const UNAUTHORIZED_OPERATOR: &str = "UNAUTHORIZED_OPERATOR";
+/// A same-owner sibling's NIP-OA attestation does not hold at the input's
+/// authorization time (expired, or not yet in force). The input is refused
+/// with this receipt rather than dropped, so "not allowed" never reads as
+/// "not running" (NIP-OA § Client Behavior).
+pub const OWNER_ATTESTATION_EXPIRED: &str = "OWNER_ATTESTATION_EXPIRED";
 /// The addressed provider has no execution matching the requested target.
 pub const UNKNOWN_TARGET: &str = "UNKNOWN_TARGET";
 /// The command addressed a superseded generation of an existing execution.

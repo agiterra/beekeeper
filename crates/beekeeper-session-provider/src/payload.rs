@@ -7,9 +7,4 @@
 //! and the ACP stack behind it. This module stays as the provider's name for
 //! them.
 
-/// A same-owner sibling's NIP-OA attestation does not hold at the input's
-/// authorization time (expired or not yet in force); the input is refused with
-/// a receipt rather than dropped, so "not allowed" never reads as "not running".
-pub const OWNER_ATTESTATION_EXPIRED: &str = "OWNER_ATTESTATION_EXPIRED";
-
 pub use beekeeper_core::coding_session_payload::*;
