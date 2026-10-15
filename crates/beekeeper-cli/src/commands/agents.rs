@@ -193,6 +193,37 @@ fn cmd_attest(
     expires_at: Option<u64>,
     output: Option<&std::path::Path>,
 ) -> Result<(), CliError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    attest_with(
+        client,
+        target_pubkey,
+        expires_at,
+        output,
+        std::env::var("BEEKEEPER_PRIVATE_KEY").ok().as_deref(),
+        now,
+    )
+}
+
+/// The signing key must be the one in `BEEKEEPER_PRIVATE_KEY`. The global
+/// `--private-key` flag would put the owner's secret on the command line, in
+/// shell history and in the process table, which `attest` exists to avoid.
+fn signing_key_is_from_env(owner: &nostr::Keys, env_key: Option<&str>) -> bool {
+    env_key
+        .and_then(|value| nostr::Keys::parse(value.trim()).ok())
+        .is_some_and(|keys| keys.public_key() == owner.public_key())
+}
+
+fn attest_with(
+    client: &BeekeeperClient,
+    target_pubkey: &str,
+    expires_at: Option<u64>,
+    output: Option<&std::path::Path>,
+    env_key: Option<&str>,
+    now: u64,
+) -> Result<(), CliError> {
     validate_hex64(target_pubkey)?;
     let target = PublicKey::from_hex(target_pubkey)
         .map_err(|e| CliError::Usage(format!("invalid target pubkey: {e}")))?;
@@ -202,6 +233,11 @@ fn cmd_attest(
         ));
     }
     let owner = client.keys();
+    if !signing_key_is_from_env(owner, env_key) {
+        return Err(CliError::Usage(
+            "attest signs with the owner key from BEEKEEPER_PRIVATE_KEY only; do not pass it with --private-key".into(),
+        ));
+    }
     if owner.public_key() == target {
         return Err(CliError::Usage(
             "an identity cannot attest itself; attest the external participant's key".into(),
@@ -212,10 +248,6 @@ fn cmd_attest(
         .unwrap_or_default();
     let tag = beekeeper_sdk::nip_oa::compute_auth_tag(owner, &target, &conditions)
         .map_err(|e| CliError::Other(format!("could not sign the attestation: {e}")))?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
     // An attestation that already authorizes nothing is a mistake, not a credential.
     beekeeper_sdk::nip_oa::verify_auth_tag_at(&tag, &target, now)
         .map_err(|e| CliError::Usage(format!("the attestation would not be in force now: {e}")))?;
@@ -1366,5 +1398,129 @@ mod tests {
             .expect("sign");
         let result = verify_archived_event(&event, &self_hex).expect("should pass");
         assert!(result.is_empty());
+    }
+
+    mod attest {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        const NOW: u64 = 1_800_000_000;
+
+        fn owner_client() -> (crate::client::BeekeeperClient, String) {
+            let keys = nostr::Keys::generate();
+            let secret = keys.secret_key().to_secret_hex();
+            let client = crate::client::BeekeeperClient::new(
+                "http://127.0.0.1:9".to_string(),
+                keys,
+                None,
+                None,
+            )
+            .unwrap();
+            (client, secret)
+        }
+
+        fn target() -> String {
+            nostr::Keys::generate().public_key().to_hex()
+        }
+
+        fn usage_message(result: Result<(), CliError>) -> String {
+            match result {
+                Err(CliError::Usage(message)) => message,
+                other => panic!("expected a usage refusal, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn writes_a_verifiable_owner_only_tag_that_is_never_overwritten() {
+            let (client, secret) = owner_client();
+            let target = target();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("auth-tag.json");
+            attest_with(
+                &client,
+                &target,
+                Some(NOW + 3_600),
+                Some(&path),
+                Some(&secret),
+                NOW,
+            )
+            .expect("attests");
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "tag file is owner-only");
+            let written = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !written.contains(&secret),
+                "the owner secret is never written"
+            );
+            let tag: Vec<String> = serde_json::from_str(written.trim()).unwrap();
+            assert_eq!(tag[0], "auth");
+            assert_eq!(tag[1], client.keys().public_key().to_hex());
+            assert_eq!(tag[2], format!("created_at<{}", NOW + 3_600));
+            let (owner, conditions) = beekeeper_sdk::nip_oa::verify_auth_tag_at(
+                written.trim(),
+                &PublicKey::from_hex(&target).unwrap(),
+                NOW,
+            )
+            .expect("the tag verifies for the target at NOW");
+            assert_eq!(owner, client.keys().public_key());
+            assert_eq!(conditions, tag[2]);
+            let again = attest_with(&client, &target, None, Some(&path), Some(&secret), NOW);
+            assert!(usage_message(again).contains("never overwritten"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
+        }
+
+        #[test]
+        fn refuses_while_signing_as_an_attested_agent() {
+            let (owner, _) = owner_client();
+            let agent = nostr::Keys::generate();
+            let agent_secret = agent.secret_key().to_secret_hex();
+            let tag =
+                beekeeper_sdk::nip_oa::compute_auth_tag(owner.keys(), &agent.public_key(), "")
+                    .unwrap();
+            let parsed = beekeeper_sdk::nip_oa::parse_auth_tag(&tag).unwrap();
+            let client = crate::client::BeekeeperClient::new(
+                "http://127.0.0.1:9".to_string(),
+                agent,
+                Some(parsed),
+                Some(tag),
+            )
+            .unwrap();
+            let refused = attest_with(&client, &target(), None, None, Some(&agent_secret), NOW);
+            assert!(usage_message(refused).contains("BEEKEEPER_AUTH_TAG"));
+        }
+
+        #[test]
+        fn refuses_to_attest_itself() {
+            let (client, secret) = owner_client();
+            let own = client.keys().public_key().to_hex();
+            let refused = attest_with(&client, &own, None, None, Some(&secret), NOW);
+            assert!(usage_message(refused).contains("cannot attest itself"));
+        }
+
+        #[test]
+        fn refuses_an_expiry_that_is_not_in_the_future() {
+            let (client, secret) = owner_client();
+            for expires_at in [NOW - 1, NOW] {
+                let refused = attest_with(
+                    &client,
+                    &target(),
+                    Some(expires_at),
+                    None,
+                    Some(&secret),
+                    NOW,
+                );
+                assert!(usage_message(refused).contains("would not be in force now"));
+            }
+        }
+
+        #[test]
+        fn refuses_a_key_that_did_not_come_from_the_environment() {
+            let (client, _) = owner_client();
+            let other = nostr::Keys::generate().secret_key().to_secret_hex();
+            for env_key in [None, Some(other.as_str()), Some("not a key")] {
+                let refused = attest_with(&client, &target(), None, None, env_key, NOW);
+                assert!(usage_message(refused).contains("do not pass it with --private-key"));
+            }
+        }
     }
 }

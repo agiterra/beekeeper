@@ -504,10 +504,11 @@ bee agents create --operation-id \"$(uuidgen)\" --channel <UUID> \\\n      \
     },
     /// Attest a key held outside Beekeeper custody (NIP-OA owner attestation)
     #[command(
-        after_help = "The external participant's secret key never reaches Beekeeper: this signs, \
-with your own key from bee's existing custody (BEEKEEPER_PRIVATE_KEY, never an argument), \
-the public tag that lets the participant act as itself on your behalf. Beekeeper then shows \
-the participant as the signer and you, separately, as its owner.\n\n\
+        after_help = "The external participant's secret key never reaches Beekeeper. This signs \
+the public tag that lets the participant act as itself on your behalf, with your own key \
+from BEEKEEPER_PRIVATE_KEY. A key given with --private-key is refused, so the owner secret \
+never reaches the command line. Beekeeper then shows the participant as the signer and \
+you, separately, as its owner.\n\n\
 Revocation is limited to what NIP-OA, NIP-AA and NIP-IA provide: --expires-at stops the \
 attestation authorizing events created after that time (relay authentication and hosted \
 agents' owner-only gate both check it); removing your relay membership ends the key's \
