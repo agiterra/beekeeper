@@ -40,6 +40,14 @@ use crate::Provider;
 /// (the one tree the boundary lets it write), so the test can prove the
 /// descriptor's `credentialEnv` reached the adapter without that value ever
 /// appearing in a published event.
+///
+/// The log's path is baked in absolute (`ACME_ENV_LOG` is replaced by
+/// [`rig`]) rather than written relative to the adapter's working directory:
+/// this vector is about the credential reaching the adapter, and a relative
+/// path would make it also a test of where the launch starts the child —
+/// which `session::tests::the_legacy_launch_starts_the_adapter_in_the_session_checkout`
+/// pins on its own (Woodpecker pipeline 322 on main 6122557e4 failed here
+/// for exactly that reason, before the legacy launch set a directory at all).
 const ACME_ACP: &str = r#"
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -49,7 +57,7 @@ while IFS= read -r line; do
     *'"method":"session/new"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acme-session-1"}}\n' "$id" ;;
     *'"method":"session/prompt"'*)
-      printf '%s\n' "${ACME_TOKEN:-unset}" > ./acme-env.log
+      printf '%s\n' "${ACME_TOKEN:-unset}" > 'ACME_ENV_LOG'
       printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acme-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"acme answered"}}}}\n'
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
   esac
@@ -149,7 +157,11 @@ fn rig(credential_env: Vec<String>) -> Rig {
     .expect("credential pointer");
 
     let env_log = cwd.join("acme-env.log");
-    let script = fake_agent(dir.path(), ACME_DRIVER, ACME_ACP);
+    let script = fake_agent(
+        dir.path(),
+        ACME_DRIVER,
+        &ACME_ACP.replace("ACME_ENV_LOG", &env_log.display().to_string()),
+    );
     config.runtimes = vec![acme_descriptor(script, credential_env)];
     config.runtime_profile_override = None;
     let provider = Provider::new(config).expect("provider");

@@ -2122,6 +2122,8 @@ async fn start_agent(
             )
             .await
         }
+        // The same working directory the prepared launch gives its child:
+        // the session's checkout, not wherever this process was started.
         crate::execution_scope::ExecutionPlan::Legacy { .. } => {
             AcpClient::spawn_with_env_fence_and_overrides(
                 &request.agent_command,
@@ -2130,6 +2132,7 @@ async fn start_agent(
                 false,
                 &crate::agent_fence::FENCE,
                 &request.post_fence_env,
+                Some(&request.cwd),
             )
             .await
         }
@@ -6272,6 +6275,42 @@ done
             other => panic!("expected a finished turn, got {other:?}"),
         }
         manager.shutdown("s1");
+    }
+
+    /// The legacy launch starts the adapter **in the session's checkout**,
+    /// as the prepared launch does, not in the provider's own directory. An
+    /// adapter that resolves relative paths itself (a stub, a script, any
+    /// runtime that ignores `session/new`'s `cwd`) would otherwise work on
+    /// the host's tree. Woodpecker pipeline 322 on main 6122557e4 caught the
+    /// gap on Linux, where every launch is legacy; macOS never saw it because
+    /// its launches are prepared.
+    #[tokio::test]
+    async fn the_legacy_launch_starts_the_adapter_in_the_session_checkout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let checkout = dir.path().join("checkout");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+        let cwd_log = dir.path().join("cwd.log");
+        let body = format!(
+            r#"
+pwd -P > '{}'
+{GOOD_AGENT}"#,
+            cwd_log.display()
+        );
+        let agent = fake_agent(dir.path(), "cwd-agent", &body);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+
+        manager
+            .create(request(agent, &checkout))
+            .await
+            .expect("create");
+        manager.shutdown("s1");
+
+        let seen = std::fs::read_to_string(&cwd_log).expect("the adapter recorded its directory");
+        assert_eq!(
+            std::path::PathBuf::from(seen.trim()),
+            checkout.canonicalize().expect("canonical checkout")
+        );
     }
 
     /// The whole fix, end to end, against an agent that reproduces the bug.

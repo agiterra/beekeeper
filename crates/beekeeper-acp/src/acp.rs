@@ -1521,6 +1521,7 @@ impl AcpClient {
             has_generated_codex_config,
             fence,
             &[],
+            None,
         )
         .await
     }
@@ -1546,6 +1547,15 @@ impl AcpClient {
     /// `post_fence_env` bypasses every rule above it — the fence, the
     /// operator-precedence check, and the per-runtime defaults. Callers own
     /// that: pass only values the child is *meant* to hold.
+    ///
+    /// `cwd` is the directory the adapter process starts in. A coding session
+    /// passes its checkout, so the child runs where the bounded launch would
+    /// have put it ([`spawn_bounded`](Self::spawn_bounded)) rather than
+    /// wherever the host process happens to be — before this parameter the
+    /// legacy launch inherited the host's directory and only the
+    /// `session/new` `cwd` named the checkout, which an adapter that resolves
+    /// relative paths itself never saw. `None` inherits the host's directory,
+    /// which is right only for callers with no checkout to name.
     pub async fn spawn_with_env_fence_and_overrides(
         command: &str,
         args: &[String],
@@ -1553,6 +1563,7 @@ impl AcpClient {
         has_generated_codex_config: bool,
         fence: &EnvFence,
         post_fence_env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
     ) -> Result<Self, AcpError> {
         let cmd = Self::build_agent_command(
             command,
@@ -1561,6 +1572,7 @@ impl AcpClient {
             has_generated_codex_config,
             fence,
             post_fence_env,
+            cwd,
         )?;
         Self::from_command(cmd, command)
     }
@@ -1725,10 +1737,14 @@ impl AcpClient {
         has_generated_codex_config: bool,
         fence: &EnvFence,
         post_fence_env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
     ) -> Result<tokio::process::Command, AcpError> {
         use std::process::Stdio;
 
         let mut cmd = tokio::process::Command::new(command);
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
         cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -4254,8 +4270,9 @@ mod tests {
     #[test]
     fn the_default_spawn_removes_nothing_from_the_inherited_environment() {
         let extra = vec![("GOOSE_PROVIDER".to_string(), "anthropic".to_string())];
-        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &EnvFence::OPEN, &[])
-            .expect("build command");
+        let cmd =
+            AcpClient::build_agent_command("true", &[], &extra, false, &EnvFence::OPEN, &[], None)
+                .expect("build command");
         let plan = env_plan(&cmd);
 
         assert!(
@@ -4269,6 +4286,33 @@ mod tests {
         );
     }
 
+    /// The legacy launch starts the adapter in the directory the caller
+    /// names — a coding session's checkout — exactly as the bounded launch
+    /// does, and inherits the host's directory only when no directory is
+    /// named. Pinned because the gap was real: before `cwd` existed every
+    /// legacy child ran wherever the host process was (Woodpecker pipeline
+    /// 322 on main 6122557e4 caught it on Linux, where every launch is legacy).
+    #[test]
+    fn the_legacy_launch_starts_the_adapter_in_the_named_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cmd = AcpClient::build_agent_command(
+            "true",
+            &[],
+            &[],
+            false,
+            &EnvFence::OPEN,
+            &[],
+            Some(dir.path()),
+        )
+        .expect("build command");
+        assert_eq!(cmd.as_std().get_current_dir(), Some(dir.path()));
+
+        let cmd =
+            AcpClient::build_agent_command("true", &[], &[], false, &EnvFence::OPEN, &[], None)
+                .expect("build command");
+        assert_eq!(cmd.as_std().get_current_dir(), None);
+    }
+
     /// An enumerated key is removed whether or not this process has it set:
     /// the parent-presence checks in the injection loops deliberately leave
     /// inherited values alone, so `env_remove` is the only thing standing
@@ -4279,8 +4323,9 @@ mod tests {
             "CLAUDE_CODE_EXECUTABLE".to_string(),
             "/opt/claude".to_string(),
         )];
-        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE, &[])
-            .expect("build command");
+        let cmd =
+            AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE, &[], None)
+                .expect("build command");
         let plan = env_plan(&cmd);
 
         for key in TEST_FENCE.keys {
@@ -4323,8 +4368,9 @@ mod tests {
                 "kept".to_string(),
             ),
         ];
-        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE, &[])
-            .expect("build command");
+        let cmd =
+            AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE, &[], None)
+                .expect("build command");
         let plan = env_plan(&cmd);
 
         for key in ["BEEKEEPER_TEST_FENCED_SECRET", "NOSTR_PRIVATE_KEY"] {
