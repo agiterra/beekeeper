@@ -267,6 +267,29 @@ See [headless extensions](headless-extensions.md) for the workflow/host-step
 contract, immutable revision, grant and failure limits. The host does not gain
 owner credentials or unrestricted hook secrets from commissioning.
 
+### From the agent-stack package
+
+`scripts/package-agent-stack.sh [<target>]` packs the release binaries of
+`just install-headless` (host, session provider, `bee`, acp, agent, dev-mcp,
+git-credential-nostr) with the role catalog into
+`dist/beekeeper-agent-stack-<version>-g<commit>-<target>.tar.gz`. The executor
+then needs neither the source tree nor a Rust toolchain:
+
+```bash
+tar -xzf beekeeper-agent-stack-<version>-g<commit>-<target>.tar.gz
+./beekeeper-agent-stack-<version>-g<commit>-<target>/install.sh   # --no-service in a container
+```
+
+`install.sh` verifies every file against the package's `stack.json`, copies the
+package to `~/.local/lib/beekeeper/<name>` (`BEEKEEPER_STACK_PREFIX`), points
+`current` at it, links the binaries into `~/.local/bin` (`BEEKEEPER_BIN_DIR`) and
+runs `bee host install --program ~/.local/lib/beekeeper/current/bin/beekeeper-host`.
+Earlier versions stay beside it; running an earlier package's `install.sh` rolls
+back. A host already running keeps its binary until `bee host restart`, which
+`install.sh` runs only with `--restart`. A packaged `bee` finds the role
+templates in `share/beekeeper/personas/templates` beside its `stack.json`.
+Commission as above. The runtime adapter is still installed separately.
+
 ## Where the key lives, and what that costs
 
 **The host is never a keychain client.** That is a rule, and the reason is

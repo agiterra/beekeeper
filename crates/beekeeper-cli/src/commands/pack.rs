@@ -157,12 +157,23 @@ pub fn cmd_inspect(path: &str) -> Result<(), CliError> {
 /// to a development checkout — the desktop's `DEFAULT_TEMPLATES_PATH`.
 const SHIPPED_TEMPLATES_PATH: &str = "personas/templates";
 
+/// The manifest at the root of an agent-stack package
+/// (`scripts/package-agent-stack.sh`). Its presence is what makes a directory
+/// a package root: the layout is declared by the package, never guessed.
+const AGENT_STACK_MANIFEST: &str = "stack.json";
+
+/// Where an agent-stack package ships its role templates, relative to its root.
+const AGENT_STACK_TEMPLATES_PATH: &str = "share/beekeeper/personas/templates";
+
 /// Where this process finds the shipped template catalog, in order:
 ///
 /// 1. `explicit` (`--templates`), then `$BEEKEEPER_TEMPLATES_DIR` — overrides.
 /// 2. The templates this `bee`'s app bundle ships ([`app_bundle_contents`]). An
 ///    executable inside an app bundle uses its bundle's templates or none.
-/// 3. The checkout this binary was built from, **only** when the running
+/// 3. The templates this `bee`'s agent-stack package ships
+///    ([`agent_stack_root`]): `<root>/bin/bee` beside `<root>/stack.json`. A
+///    packaged executable likewise uses its package's templates or none.
+/// 4. The checkout this binary was built from, **only** when the running
 ///    executable is where that build put it — inside the checkout, or inside
 ///    the Cargo output directory this build recorded at compile time, however
 ///    `CARGO_TARGET_DIR` placed it ([`own_build_templates`]). A binary copied
@@ -232,7 +243,22 @@ pub(crate) fn templates_dir_from(
         let dir = contents.join("Resources").join(SHIPPED_TEMPLATES_PATH);
         return dir.is_dir().then_some(dir);
     }
+    if let Some(root) = agent_stack_root(&exe) {
+        let dir = root.join(AGENT_STACK_TEMPLATES_PATH);
+        return dir.is_dir().then_some(dir);
+    }
     own_build_templates(&exe, build?)
+}
+
+/// The root of the agent-stack package `exe` runs from — `<root>/bin/<exe>`
+/// with [`AGENT_STACK_MANIFEST`] at `<root>` — or `None` when `exe` is not in
+/// one. A `bin` directory without the manifest (`~/.local/bin`, a `cargo
+/// install` prefix) is not a package.
+fn agent_stack_root(exe: &Path) -> Option<&Path> {
+    let bin = exe.parent()?;
+    let root = bin.parent()?;
+    let is_package = bin.file_name()? == "bin" && root.join(AGENT_STACK_MANIFEST).is_file();
+    is_package.then_some(root)
 }
 
 /// The `Contents` directory of the macOS app bundle `exe` runs from
@@ -269,7 +295,8 @@ pub(crate) fn no_templates_message() -> String {
         .unwrap_or_else(|_| "this bee".to_owned());
     format!(
         "no shipped templates found: {exe} is neither inside an app bundle shipping \
-         Contents/Resources/{SHIPPED_TEMPLATES_PATH} nor where the build that made it put it \
+         Contents/Resources/{SHIPPED_TEMPLATES_PATH}, nor in an agent-stack package shipping \
+         {AGENT_STACK_TEMPLATES_PATH} beside {AGENT_STACK_MANIFEST}, nor where the build that made it put it \
          (its checkout or Cargo output directory); pass --templates <dir> or set \
          BEEKEEPER_TEMPLATES_DIR"
     )
@@ -605,6 +632,65 @@ mod tests {
         write(&fake, "#!/bin/sh\n");
         std::fs::create_dir_all(root.join("fake/Contents/Resources/personas/templates")).unwrap();
         assert_eq!(templates_dir_from(None, None, Some(&fake), None), None);
+    }
+
+    /// A `bee` in an agent-stack package finds the templates the package
+    /// ships, from wherever it is invoked and through a symlink to it; the
+    /// manifest is what makes it a package, so the same layout without one is
+    /// not a source; a package missing its templates borrows nothing.
+    #[cfg(unix)]
+    #[test]
+    fn templates_resolve_from_the_agent_stack_package_its_manifest_declares() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let checkout = root.join("checkout");
+        std::fs::create_dir_all(checkout.join("personas/templates")).unwrap();
+        let in_tree = BuildProvenance {
+            source_root: checkout,
+            output_dir: None,
+        };
+
+        let package = root.join("lib/beekeeper/0.1.0");
+        let exe = package.join("bin/bee");
+        write(&exe, "#!/bin/sh\n");
+        write(&package.join("stack.json"), "{}\n");
+        let shipped = package.join("share/beekeeper/personas/templates");
+        std::fs::create_dir_all(&shipped).unwrap();
+        assert_eq!(
+            templates_dir_from(None, None, Some(&exe), Some(&in_tree)),
+            Some(shipped.clone())
+        );
+        // `~/.local/bin/bee -> <package>/bin/bee`, as the installer links it.
+        let link = root.join("home/.local/bin/bee");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+        assert_eq!(
+            templates_dir_from(None, None, Some(&link), None),
+            Some(shipped)
+        );
+        // The environment override still wins.
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(
+            templates_dir_from(None, Some(&other), Some(&exe), None),
+            Some(other)
+        );
+
+        // The same layout without the manifest is not a package.
+        let loose = root.join("prefix/bin/bee");
+        write(&loose, "#!/bin/sh\n");
+        std::fs::create_dir_all(root.join("prefix/share/beekeeper/personas/templates")).unwrap();
+        assert_eq!(templates_dir_from(None, None, Some(&loose), None), None);
+
+        // A package missing its templates finds none, not its build's tree.
+        let bare = root.join("bare");
+        let bare_exe = bare.join("bin/bee");
+        write(&bare_exe, "#!/bin/sh\n");
+        write(&bare.join("stack.json"), "{}\n");
+        assert_eq!(
+            templates_dir_from(None, None, Some(&bare_exe), Some(&in_tree)),
+            None
+        );
     }
 
     /// A build whose Cargo output lives outside its checkout
