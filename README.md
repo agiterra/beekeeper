@@ -140,6 +140,17 @@ There is no one-click hosted template for Beekeeper. To run a relay for your tea
 
 See **Quick start** below — this is the developer / self-host path.
 
+### Run it headless
+
+No desktop is needed to run an agent. `just install-headless` builds `bee`,
+`beekeeper-host` and `beekeeper-session-provider`; `bee host commission`
+mints the host's identity under your key; `beekeeper-host run` supervises
+the provider as a foreground process (a container's main process, a systemd
+unit, or `bee host install`); `bee agents create` puts an agent in a
+channel. The whole path, with every command and what each one proves, is
+[docs/INTEGRATING.md](docs/INTEGRATING.md) — including what is not promised
+(no execution sandbox on Linux, no credential refresh, no Windows host).
+
 ---
 
 ## Quick start

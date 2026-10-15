@@ -700,8 +700,10 @@ pub fn cmd_validate(args: &WorkValidateArgs) -> Result<(), CliError> {
                 "planId": resolved.plan.id,
                 "schema": resolved.plan.schema,
                 "status": resolved.plan.status.as_str(),
-                "codeRepository": resolved.plan.code_repository,
-                "deliveryRef": resolved.plan.delivery_ref,
+                // Null, not "", for a review-only plan: `git_delivery()` is
+                // the one reading of whether this plan is judged at a ref.
+                "codeRepository": resolved.plan.git_delivery().map(|delivery| delivery.repository),
+                "deliveryRef": resolved.plan.git_delivery().map(|delivery| delivery.delivery_ref),
                 "criteria": resolved.plan.criteria.iter().map(|criterion| json!({
                     "id": criterion.id,
                     "proof": criterion.proof,
@@ -1708,7 +1710,9 @@ async fn coverage_with(
         match plans.plan(&declared.plan_ref) {
             Ok(bytes) => {
                 if let Ok(plan) = parse_plan(bytes.as_bytes()) {
-                    code_repositories.insert(plan.code_repository.clone());
+                    if let Some(delivery) = plan.git_delivery() {
+                        code_repositories.insert(delivery.repository.to_owned());
+                    }
                     let actions_yml = plans.actions(&declared.plan_ref);
                     let precompiled = plans.compiled(&declared.plan_ref);
                     if let Some(compiled) = precompiled.map_or_else(

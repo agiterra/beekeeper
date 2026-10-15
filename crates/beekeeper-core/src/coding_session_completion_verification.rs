@@ -113,11 +113,11 @@ pub(super) fn completion_verifier_rulings_are_present(
             }) => {
                 report_ref == report_id
                     && *decision == CodingSessionTeamRefutationDecision::NotRefuted
-                    && context.is_active_role(&record.author, "verifier")
+                    && context.is_active_verdict_role(&record.author)
             }
-            // (b) the report itself, signed by an active verifier seat.
+            // (b) the report itself, signed by an active judging seat.
             CodingSessionTeamTransactionBody::Report(_) => {
-                record.id == report_id && context.is_active_role(&record.author, "verifier")
+                record.id == report_id && context.is_active_verdict_role(&record.author)
             }
             _ => false,
         }

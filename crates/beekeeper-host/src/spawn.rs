@@ -114,6 +114,7 @@ pub fn spawn_provider_child(
         turn_idle_timeout_secs: config.turn_idle_timeout_secs,
         turn_budget: config.turn_budget,
         checkpoint_on_stop: config.checkpoint_on_stop,
+        capabilities: config.capabilities.clone(),
         augmented_path: augmented_path(),
         // A headless host has no repository checkout of its own to fence off.
         // Absent rather than empty: an empty list would read as "the host
@@ -183,6 +184,7 @@ mod tests {
             turn_idle_timeout_secs: None,
             turn_budget: None,
             checkpoint_on_stop: false,
+            capabilities: Vec::new(),
             provider_command: None,
             written_at: now_iso(),
         }

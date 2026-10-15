@@ -18,6 +18,7 @@ use beekeeper_core::coding_session_team_transaction::{
     CodingSessionTeamFoldContext, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionType,
 };
+use beekeeper_core::role_vocabulary::RoleVocabulary;
 use nostr::{Event, Keys};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -156,17 +157,72 @@ pub fn bounded_reason_detail(detail: &str) -> Option<String> {
     Some(cleaned[..end].to_owned())
 }
 
+/// The role vocabulary of the project an on-disk seat belongs to.
+///
+/// Read from the nearest `team.yml` — the `<worktree>-agents` clone the host
+/// cut beside the seat, or any ancestor's — so every wake and fence decision
+/// about a seat uses that seat's own project's role names. `None`, or no
+/// manifest near, is the default (`lead` / `verifier`, `runner`); a manifest
+/// that is near but broken is logged and also the default, because a wake
+/// decision cannot wait on a person fixing YAML — the composer and the hire
+/// refuse that manifest in their own words.
+pub fn vocabulary_near(cwd: Option<&std::path::Path>) -> RoleVocabulary {
+    let Some(cwd) = cwd else {
+        return RoleVocabulary::foundation().clone();
+    };
+    match beekeeper_persona::team::role_vocabulary_near(cwd) {
+        Ok(Some((_, vocabulary))) => vocabulary,
+        Ok(None) => RoleVocabulary::foundation().clone(),
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::team_wake",
+                cwd = %cwd.display(),
+                %error,
+                "the project's team manifest beside this seat does not parse; judging with the default role names"
+            );
+            RoleVocabulary::foundation().clone()
+        }
+    }
+}
+
+impl crate::Provider {
+    /// The role vocabulary of the project whose seats this provider runs in
+    /// `channel`: the first seat record there whose checkout has a team
+    /// manifest beside it decides; with none, the default.
+    pub(crate) fn role_vocabulary_for_channel(&self, channel: Uuid) -> RoleVocabulary {
+        self.state
+            .sessions()
+            .filter(|record| record.channel_id == channel)
+            .find_map(|record| match beekeeper_persona::team::role_vocabulary_near(&record.cwd) {
+                Ok(found) => found.map(|(_, vocabulary)| vocabulary),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::team_wake",
+                        %channel,
+                        cwd = %record.cwd.display(),
+                        %error,
+                        "the project's team manifest beside this seat does not parse; skipping it for the channel's role names"
+                    );
+                    None
+                }
+            })
+            .unwrap_or_else(|| RoleVocabulary::foundation().clone())
+    }
+}
+
 /// Build the exact core fold context from verified genesis and authority facts.
 pub fn fold_context(
     scope: &WakeScope,
     founder_pubkey: &str,
     authority: &CurrentAuthority,
+    vocabulary: &RoleVocabulary,
 ) -> CodingSessionTeamFoldContext {
     CodingSessionTeamFoldContext {
         channel_ref: scope.channel_ref.to_string(),
         session_ref: scope.session_ref.clone(),
         genesis_ref: scope.genesis_ref.clone(),
         founder_pubkey: founder_pubkey.to_owned(),
+        vocabulary: vocabulary.clone(),
         // This projection reads kind 44228 and 44244, never 44245, so it makes
         // no claim about `gates.verifierRequired`. `false` keeps the wake fold
         // behaving exactly as it did before the field existed; a wake is a
@@ -195,14 +251,19 @@ pub fn fold_context(
 }
 
 /// Return the one exact active lead target, including remote provider targets.
+///
+/// The lead is the seat holding `vocabulary.lead()` — the project's own name
+/// for it — in the accepted authority chain.
 pub fn resolve_lead_target(
     package: &CodingSessionContextPackage,
     authority: &CurrentAuthority,
+    vocabulary: &RoleVocabulary,
 ) -> Result<CodingSessionTarget, String> {
+    let lead_role = vocabulary.lead();
     let lead_actors: Vec<&str> = authority
         .seats
         .iter()
-        .filter_map(|(actor, (role, _))| (role == "lead").then_some(actor.as_str()))
+        .filter_map(|(actor, (role, _))| (role == lead_role).then_some(actor.as_str()))
         .collect();
     if lead_actors.len() != 1 {
         return Err(format!(
@@ -216,7 +277,7 @@ pub fn resolve_lead_target(
         .iter()
         .filter(|seat| {
             seat.actor.as_deref() == Some(actor)
-                && seat.role.as_deref() == Some("lead")
+                && seat.role.as_deref() == Some(lead_role)
                 && seat.status == CodingSessionContextSeatStatus::Active
         })
         .collect();
@@ -706,6 +767,11 @@ pub struct VerifiedWakeSnapshot {
     /// only legitimate model work is a new request or evidence that contests
     /// it (ledger 266).
     pub canonical_terminal: Option<crate::wake_relevance::TerminalMark>,
+    /// The role vocabulary every decision over this snapshot was folded
+    /// with — the project's own, when the caller had its team record, else
+    /// the default — so a later reader cannot re-judge the same records with
+    /// different names.
+    pub vocabulary: RoleVocabulary,
 }
 
 /// The authority-verified team transaction facts of one umbrella: what both
@@ -739,12 +805,31 @@ impl WakeSnapshotError {
     }
 }
 
-/// Fetch and verify the authority, provider-routing, and transaction facts for
-/// one pending intent. Every query is exact-channel and complete-or-error.
+/// [`fetch_verified_snapshot_with`] under the default role vocabulary, for
+/// a caller that holds no team record; see [`RoleVocabulary::foundation`].
 pub async fn fetch_verified_snapshot(
     rest: &beekeeper_acp::relay::RestClient,
     relay_self_pubkey: &str,
     scope: &WakeScope,
+) -> Result<VerifiedWakeSnapshot, WakeSnapshotError> {
+    fetch_verified_snapshot_with(
+        rest,
+        relay_self_pubkey,
+        scope,
+        RoleVocabulary::foundation().clone(),
+    )
+    .await
+}
+
+/// Fetch and verify the authority, provider-routing, and transaction facts for
+/// one pending intent. Every query is exact-channel and complete-or-error.
+/// `vocabulary` is the project's role names, which the fold judges with and
+/// the snapshot then carries.
+pub async fn fetch_verified_snapshot_with(
+    rest: &beekeeper_acp::relay::RestClient,
+    relay_self_pubkey: &str,
+    scope: &WakeScope,
+    vocabulary: RoleVocabulary,
 ) -> Result<VerifiedWakeSnapshot, WakeSnapshotError> {
     let VerifiedTeamFacts {
         founder_pubkey,
@@ -754,7 +839,7 @@ pub async fn fetch_verified_snapshot(
 
     let package = fetch_scope_package(rest, relay_self_pubkey, scope).await?;
 
-    let context = fold_context(scope, &founder_pubkey, &authority);
+    let context = fold_context(scope, &founder_pubkey, &authority, &vocabulary);
     let included_reports = included_reports(&team_events, &context)?;
     let included_dispositions = included_dispositions(&team_events, &context)?;
     let canonical_terminal = crate::wake_relevance::terminal_mark(&team_events, &context)?;
@@ -766,6 +851,7 @@ pub async fn fetch_verified_snapshot(
         included_reports,
         included_dispositions,
         canonical_terminal,
+        vocabulary,
     })
 }
 
@@ -900,11 +986,12 @@ pub async fn fetch_verified_team_facts(
 /// The actor a report, disposition or terminal diagnostic wake is addressed
 /// to, and so the one whose own records decide whether the wake is still
 /// owed ([`crate::wake_relevance::still_owed`]).
-pub fn lead_actor(authority: &CurrentAuthority) -> Option<String> {
+pub fn lead_actor(authority: &CurrentAuthority, vocabulary: &RoleVocabulary) -> Option<String> {
+    let lead_role = vocabulary.lead();
     let mut leads = authority
         .seats
         .iter()
-        .filter_map(|(actor, (role, _))| (role == "lead").then_some(actor.clone()));
+        .filter_map(|(actor, (role, _))| (role == lead_role).then_some(actor.clone()));
     let lead = leads.next()?;
     leads.next().is_none().then_some(lead)
 }

@@ -214,6 +214,44 @@ void main() {
       }
     });
 
+    test('stopped may carry checkpointSkipped: timeout, and only that', () {
+      final skipped = decodeCodingSessionReceipt(
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'stopped',
+          checkpointSkipped: 'timeout',
+        ),
+      );
+      expect(skipped.value, isNotNull, reason: skipped.reason.toString());
+      expect(skipped.value!.checkpointSkipped, 'timeout');
+      final plain = decodeCodingSessionReceipt(
+        receiptEvent(commandId: 'cmd-1', status: 'stopped'),
+      );
+      expect(plain.value!.checkpointSkipped, isNull);
+      for (final event in [
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'stopped',
+          checkpointSkipped: 'error',
+        ),
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'resumed',
+          checkpointSkipped: 'timeout',
+        ),
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'created',
+          checkpointSkipped: 'timeout',
+        ),
+      ]) {
+        expect(
+          decodeCodingSessionReceipt(event).reason,
+          CodingSessionDecodeReason.malformedPayload,
+        );
+      }
+    });
+
     test(
       'turn_interrupted carries quiescence, unconfirmed, and nothing else',
       () {

@@ -89,6 +89,11 @@ pub struct ProviderEnvInputs<'a> {
     /// `BEEKEEPER_CSP_CHECKPOINT_ON_STOP=1` only when on, so a provider that
     /// was never asked sees no variable at all rather than a `0`.
     pub checkpoint_on_stop: bool,
+    /// `capabilities` from host.json: exported as
+    /// [`crate::config::HOST_CAPABILITIES_VAR`], comma-separated, only when
+    /// the list is non-empty, so a host that declares nothing shows the
+    /// provider no variable at all rather than an empty string.
+    pub capabilities: Vec<String>,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -209,6 +214,15 @@ fn build_canonical_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Stri
         env.insert(
             "BEEKEEPER_CSP_CHECKPOINT_ON_STOP".to_string(),
             "1".to_string(),
+        );
+    }
+    if !inputs.capabilities.is_empty() {
+        // Absent rather than "" when nothing is declared, for the same reason
+        // as the switch above: an undeclared host and a host whose declared
+        // list is empty are the same fact, and the provider reads one shape.
+        env.insert(
+            crate::config::HOST_CAPABILITIES_VAR.to_string(),
+            inputs.capabilities.join(","),
         );
     }
     if let Some(turn_budget) = inputs.turn_budget {

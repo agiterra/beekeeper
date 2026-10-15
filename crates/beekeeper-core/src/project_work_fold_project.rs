@@ -967,7 +967,16 @@ fn evaluate_git_ref(
             "the relay's self key was not supplied, so a ref observation cannot be judged",
         );
     };
-    let repository = plan.code_repository.as_str();
+    // Git is optional in a plan: the parser requires the pair for any plan
+    // with a git-ref criterion, so this is reached only for a plan whose
+    // bytes changed under it — still disclosed, never guessed.
+    let Some(delivery) = plan.git_delivery() else {
+        return Outcome::unknown(
+            WorkReasonCode::EvidenceUnavailable,
+            "the plan names no code repository, so a ref observation cannot be judged",
+        );
+    };
+    let repository = delivery.repository;
     // An owner-signed claim about its own branch is not an observation: only
     // the relay that hosts the repository signs its ref state.
     let newest = inputs
@@ -988,7 +997,7 @@ fn evaluate_git_ref(
             ),
         );
     };
-    let delivery_ref = plan.delivery_ref_tag();
+    let delivery_ref = delivery.delivery_ref;
     let Some(observed) = newest.tag_value(delivery_ref) else {
         return Outcome::unknown(
             WorkReasonCode::EvidenceUnavailable,

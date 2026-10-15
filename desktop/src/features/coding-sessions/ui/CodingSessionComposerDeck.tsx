@@ -37,6 +37,7 @@ import {
   CodingSessionComposerSandboxChip,
 } from "./CodingSessionComposerSandboxChip";
 import { useCodingSessionMissionLens } from "./CodingSessionUmbrellaWorkspaceModel";
+import { describeCodingSessionCapabilities } from "./codingSessionExecutionFacts";
 
 export type CodingSessionComposerControlContext = {
   capabilities: {
@@ -46,6 +47,12 @@ export type CodingSessionComposerControlContext = {
     context: boolean;
     diff: boolean;
     plan: boolean;
+    /**
+     * This execution's advertised image-prompt capability. Optional on the
+     * wire: metadata published before the field existed says nothing, and
+     * the capabilities row reads that silence as "unknown", never "no".
+     */
+    promptImage?: boolean;
     /** SV-35: metadata says this execution accepts `thread.model.set`. */
     modelSwitch?: boolean;
   } | null;
@@ -193,9 +200,13 @@ export function CodingSessionComposerDeck({
     context?.providerLabel,
     context?.model,
   );
-  const availableCapabilities = context
-    ? capabilityLabels(context.capabilities)
-    : [];
+  // Every capability with a truthful word — yes, no, or unknown for the two
+  // optional fields a silent catalog never mentioned — rather than the list
+  // of the ones that happen to be true, which read a missing "Images" as a
+  // refusal.
+  const capabilitiesSummary = describeCodingSessionCapabilities(
+    context?.capabilities,
+  );
   // SV-35: the chips switch only when metadata says this execution can, the
   // caller named the exact target, and this viewer may control it. Every
   // other case keeps the display-only identity chip and says which it is.
@@ -281,11 +292,8 @@ export function CodingSessionComposerDeck({
                     ) : null}
                     <ComposerDefinition
                       label="Capabilities"
-                      value={
-                        availableCapabilities.length > 0
-                          ? availableCapabilities.join(", ")
-                          : "Not declared"
-                      }
+                      testId="coding-session-control-capabilities"
+                      value={capabilitiesSummary}
                     />
                     {context?.turnBudget ? (
                       <ComposerDefinition
@@ -619,21 +627,6 @@ function accessExplanation(input: {
     return "This execution has no current session governor. Adopt it before attempting control.";
   }
   return "Ask the session owner for collaborator access.";
-}
-
-function capabilityLabels(
-  capabilities: CodingSessionComposerControlContext["capabilities"],
-): string[] {
-  if (!capabilities) return [];
-  return [
-    capabilities.threadTurnStart ? "Turns" : null,
-    capabilities.threadSteer ? "Steer" : null,
-    capabilities.threadTurnInterrupt ? "Interrupt" : null,
-    capabilities.context ? "Context" : null,
-    capabilities.diff ? "Diff" : null,
-    capabilities.plan ? "Plan" : null,
-    capabilities.modelSwitch ? "Model switch" : null,
-  ].filter((value): value is string => value !== null);
 }
 
 function formatTokens(value: number): string {

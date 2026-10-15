@@ -307,6 +307,7 @@ impl Watched {
         bound_repositories: Vec<String>,
     ) -> VerdictAdmissionCandidate {
         VerdictAdmissionCandidate {
+            vocabulary: Default::default(),
             session_ref: SESSION.into(),
             genesis_ref: GENESIS.into(),
             founder_pubkey: self.founder.public_key().to_hex(),

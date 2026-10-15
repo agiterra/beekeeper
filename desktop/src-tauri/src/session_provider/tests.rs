@@ -203,6 +203,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     })
 }

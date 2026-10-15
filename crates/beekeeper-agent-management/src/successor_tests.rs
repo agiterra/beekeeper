@@ -22,6 +22,7 @@ fn receipt(keys: &Keys, channel: Uuid, target: &CodingSessionTarget) -> Value {
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     };
     let event = beekeeper_sdk::builders::build_coding_session_lifecycle_receipt(
         channel,
@@ -95,6 +96,7 @@ fn stopped_actor_successor_uses_preserved_pair_and_refuses_restoration() {
         turn_idle_timeout_secs: None,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         provider_command: None,
         written_at: String::new(),
     };
@@ -222,6 +224,7 @@ async fn canonical_cli_successor_fences_other_contexts_and_reconciles_without_de
         turn_idle_timeout_secs: None,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         provider_command: None,
         written_at: String::new(),
     };

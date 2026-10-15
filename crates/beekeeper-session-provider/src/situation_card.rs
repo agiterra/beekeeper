@@ -705,8 +705,12 @@ impl crate::Provider {
             _ => None,
         };
         let lead_role = match reads.as_ref().map(|reads| &reads.team) {
-            Some(Ok(team)) => team.lead.clone().unwrap_or_else(|| "lead".to_owned()),
-            _ => "lead".to_owned(),
+            // Lane E: the team manifest's vocabulary, with the foundation
+            // default when there is no readable team record.
+            Some(Ok(team)) => team.role_vocabulary().lead().to_owned(),
+            _ => beekeeper_core::role_vocabulary::RoleVocabulary::foundation()
+                .lead()
+                .to_owned(),
         };
         let hired = if role == lead_role {
             None
@@ -972,7 +976,11 @@ async fn assigned_criteria(
             (id.clone(), proof)
         })
         .collect();
-    (Ok(criteria), Ok(plan.delivery_ref.clone()))
+    let delivery_ref = plan.git_delivery().map_or_else(
+        || Err("none: review-only plan".to_owned()),
+        |delivery| Ok(delivery.delivery_ref.to_owned()),
+    );
+    (Ok(criteria), delivery_ref)
 }
 
 /// Put the same bytes in the seat's bundle: a copy the seat can re-read, and

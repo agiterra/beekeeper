@@ -215,6 +215,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     })
 }
@@ -307,6 +308,7 @@ fn env_omits_an_empty_runtime_list() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     });
     assert!(!env.contains_key("BEEKEEPER_CSP_RUNTIMES"));
@@ -347,6 +349,7 @@ fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
         emit_raw_sdk_frames,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     };
 
@@ -380,6 +383,7 @@ fn a_chosen_log_filter_beats_the_default() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     };
 
@@ -417,6 +421,7 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     };
 
@@ -457,6 +462,7 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     };
 
@@ -489,6 +495,7 @@ fn env_exports_the_checkpoint_on_stop_switch_only_when_it_is_on() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop,
+        capabilities: Vec::new(),
         app_checkout: None,
     };
     let off = build_provider_env(&base(false));
@@ -527,6 +534,7 @@ fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
         emit_raw_sdk_frames: false,
         turn_budget,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     };
 
@@ -568,6 +576,7 @@ fn the_checkout_the_app_runs_from_is_handed_to_the_provider() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout,
     };
 
@@ -782,6 +791,7 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
         emit_raw_sdk_frames: false,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         app_checkout: None,
     });
     let raw = env.get("BEEKEEPER_CSP_RUNTIMES").expect("runtimes in env");
@@ -814,4 +824,45 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
         Some(SteerIdleGuard::PromptRequired)
     );
     assert_eq!(parsed[1].steer_idle_guard, None);
+}
+
+/// Round 2 Lane F: `capabilities` from host.json reach the provider as one
+/// comma-separated `BEEKEEPER_CSP_CAPABILITIES`, and only when non-empty —
+/// the variable's name is the provider's `HOST_CAPABILITIES_ENV`.
+#[test]
+fn env_exports_host_capabilities_only_when_some_are_declared() {
+    let record = sample_record();
+    let base = |capabilities: Vec<String>| ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        context_mcp_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+        augmented_path: None,
+        max_sessions: None,
+        turn_idle_timeout_secs: None,
+        rust_log: None,
+        emit_raw_sdk_frames: false,
+        turn_budget: None,
+        checkpoint_on_stop: false,
+        capabilities,
+        app_checkout: None,
+    };
+    assert_eq!(
+        crate::config::HOST_CAPABILITIES_VAR,
+        "BEEKEEPER_CSP_CAPABILITIES"
+    );
+    let none = build_provider_env(&base(Vec::new()));
+    assert!(
+        !none.contains_key(crate::config::HOST_CAPABILITIES_VAR),
+        "an undeclared host exports no variable: {none:?}"
+    );
+    let some = build_provider_env(&base(vec!["gpu".into(), "toolchain:rust".into()]));
+    assert_eq!(
+        some.get(crate::config::HOST_CAPABILITIES_VAR)
+            .map(String::as_str),
+        Some("gpu,toolchain:rust")
+    );
 }

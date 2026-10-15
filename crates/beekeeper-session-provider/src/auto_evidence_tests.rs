@@ -38,6 +38,26 @@ retired_criteria: []
 Body.
 "#;
 
+/// Round 2 Lane F: an action criterion on a plan that names no code
+/// repository — nothing for the relay's ref state to observe.
+const ACTION_ONLY_NO_REPOSITORY: &str = r#"---
+schema: beekeeper-plan/v1
+id: kettle-cli
+status: in-force
+title: Kettle, reviewed and verified, delivered nowhere in particular
+criteria:
+  - id: cli-behaviour
+    accept: the CLI does what the plan says
+    proof: {kind: review}
+  - id: verified-landed-revision
+    accept: the verify action is green
+    proof: {kind: action, name: verify, step: verify}
+retired_criteria: []
+---
+
+Body.
+"#;
+
 const DELIVERED: &str = "d7b4a649c3399e5c4da95753220bb6712bcfae5e";
 const SEED: &str = "7070283000000000000000000000000000000000";
 const RESULT: &str = "4623000000000000000000000000000000000000000000000000000000000000";
@@ -311,6 +331,28 @@ async fn a_plan_without_an_action_criterion_binds_nothing() {
     let prepared = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
     assert!(prepared.events.is_empty(), "not even the git-ref criterion");
     assert_eq!(fixture.ref_reads.get(), 0);
+}
+
+/// Round 2 Lane F: git is optional in a plan. A plan with an action
+/// criterion but no `code_repository` reads no ref state at all and says so,
+/// rather than asking the relay about a repository the plan never named.
+#[tokio::test]
+async fn a_plan_naming_no_repository_reads_no_ref_state_and_says_so() {
+    let lead = Keys::generate();
+    let provider = Keys::generate();
+    let mut fixture = Fixture::new(&lead);
+    fixture.plan = ACTION_ONLY_NO_REPOSITORY;
+    let relay_self = fixture.relay.public_key().to_hex();
+    let prepared = prepare(&fixture, &fixture.input(&provider, &relay_self)).await;
+    assert!(prepared.events.is_empty());
+    assert!(prepared.summary.bound.is_empty());
+    assert_eq!(fixture.ref_reads.get(), 0, "no repository, no ref read");
+    assert!(prepared.summary.ref_read.is_none());
+    let skipped = prepared.summary.skipped.expect("says why");
+    assert!(
+        skipped.contains("names no code_repository") && skipped.contains("bind the action result"),
+        "{skipped}"
+    );
 }
 
 #[tokio::test]

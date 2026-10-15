@@ -97,6 +97,7 @@ fn execution(session_id: &str, provider: &str, at: i64, title: Option<&str>) -> 
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     };
     let metadata = SessionMetadata {
         schema: METADATA_SCHEMA.to_owned(),

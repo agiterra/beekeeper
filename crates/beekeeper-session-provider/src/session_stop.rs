@@ -136,11 +136,20 @@ impl Provider {
         }
         // `checkpointOnStop` (off by default): one 44231 of the worktree before
         // the stop's quiescence, only when it changed since the last one. A
-        // capture that fails never blocks the stop; it is logged and disclosed
-        // as an unavailable checkpoint by the existing path.
+        // capture that fails never blocks the stop; it is logged. The 90 s
+        // budget starts before the boundary is prepared (ledger 406 F7); when
+        // it passes, the stop goes ahead and `checkpoint_skipped` says so.
+        let mut checkpoint_skipped: Option<&'static str> = None;
         if self.checkpoint_on_stop {
-            if let Err(error) = self.checkpoint_before_stop(&plan).await {
-                tracing::warn!(target: "csp::checkpoint", command_id = %plan.command_id, "checkpoint before stop did not complete: {error}");
+            match self.checkpoint_before_stop(&plan).await {
+                Ok(Some(crate::checkpoint_on_stop::StopCheckpointSkipped::Timeout)) => {
+                    checkpoint_skipped =
+                        Some(crate::checkpoint_on_stop::CHECKPOINT_SKIPPED_TIMEOUT);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(target: "csp::checkpoint", command_id = %plan.command_id, "checkpoint before stop did not complete: {error}");
+                }
             }
         }
         let pending_path = match begin_quiescence(
@@ -206,7 +215,14 @@ impl Provider {
         self.record_quiesced(&plan.target)?;
         // Exact verified completion is durable before consumption or proof
         // retirement: a crash can project this answer without another child.
-        let receipt = LifecycleReceipt::stopped(&plan.command_id, &plan.target);
+        // Round 2 Lane D wiring: a stop that ran out of checkpoint budget says
+        // so on its own signed receipt (`checkpointSkipped: "timeout"`, the
+        // one value `LifecycleReceipt` admits on `stopped`); a stop that
+        // checkpointed, or was never asked to, signs the plain five keys.
+        let receipt = match checkpoint_skipped {
+            Some(_) => LifecycleReceipt::stopped_without_checkpoint(&plan.command_id, &plan.target),
+            None => LifecycleReceipt::stopped(&plan.command_id, &plan.target),
+        };
         let event = build_coding_session_lifecycle_receipt(
             plan.channel_id,
             &plan.command_id,
@@ -238,6 +254,7 @@ impl Provider {
             target: "csp",
             command_id = %plan.command_id,
             session_id = %plan.target.session_id,
+            checkpoint_skipped = checkpoint_skipped.unwrap_or("none"),
             "session stopped"
         );
         Ok(())

@@ -22,6 +22,12 @@ use crate::layout::Instance;
 /// Current `host.json` schema version.
 pub const HOST_CONFIG_VERSION: u32 = 1;
 
+/// The variable `capabilities` is exported to the provider in, as a
+/// comma-separated list (`gpu,toolchain:rust`). Kept byte-for-byte in step
+/// with `HOST_CAPABILITIES_ENV` in
+/// `crates/beekeeper-session-provider/src/action_steps.rs`.
+pub const HOST_CAPABILITIES_VAR: &str = "BEEKEEPER_CSP_CAPABILITIES";
+
 /// What the host was commissioned to do.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +82,17 @@ pub struct HostConfig {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checkpoint_on_stop: bool,
 
+    /// Capability tags this host declares — `gpu`, `toolchain:rust`,
+    /// `os:macos` — free strings a project's `run_on_host` steps name under
+    /// `requires`. Carried on every kind:46022 claim the provider signs;
+    /// the relay refuses a claim that does not cover a step's `requires`
+    /// (`HOST_CAPABILITY_MISSING`, NIP-HS). Exported as
+    /// [`HOST_CAPABILITIES_VAR`], comma-separated, only when non-empty, so a
+    /// host that declares nothing reads and runs exactly as before. Nothing
+    /// verifies the declaration: it is the commissioning operator's word.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+
     /// The `beekeeper-session-provider` binary to run, when the host must be told.
     ///
     /// `None` means "resolve it the usual way" — beside the host's own
@@ -128,7 +145,20 @@ impl HostConfig {
         if !self.session_provider_base_dir.is_absolute() {
             return Err("sessionProviderBaseDir must be an absolute path".to_string());
         }
+        beekeeper_core::host_step::validate_host_capabilities("capabilities", &self.capabilities)?;
         Ok(())
+    }
+
+    /// The value of [`HOST_CAPABILITIES_VAR`] for the provider, or `None`
+    /// when this host declares nothing — absent rather than empty, so an
+    /// unset list and a host that never heard of the field read the same.
+    #[must_use]
+    pub fn capabilities_env_value(&self) -> Option<String> {
+        if self.capabilities.is_empty() {
+            None
+        } else {
+            Some(self.capabilities.join(","))
+        }
     }
 
     /// The record store this config's identity lives in.
@@ -155,8 +185,51 @@ mod tests {
             turn_idle_timeout_secs: None,
             turn_budget: None,
             checkpoint_on_stop: false,
+            capabilities: Vec::new(),
             provider_command: None,
             written_at: "2026-09-30T00:00:00Z".to_string(),
+        }
+    }
+
+    /// Round 2 Lane F: `capabilities` round-trips through `host.json`, is
+    /// omitted when empty, exports as one comma-separated variable, and a
+    /// tag the relay would refuse on a claim is refused here first.
+    #[test]
+    fn capabilities_round_trip_export_and_are_validated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("host.json");
+        let mut config = valid();
+        assert_eq!(config.capabilities_env_value(), None);
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).expect("encode")).expect("write");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .expect("read")
+                .contains("capabilities"),
+            "a host that declares nothing writes no key"
+        );
+
+        config.capabilities = vec!["gpu".into(), "toolchain:rust".into()];
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).expect("encode")).expect("write");
+        let loaded = HostConfig::load(&path)
+            .expect("load")
+            .expect("commissioned");
+        assert_eq!(loaded, config);
+        assert_eq!(
+            loaded.capabilities_env_value().as_deref(),
+            Some("gpu,toolchain:rust")
+        );
+
+        for (tags, expected) in [
+            (vec!["GPU".to_owned()], "not a capability tag"),
+            (vec!["gpu".to_owned(), "gpu".to_owned()], "twice"),
+        ] {
+            let mut broken = valid();
+            broken.capabilities = tags;
+            let error = broken.validate().expect_err("must be refused");
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} in {error:?}"
+            );
         }
     }
 

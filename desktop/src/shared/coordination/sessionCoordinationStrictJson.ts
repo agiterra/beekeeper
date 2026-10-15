@@ -238,20 +238,48 @@ export function hasStrictLifecycleCommandValues(
   return hasStrictSessionTargetValues(action.session);
 }
 
+/**
+ * Round 2 Lane D (NIP-CSL § Checkpoint before stop): a `stopped` receipt may
+ * carry one optional key, `checkpointSkipped: "timeout"` — the provider had
+ * `checkpointOnStop` on and the pre-stop checkpoint ran out of budget. Absent
+ * is acceptable; present, it is that one string on `stopped` and nothing
+ * else (`validate_lifecycle_receipt`, coding_session_payload.rs).
+ */
+export function hasAcceptableCheckpointSkippedKey(
+  content: Record<string, unknown>,
+): boolean {
+  if (!Object.hasOwn(content, "checkpointSkipped")) return true;
+  return (
+    content.status === "stopped" && content.checkpointSkipped === "timeout"
+  );
+}
+
+/** The receipt's keys with `checkpointSkipped` set aside, like `rewind`. */
+export function withoutCheckpointSkippedKey(
+  content: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Object.hasOwn(content, "checkpointSkipped")) return content;
+  const { checkpointSkipped: _checkpointSkipped, ...rest } = content;
+  return rest;
+}
+
 /** Strict lifecycle-receipt top-level and nested object shapes. */
 export function hasStrictLifecycleReceiptJson(
   source: string,
   content: unknown,
 ): content is Record<string, unknown> {
-  // The optional SV-29 `rewind` key is checked whole on its own, then set
-  // aside so the five-key envelope stays exactly five keys.
+  // The optional SV-29 `rewind` key and the optional `checkpointSkipped` are
+  // each checked whole on their own, then set aside so the five-key envelope
+  // stays exactly five keys.
   return (
     !hasDuplicateJsonKeys(source) &&
     isPlainObject(content) &&
     hasAcceptableSessionRewindReceiptKey(content) &&
-    hasExactFields(withoutSessionRewindReceiptKey(content), [
-      ["schema", "commandId", "status", "session", "error"],
-    ]) &&
+    hasAcceptableCheckpointSkippedKey(content) &&
+    hasExactFields(
+      withoutCheckpointSkippedKey(withoutSessionRewindReceiptKey(content)),
+      [["schema", "commandId", "status", "session", "error"]],
+    ) &&
     (content.session === null ||
       hasExactSessionTargetFields(content.session)) &&
     (content.error === null ||

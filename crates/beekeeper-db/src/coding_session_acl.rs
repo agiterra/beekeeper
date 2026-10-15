@@ -19,6 +19,7 @@ use beekeeper_core::coding_session_authority_transition::{
     decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
 };
 use beekeeper_core::coding_session_genesis::decode_coding_session_genesis;
+use beekeeper_core::role_vocabulary::RoleVocabulary;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -37,6 +38,12 @@ pub struct SessionAuthority {
     pub viewers: Vec<Vec<u8>>,
     /// Active role seats projected from the relay-accepted 44228 chain.
     pub seats: Vec<SessionSeat>,
+    /// The project's role names: which seat is the lead that may hire.
+    ///
+    /// The readers in this module hold no team record, so they leave the
+    /// default (`lead`); a caller that has read the project's `team.yml`
+    /// overwrites it before asking [`SessionAuthority::may_hire`].
+    pub vocabulary: RoleVocabulary,
 }
 
 /// One active actor-role seat in a session's accepted authority chain.
@@ -57,16 +64,18 @@ impl SessionAuthority {
     /// Whether `pubkey` may hire `role` into this session.
     ///
     /// Founder and active steering operators may hire any role. An active
-    /// accepted lead seat may hire only a non-lead role; seat state never
-    /// bootstraps itself because only transitions already accepted by the
-    /// relay's serialized authority transaction reach this projection.
+    /// accepted lead seat — the lead role of [`Self::vocabulary`] — may hire
+    /// only a non-lead role; seat state never bootstraps itself because only
+    /// transitions already accepted by the relay's serialized authority
+    /// transaction reach this projection.
     pub fn may_hire(&self, pubkey: &[u8], role: &str) -> bool {
+        let lead = self.vocabulary.lead();
         self.may_steer(pubkey)
-            || (role != "lead"
+            || (role != lead
                 && self
                     .seats
                     .iter()
-                    .any(|seat| seat.actor == pubkey && seat.role == "lead"))
+                    .any(|seat| seat.actor == pubkey && seat.role == lead))
     }
 }
 
@@ -317,4 +326,47 @@ pub async fn session_authority_for_hire(
         .seats
         .sort_by(|left, right| left.actor.cmp(&right.actor));
     Ok(Some(authority))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `may_hire` reads the project's lead role from the vocabulary: under
+    /// `lead: captain` a `captain` seat hires non-captain roles and nothing
+    /// else, and a seat holding the foundation's `lead` hires nothing.
+    #[test]
+    fn may_hire_follows_the_projects_lead_role() {
+        let captain = vec![0xbb; 32];
+        let foundation_lead = vec![0xcc; 32];
+        let seats = vec![
+            SessionSeat {
+                actor: captain.clone(),
+                role: "captain".into(),
+            },
+            SessionSeat {
+                actor: foundation_lead.clone(),
+                role: "lead".into(),
+            },
+        ];
+        let under_captain = SessionAuthority {
+            founder: vec![0xaa; 32],
+            seats: seats.clone(),
+            vocabulary: RoleVocabulary::from_team(Some("captain"), Some(&["qa".to_owned()]))
+                .expect("a vocabulary"),
+            ..Default::default()
+        };
+        assert!(under_captain.may_hire(&captain, "qa"));
+        assert!(!under_captain.may_hire(&captain, "captain"));
+        assert!(!under_captain.may_hire(&foundation_lead, "qa"));
+
+        let under_default = SessionAuthority {
+            founder: vec![0xaa; 32],
+            seats,
+            ..Default::default()
+        };
+        assert!(!under_default.may_hire(&captain, "builder"));
+        assert!(under_default.may_hire(&foundation_lead, "builder"));
+        assert!(!under_default.may_hire(&foundation_lead, "lead"));
+    }
 }

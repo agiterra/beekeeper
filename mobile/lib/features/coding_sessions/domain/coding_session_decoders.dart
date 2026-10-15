@@ -315,11 +315,15 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
   const envelope = ['schema', 'commandId', 'status', 'session', 'error'];
   // SV-29: an optional `rewind`, checked whole once the receipt is decoded.
   final hasRewind = payload.containsKey('rewind');
+  // NIP-CSL § Checkpoint before stop: an optional `checkpointSkipped` on
+  // `stopped` alone, its only value `timeout`, checked once decoded.
+  final hasCheckpointSkipped = payload.containsKey('checkpointSkipped');
   final expected = [
     ...envelope,
     if (status.carriesTurnId) 'turnId',
     if (status.carriesQuiescence) 'quiescence',
     if (hasRewind) 'rewind',
+    if (hasCheckpointSkipped) 'checkpointSkipped',
   ];
   if (!hasExactKeys(payload, expected) ||
       payload['schema'] != codingSessionReceiptSchema ||
@@ -406,6 +410,17 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
     }
     quiescence = 'unconfirmed';
   }
+  String? checkpointSkipped;
+  if (hasCheckpointSkipped) {
+    // Only a stopped receipt may say it, and only in that one word.
+    if (status != CodingSessionReceiptStatus.stopped ||
+        payload['checkpointSkipped'] != 'timeout') {
+      return const CodingSessionDecoded.failed(
+        CodingSessionDecodeReason.malformedPayload,
+      );
+    }
+    checkpointSkipped = 'timeout';
+  }
   return CodingSessionDecoded.ok(
     CodingSessionReceipt(
       ref: ref,
@@ -415,6 +430,7 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
       error: error,
       turnId: turnId,
       quiescence: quiescence,
+      checkpointSkipped: checkpointSkipped,
     ),
   );
 }

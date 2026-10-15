@@ -80,6 +80,7 @@ fn candidate(mission: &Mission, events: &[Event]) -> VerdictAdmissionCandidate {
         },
     );
     VerdictAdmissionCandidate {
+        vocabulary: Default::default(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
         founder_pubkey: mission.founder.public_key().to_hex(),

@@ -320,6 +320,13 @@ pub const TURN_INTERRUPTED_STATUS: &str = "turn_interrupted";
 pub const RECEIPT_QUIESCENCE_FIELD: &str = "quiescence";
 /// The only value `quiescence` takes today.
 pub const QUIESCENCE_UNCONFIRMED: &str = "unconfirmed";
+/// The optional key a `stopped` receipt carries when `checkpointOnStop` was
+/// on but the pre-stop checkpoint did not complete inside its budget
+/// (NIP-CSL § Checkpoint before stop). Absent on every other receipt and on
+/// a stop whose checkpoint ran or was never asked for.
+pub const RECEIPT_CHECKPOINT_SKIPPED_FIELD: &str = "checkpointSkipped";
+/// The only value `checkpointSkipped` takes today: the 90 s budget passed.
+pub const CHECKPOINT_SKIPPED_TIMEOUT: &str = "timeout";
 /// Error code on the terminal `failed` receipt that closes an interrupted
 /// turn, and on the synthesized `result` item.
 pub const TURN_INTERRUPTED_BY_RESTART: &str = "TURN_INTERRUPTED_BY_RESTART";
@@ -404,6 +411,12 @@ pub struct LifecycleReceipt {
     /// as the terminal `failed` receipt instead, not as a second value here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quiescence: Option<String>,
+    /// Why no checkpoint preceded this stop, present only on a `stopped`
+    /// receipt whose provider had `checkpointOnStop` on and ran out of
+    /// budget. Its only value is [`CHECKPOINT_SKIPPED_TIMEOUT`]; a stop that
+    /// checkpointed, or was never asked to, omits the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_skipped: Option<String>,
 }
 
 /// Receipt outcomes recognized by current consumers.
@@ -582,6 +595,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: Some(QUIESCENCE_UNCONFIRMED.to_owned()),
+            checkpoint_skipped: None,
         }
     }
 
@@ -596,6 +610,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -617,6 +632,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -634,6 +650,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -648,6 +665,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -669,6 +687,18 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
+        }
+    }
+
+    /// An execution was durably stopped, but the checkpoint `checkpointOnStop`
+    /// asked for did not complete inside its budget: `stopped` with
+    /// `checkpointSkipped: "timeout"`. The stop itself is exactly as clean as
+    /// [`LifecycleReceipt::stopped`]; the key discloses what preceded it.
+    pub fn stopped_without_checkpoint(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            checkpoint_skipped: Some(CHECKPOINT_SKIPPED_TIMEOUT.to_owned()),
+            ..Self::stopped(command_id, target)
         }
     }
 
@@ -683,6 +713,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -701,6 +732,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -719,6 +751,7 @@ impl LifecycleReceipt {
             turn_id: Some(turn_id.to_owned()),
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -738,6 +771,7 @@ impl LifecycleReceipt {
             turn_id: Some(turn_id.to_owned()),
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -767,6 +801,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -796,6 +831,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -828,6 +864,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -847,6 +884,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -866,6 +904,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -880,6 +919,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 
@@ -909,6 +949,7 @@ impl LifecycleReceipt {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         }
     }
 }
@@ -937,10 +978,12 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
     let carries_turn_id = object.contains_key(TURN_ID_FIELD);
     let carries_rewind = object.contains_key(REWIND_FIELD);
     let carries_quiescence = object.contains_key(RECEIPT_QUIESCENCE_FIELD);
+    let carries_checkpoint_skipped = object.contains_key(RECEIPT_CHECKPOINT_SKIPPED_FIELD);
     let expected_len = FIELDS.len()
         + usize::from(carries_turn_id)
         + usize::from(carries_rewind)
-        + usize::from(carries_quiescence);
+        + usize::from(carries_quiescence)
+        + usize::from(carries_checkpoint_skipped);
     if object.len() != expected_len
         || FIELDS.iter().any(|field| !object.contains_key(*field))
         || object.keys().any(|field| {
@@ -948,6 +991,7 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
                 && field != TURN_ID_FIELD
                 && field != REWIND_FIELD
                 && field != RECEIPT_QUIESCENCE_FIELD
+                && field != RECEIPT_CHECKPOINT_SKIPPED_FIELD
         })
     {
         return Err("coding-session lifecycle receipt has missing or unsupported fields".into());
@@ -974,6 +1018,14 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
     if carries_quiescence != receipt.status.carries_quiescence() {
         return Err(
             "receipt quiescence key is present exactly when status is turn_interrupted".into(),
+        );
+    }
+    // Key presence again: an explicit `"checkpointSkipped": null` on a stop
+    // is a producer inventing a shape, and no other status may carry it.
+    if carries_checkpoint_skipped != receipt.checkpoint_skipped.is_some() {
+        return Err(
+            "receipt checkpointSkipped, when present, is the string \"timeout\" on a stopped receipt"
+                .into(),
         );
     }
     validate_lifecycle_receipt(&receipt)?;
@@ -1058,6 +1110,22 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
             return Err(
                 "receipt quiescence is present exactly when status is turn_interrupted".into(),
             );
+        }
+    }
+    // `checkpointSkipped` is optional on `stopped` alone, and closed to one
+    // value: the stop went ahead without the checkpoint it was asked for.
+    match (
+        receipt.checkpoint_skipped.as_deref(),
+        receipt.status == ReceiptStatus::Stopped,
+    ) {
+        (None, _) | (Some(CHECKPOINT_SKIPPED_TIMEOUT), true) => {}
+        (Some(other), true) => {
+            return Err(format!(
+                "receipt checkpointSkipped must be {CHECKPOINT_SKIPPED_TIMEOUT:?}, not {other:?}"
+            ));
+        }
+        (Some(_), false) => {
+            return Err("receipt checkpointSkipped is carried only by a stopped receipt".into());
         }
     }
     let valid_shape = match receipt.status {
@@ -3096,6 +3164,52 @@ mod tests {
             );
             assert_eq!(value["schema"], LIFECYCLE_RECEIPT_SCHEMA);
         }
+    }
+
+    /// Round 2 Lane D wiring (ledger 406 F7): a `stopped` receipt may carry
+    /// `checkpointSkipped: "timeout"` and nothing else may — not a null, not
+    /// another value, not another status. The plain stop is still five keys.
+    #[test]
+    fn stopped_may_disclose_a_skipped_checkpoint_and_only_that() {
+        let plain = serde_json::to_value(LifecycleReceipt::stopped("s", &target())).unwrap();
+        assert!(!plain
+            .as_object()
+            .unwrap()
+            .contains_key(RECEIPT_CHECKPOINT_SKIPPED_FIELD));
+        assert_eq!(plain.as_object().map(|o| o.len()), Some(5));
+
+        let receipt = LifecycleReceipt::stopped_without_checkpoint("s", &target());
+        let encoded = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(encoded["status"], "stopped");
+        assert_eq!(
+            encoded[RECEIPT_CHECKPOINT_SKIPPED_FIELD],
+            CHECKPOINT_SKIPPED_TIMEOUT
+        );
+        assert!(encoded["error"].is_null());
+        assert_eq!(encoded.as_object().map(|o| o.len()), Some(6), "{encoded}");
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&encoded.to_string()).expect("decodes"),
+            receipt
+        );
+
+        let mut null = encoded.clone();
+        null[RECEIPT_CHECKPOINT_SKIPPED_FIELD] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&null.to_string())
+            .expect_err("an explicit null is a producer inventing a shape")
+            .contains("checkpointSkipped"));
+        let mut other = encoded.clone();
+        other[RECEIPT_CHECKPOINT_SKIPPED_FIELD] = serde_json::Value::String("error".into());
+        assert!(decode_coding_session_lifecycle_receipt(&other.to_string())
+            .expect_err("the vocabulary is closed")
+            .contains("checkpointSkipped"));
+        let mut created = serde_json::to_value(LifecycleReceipt::created("c", &target())).unwrap();
+        created[RECEIPT_CHECKPOINT_SKIPPED_FIELD] =
+            serde_json::Value::String(CHECKPOINT_SKIPPED_TIMEOUT.into());
+        assert!(
+            decode_coding_session_lifecycle_receipt(&created.to_string())
+                .expect_err("only a stopped receipt carries the key")
+                .contains("stopped")
+        );
     }
 
     #[test]

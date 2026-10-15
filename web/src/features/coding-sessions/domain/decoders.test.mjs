@@ -131,6 +131,91 @@ test("an interrupt and a degraded steer decode, they are not malformed", () => {
   );
 });
 
+test("a stopped receipt may disclose a skipped checkpoint, and only as timeout on stopped", () => {
+  // Round 2 Lane D: the desktop reads this stop as stopped; the web client
+  // must not drop it on the five-key check.
+  const skipped = parseCodingSessionLifecycleReceipt(
+    receiptJson({ status: "stopped", checkpointSkipped: "timeout" }),
+  );
+  assert.ok(skipped, "a stop whose checkpoint timed out is still a stop");
+  assert.equal(skipped.status, "stopped");
+  assert.equal(skipped.checkpointSkipped, "timeout");
+  const plain = parseCodingSessionLifecycleReceipt(
+    receiptJson({ status: "stopped" }),
+  );
+  assert.ok(plain);
+  assert.equal(
+    Object.hasOwn(plain, "checkpointSkipped"),
+    false,
+    "absent on the wire is absent in the record, not defaulted",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "stopped", checkpointSkipped: "slow" }),
+    ),
+    null,
+    "timeout is the one value the key may hold",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "stopped", checkpointSkipped: null }),
+    ),
+    null,
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "resumed", checkpointSkipped: "timeout" }),
+    ),
+    null,
+    "on any other status it is an unknown key",
+  );
+});
+
+test("turn_interrupted is a turn stage carrying quiescence: unconfirmed and nothing else", () => {
+  const interrupted = parseCodingSessionLifecycleReceipt(
+    receiptJson({ status: "turn_interrupted", quiescence: "unconfirmed" }),
+  );
+  assert.ok(interrupted, "the provider publishes turn_interrupted on restart");
+  assert.equal(interrupted.quiescence, "unconfirmed");
+  assert.equal(interrupted.error, null);
+  assert.equal(
+    isCodingSessionTurnReceiptStatus("turn_interrupted"),
+    true,
+    "it is a turn stage: it creates, confirms and ends no generation",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "turn_interrupted" }),
+    ),
+    null,
+    "without quiescence it is malformed",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "turn_interrupted", quiescence: "confirmed" }),
+    ),
+    null,
+    "a confirmed quiescence is the terminal failed, never this receipt",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({
+        status: "turn_interrupted",
+        quiescence: "unconfirmed",
+        error: { code: "X", message: "y" },
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "turn_queued", quiescence: "unconfirmed" }),
+    ),
+    null,
+    "quiescence on any other status is an unknown key",
+  );
+});
+
 test("a failed receipt must carry a null session and an error", () => {
   assert.ok(
     parseCodingSessionLifecycleReceipt(

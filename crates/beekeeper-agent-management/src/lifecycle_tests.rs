@@ -915,6 +915,7 @@ async fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal
         turn_idle_timeout_secs: None,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         provider_command: None,
         written_at: String::new(),
     };

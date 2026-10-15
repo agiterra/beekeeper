@@ -357,6 +357,7 @@ fn wire(options: WireOptions) -> Wire {
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     };
     let receipt_keys = options.receipt_signer.clone().unwrap_or(provider.clone());
     let receipt = build_coding_session_lifecycle_receipt(
@@ -923,6 +924,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
             turn_id: None,
             rewind: None,
             quiescence: None,
+            checkpoint_skipped: None,
         };
         let keys = extra
             .receipt_signer
@@ -1055,6 +1057,7 @@ async fn a_forged_later_receipt_cannot_deny_the_repair() {
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     };
     let forged = build_coding_session_lifecycle_receipt(
         channel,

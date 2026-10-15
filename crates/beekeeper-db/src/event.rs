@@ -2774,6 +2774,31 @@ pub async fn insert_coding_session_authority_transition_event(
     channel_id: Uuid,
     thread_meta: Option<ThreadMetadataParams<'_>>,
 ) -> Result<CodingSessionAuthorityTransitionInsertOutcome> {
+    insert_coding_session_authority_transition_event_with(
+        pool,
+        community_id,
+        event,
+        channel_id,
+        thread_meta,
+        beekeeper_core::role_vocabulary::RoleVocabulary::foundation(),
+    )
+    .await
+}
+
+/// [`insert_coding_session_authority_transition_event`] under the project's
+/// own role vocabulary.
+///
+/// `vocabulary.lead()` is the seat that may grant and revoke non-lead seats
+/// and may never manage its own role; the plain form uses the default
+/// (`lead`) for callers that hold no team record.
+pub async fn insert_coding_session_authority_transition_event_with(
+    pool: &PgPool,
+    community_id: CommunityId,
+    event: &Event,
+    channel_id: Uuid,
+    thread_meta: Option<ThreadMetadataParams<'_>>,
+    vocabulary: &beekeeper_core::role_vocabulary::RoleVocabulary,
+) -> Result<CodingSessionAuthorityTransitionInsertOutcome> {
     let genesis_ref = coding_session_authority_transition_genesis_ref(event)?.to_owned();
     let payload =
         decode_coding_session_authority_transition(&event.content).map_err(DbError::InvalidData)?;
@@ -2843,7 +2868,8 @@ pub async fn insert_coding_session_authority_transition_event(
     let seats_before = fold_authority_seats(&others, payload.seq);
     let signer_is_owner = event.pubkey.as_bytes() == owner_pubkey.as_slice();
     let signer_is_operator = grants_before.get(&signer_hex) == Some(&"operator");
-    let signer_is_lead = seats_before.get(&signer_hex).map(String::as_str) == Some("lead");
+    let lead_role = vocabulary.lead();
+    let signer_is_lead = seats_before.get(&signer_hex).map(String::as_str) == Some(lead_role);
     let is_seat_transition = matches!(
         payload.transition_type,
         CodingSessionAuthorityTransitionType::GrantSeat
@@ -2932,7 +2958,7 @@ pub async fn insert_coding_session_authority_transition_event(
     if signer_is_lead
         && !signer_is_owner
         && !signer_is_operator
-        && payload.role.as_deref() == Some("lead")
+        && payload.role.as_deref() == Some(lead_role)
     {
         tx.rollback().await?;
         return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {

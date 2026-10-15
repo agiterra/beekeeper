@@ -52,9 +52,9 @@
 use std::collections::HashSet;
 
 use super::{
-    CodingSessionTeamFoldConflict, CodingSessionTeamFoldExclusionCode,
-    CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType, CodingSessionTeamVerdict,
-    Record,
+    CodingSessionTeamFoldConflict, CodingSessionTeamFoldContext,
+    CodingSessionTeamFoldExclusionCode, CodingSessionTeamTransactionBody,
+    CodingSessionTeamTransactionType, CodingSessionTeamVerdict, Record,
 };
 use crate::coding_session_team_transaction::CodingSessionTeamDispositionDecision;
 
@@ -272,6 +272,7 @@ pub(super) fn settle_assignments(
     records: &[Record<'_>],
     active: &[usize],
     conflicts: &mut Vec<CodingSessionTeamFoldConflict>,
+    context: &CodingSessionTeamFoldContext,
 ) -> Vec<CodingSessionTeamAssignmentSettlement> {
     let active_set: HashSet<usize> = active.iter().copied().collect();
     let mut result = Vec::new();
@@ -392,7 +393,7 @@ pub(super) fn settle_assignments(
             settled_by: winner.map(|chain| chain.3),
             awaiting: match winner {
                 Some(_) => None,
-                None => awaiting_link(records, active, assignment_index),
+                None => awaiting_link(records, active, assignment_index, context),
             },
         });
     }
@@ -409,6 +410,7 @@ fn awaiting_link(
     records: &[Record<'_>],
     active: &[usize],
     assignment_index: usize,
+    context: &CodingSessionTeamFoldContext,
 ) -> Option<CodingSessionTeamSettlementAwaiting> {
     let CodingSessionTeamTransactionBody::Assignment(assignment) =
         &records[assignment_index].payload.body
@@ -451,7 +453,7 @@ fn awaiting_link(
     if !approved {
         return Some(CodingSessionTeamSettlementAwaiting {
             link: CodingSessionTeamSettlementLink::Disposition,
-            owed_by_role: "lead".into(),
+            owed_by_role: context.vocabulary.lead().to_owned(),
             owed_by_actor: None,
         });
     }

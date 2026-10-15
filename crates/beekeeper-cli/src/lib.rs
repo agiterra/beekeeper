@@ -688,7 +688,11 @@ pub enum MessagesCmd {
         /// Attach file(s) — uploads and includes as imeta tags
         #[arg(long = "file")]
         files: Vec<String>,
-        /// Pubkey to mention (hex or npub; repeatable). Supplying any explicit identity permits unresolved or ambiguous @Name text as presentation-only; uniquely resolved member names still notify.
+        /// Pubkey to notify (hex or npub; repeatable), for when an @Name in
+        /// the text is not a unique channel member. With at least one
+        /// --mention, unresolved or ambiguous @Names are left as plain text
+        /// instead of refusing the send; names that match one member still
+        /// notify. Addressing an agent this way is what wakes it.
         #[arg(long = "mention")]
         mentions: Vec<String>,
     },

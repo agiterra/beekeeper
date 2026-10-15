@@ -92,10 +92,14 @@ pub(crate) struct WorkBriefRequest<'a> {
 /// the relay could not be read at all. Both mean the host has nothing
 /// *verified* to say, and an unverified brief would be worse than none.
 pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<String> {
-    let snapshot = match crate::team_wake::fetch_verified_snapshot(
+    // The seat's own project's role names, from the agents clone beside its
+    // worktree; the fold below and every role check in this brief use them.
+    let vocabulary = crate::team_wake::vocabulary_near(request.cwd.as_deref());
+    let snapshot = match crate::team_wake::fetch_verified_snapshot_with(
         request.rest,
         request.relay_self,
         request.scope,
+        vocabulary,
     )
     .await
     {
@@ -133,6 +137,7 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
         project_ref: request.project_ref.map(str::to_owned),
         founder_pubkey: snapshot.founder_pubkey.clone(),
         cwd: request.cwd.clone(),
+        vocabulary: snapshot.vocabulary.clone(),
         state_dir: request.state_dir.to_path_buf(),
         session_id: request.session_id.to_owned(),
         runtime: request.runtime.clone(),
@@ -173,6 +178,9 @@ pub(crate) struct BriefContext<'a> {
     pub founder_pubkey: String,
     /// The seat's worktree, as the host recorded it.
     pub cwd: Option<PathBuf>,
+    /// The project's role names the snapshot was folded with: which role is
+    /// the judging one, which roles are fenced onto their commit.
+    pub vocabulary: beekeeper_core::role_vocabulary::RoleVocabulary,
     /// The provider's state directory.
     pub state_dir: PathBuf,
     /// The execution's session id, which names its bundle.
@@ -276,6 +284,7 @@ pub(crate) async fn assemble_brief_text(
         context.operation_id,
         assignment.base_sha.as_deref(),
         context.role,
+        &context.vocabulary,
     );
     let (contract, goal_ref, goal_first_line) = contract_for(context, reads).await;
     let decisions = answered_decisions(team_events, context.operation_id);
@@ -288,6 +297,7 @@ pub(crate) async fn assemble_brief_text(
         included_reports,
         assignment.base_sha.as_deref(),
         context.role,
+        &context.vocabulary,
     );
 
     let brief_path = crate::session::seat_bundle_dir(&context.state_dir, &context.session_id)
@@ -315,6 +325,7 @@ pub(crate) async fn assemble_brief_text(
             genesis_ref: context.genesis_ref.clone(),
             assignment_ref: context.operation_id.to_owned(),
             role: context.role.to_owned(),
+            vocabulary: context.vocabulary.clone(),
             report_ref: reviewed.as_ref().map(|(id, _)| id.clone()),
             verdict_assignment_ref: reviewed.and_then(|(_, assignment)| assignment),
         },
@@ -432,10 +443,11 @@ fn establishment_for(
     assignment_ref: &str,
     base_sha: Option<&str>,
     role: &str,
+    vocabulary: &beekeeper_core::role_vocabulary::RoleVocabulary,
 ) -> InputEstablishment {
     use crate::assignment_inputs as inputs;
 
-    if base_sha.is_none() || !crate::verification_input::role_verifies_a_commit(role) {
+    if base_sha.is_none() || !crate::verification_input::role_verifies_a_commit(role, vocabulary) {
         return InputEstablishment::NotRequired;
     }
     let Some(store) = inputs::host_store_from_pointer(state_dir) else {
@@ -754,8 +766,9 @@ fn report_under_review(
     included: &std::collections::BTreeSet<String>,
     base_sha: Option<&str>,
     role: &str,
+    vocabulary: &beekeeper_core::role_vocabulary::RoleVocabulary,
 ) -> Option<(String, Option<String>)> {
-    if !role.eq_ignore_ascii_case("verifier") {
+    if !role.eq_ignore_ascii_case(vocabulary.verdict_role()) {
         return None;
     }
     let base = base_sha?.to_ascii_lowercase();

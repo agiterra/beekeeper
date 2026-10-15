@@ -134,6 +134,8 @@ A UTF-8 Markdown file at `plans/<slug>.md` in the project's agents repository (`
 
 Frontmatter carries **exactly** these keys — an unknown key is a refusal, never an ignored key: `schema` (exactly `beekeeper-plan/v1`), `id` (slug, ≤ 64 bytes), `status` (`in-force` | `superseded`), `title` (1–200 bytes, one line), `code_repository` (a repository id `[a-z0-9][a-z0-9-]*`, 1–64 bytes), `delivery_ref` (a full git ref such as `refs/heads/main`, 1–256 bytes, no glob), `criteria` (1–64 entries), `retired_criteria` (list of slugs, **required and written even when empty**).
 
+**Git is optional in a plan.** `code_repository` and `delivery_ref` are written together or not at all, and are required exactly when some criterion's `proof` is `git-ref` — that proof is judged at the plan's `delivery_ref`, so a plan with one and no repository is refused `missing-frontmatter-key` at `frontmatter.code_repository`, as is one half of the pair without the other. A review-only plan (a design, a document, a decision; also one proved by `action` alone) names no repository: it validates, its `Plan` JSON carries neither `codeRepository` nor `deliveryRef`, the fold reads no kind:30618 for it, and it settles on its verdicts and action results alone. Readers ask `Plan::git_delivery()`, which answers `None` for such a plan rather than inventing a ref.
+
 Each criterion has exactly `id` (slug), `accept` (1–1024 bytes, non-empty after trimming) and `proof`, which is exactly one of:
 
 ```yaml
@@ -205,7 +207,7 @@ A **signed binding is a claim to verify.** A criterion is `covered` only when it
 
 - **`review`** — a 44244 verdict whose `subtype` is `disposition` and whose `decision` is `approve` or `approve-with-notes`, signed by an actor `authority` admits and **included in `teamProjection.includedEventIds`**, on a report that is itself included there, is signed by that assignment's `assigneeActor`, names an assignment bound to that criterion, and whose `headSha` equals the binding's `artifactCommit`. The precedence, so two implementations name the same reason for the same fact: (1) evidence missing → `evidence_unavailable`; (2) report not canonical → `report_not_canonical`; (3) disposition signer not `may_lead` → `wrong_signer`; (4) disposition not included → `disposition_not_canonical`; (5) not an approval → `not_approving`; (6) `headSha` ≠ `artifactCommit` → `revision_mismatch`.
 - **`action`** — a host result (kind:46023, carried by the relay's kind:46014 echo signed with `relaySelfKey`) for a run whose `definitionHash` equals the compiled definition's, whose `stepId` is the criterion's `step`, with `exitCode` 0, `checkout.sha` equal to `artifactCommit`, and neither `checkout.dirtyBefore` nor `dirty`.
-- **`git-ref`** — the newest relay-signed 30618 for the plan's `code_repository` still names `refs/heads/<branch of delivery_ref>` at `artifactCommit`.
+- **`git-ref`** — the newest relay-signed 30618 for the plan's `code_repository` still names `refs/heads/<branch of delivery_ref>` at `artifactCommit`. Only a plan with a `git-ref` criterion names a repository, so `refStates` is consulted only for such a plan; a plan that names none (its bytes changed under a binding) reads `unknown` / `evidence_unavailable`, never `open`.
 
 ### Reason codes
 

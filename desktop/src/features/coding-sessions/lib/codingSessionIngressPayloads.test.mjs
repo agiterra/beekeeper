@@ -36,6 +36,33 @@ function receipt(overrides) {
   });
 }
 
+// Round 2 Lane D: the optional sixth key on `stopped` (NIP-CSL § Checkpoint
+// before stop) decodes with its one value and is refused in every other shape.
+test("a stopped receipt decodes its optional checkpointSkipped: timeout, and only that", () => {
+  const plain = parseCodingSessionLifecycleReceipt(
+    receipt({ status: "stopped" }),
+  );
+  assert.equal(plain?.status, "stopped");
+  assert.equal("checkpointSkipped" in plain, false);
+  const skipped = parseCodingSessionLifecycleReceipt(
+    receipt({ status: "stopped", checkpointSkipped: "timeout" }),
+  );
+  assert.equal(skipped?.status, "stopped");
+  assert.equal(skipped?.checkpointSkipped, "timeout");
+  for (const overrides of [
+    { status: "stopped", checkpointSkipped: null },
+    { status: "stopped", checkpointSkipped: "error" },
+    { status: "resumed", checkpointSkipped: "timeout" },
+    { status: "created", checkpointSkipped: "timeout" },
+  ]) {
+    assert.equal(
+      parseCodingSessionLifecycleReceipt(receipt(overrides)),
+      null,
+      JSON.stringify(overrides),
+    );
+  }
+});
+
 test("a steer the provider could not honour decodes as a five-key turn_degraded", () => {
   const parsed = parseCodingSessionLifecycleReceipt(
     receipt({

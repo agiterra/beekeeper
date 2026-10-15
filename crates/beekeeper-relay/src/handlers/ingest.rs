@@ -5063,6 +5063,11 @@ async fn ingest_event_inner(
                 &event,
                 transition_channel,
                 thread_params,
+                // The relay holds no project team record at ingest, so the
+                // default lead name (`lead`) judges who may grant seats. A
+                // project whose `team.yml` renames its lead is not yet
+                // honoured here; see `RoleVocabulary::foundation`.
+                beekeeper_core::role_vocabulary::RoleVocabulary::foundation(),
             )
             .await
             .map_err(|e| IngestError::Internal(format!("error: {e}")))?
@@ -8953,6 +8958,7 @@ mod tests {
                 actor: vec![0xee; 32],
                 role: "lead".into(),
             }],
+            vocabulary: Default::default(),
         };
 
         assert!(hire_authority_verdict(Some(&authority), &founder, "lead").is_ok());
@@ -8989,6 +8995,7 @@ mod tests {
                 actor: lead.clone(),
                 role: "lead".into(),
             }],
+            vocabulary: Default::default(),
         };
         assert!(hire_authority_verdict(Some(&active), &lead, "builder").is_ok());
         assert!(hire_authority_verdict(Some(&active), &lead, "lead").is_err());

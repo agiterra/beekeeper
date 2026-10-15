@@ -25,6 +25,7 @@ fn genesis() -> String {
 
 fn context(founder: &Keys, seats: Vec<(&Keys, &str)>) -> CodingSessionTeamFoldContext {
     CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: CHANNEL.into(),
         session_ref: SESSION.into(),
         genesis_ref: genesis(),

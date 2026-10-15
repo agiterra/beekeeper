@@ -95,6 +95,7 @@ fn signed_hire() -> (
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     };
     let receipt = build_coding_session_lifecycle_receipt(
         channel,

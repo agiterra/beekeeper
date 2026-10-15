@@ -36,6 +36,7 @@ pub(super) fn context_for(
     seats: Vec<(&Keys, &str)>,
 ) -> CodingSessionTeamFoldContext {
     CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: channel.to_owned(),
         session_ref: session.to_owned(),
         genesis_ref: genesis.to_owned(),

@@ -89,6 +89,7 @@ fn work_session() -> SessionContext {
         genesis_ref: "ab".repeat(32),
         project_ref: project_ref(),
         context: CodingSessionTeamFoldContext {
+            vocabulary: Default::default(),
             channel_ref: FIXTURE_CHANNEL.to_owned(),
             session_ref: FIXTURE_SESSION.to_owned(),
             genesis_ref: "ab".repeat(32),

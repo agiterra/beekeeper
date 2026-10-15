@@ -364,8 +364,22 @@ pub(crate) async fn prepare(reads: &impl AutoEvidenceReads, input: &AutoEvidence
             ),
         );
     }
+    // Git is optional in a plan (round 2 Lane F): a plan that names no code
+    // repository has no delivery ref for the relay to observe, so nothing is
+    // read and nothing is bound here — the action result is bound by the
+    // CLI, which needs no observation for an action criterion.
+    let Some(delivery) = plan.git_delivery() else {
+        return skip(
+            summary,
+            format!(
+                "plan {} names no code_repository, so no relay ref state can observe a \
+                 delivery; bind the action result with the CLI",
+                plan.id
+            ),
+        );
+    };
     let (read, observed) =
-        match read_ref_state(reads, input, &plan.code_repository, &plan.delivery_ref).await {
+        match read_ref_state(reads, input, delivery.repository, delivery.delivery_ref).await {
             Ok(outcome) => outcome,
             Err(error) => return skip(summary, format!("ref state unreadable: {error}")),
         };
@@ -395,7 +409,7 @@ pub(crate) async fn prepare(reads: &impl AutoEvidenceReads, input: &AutoEvidence
                     "{sentence}; the newest relay-signed ref state ({}) names no {}; bind with \
                      the CLI",
                     state_id.get(..12).unwrap_or(&state_id),
-                    plan.delivery_ref
+                    delivery.delivery_ref
                 ),
             )
         }

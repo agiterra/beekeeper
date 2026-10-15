@@ -81,3 +81,43 @@ fn head_race_refetches_once_and_never_loops() {
         &CliError::Other("relay rejected event: invalid signer".into())
     ));
 }
+
+/// Under `lead: captain`, the active `captain` seat is the one that may
+/// hire non-lead roles and may not grant `captain`; a seat holding the
+/// foundation's `lead` has no standing in that project.
+#[test]
+fn the_hiring_seat_is_the_projects_lead_role() {
+    use super::seat_authority::decide_for_test_with;
+    let captain = beekeeper_core::role_vocabulary::RoleVocabulary::from_team(
+        Some("captain"),
+        Some(&["qa".to_owned()]),
+    )
+    .expect("a vocabulary");
+    let mut captain_authority = authority();
+    captain_authority.seats[0].role = "captain".into();
+
+    assert_eq!(
+        decide_for_test_with(&captain_authority, FOUNDER, LEAD, ACTOR, "qa", &captain)
+            .expect("the captain hires a qa seat"),
+        (None, true)
+    );
+    let error = decide_for_test_with(
+        &captain_authority,
+        FOUNDER,
+        LEAD,
+        ACTOR,
+        "captain",
+        &captain,
+    )
+    .expect_err("the captain cannot grant captain");
+    assert!(
+        error.to_string().contains("cannot grant lead authority"),
+        "{error}"
+    );
+    assert!(
+        decide_for_test(&captain_authority, FOUNDER, LEAD, ACTOR, "builder").is_err(),
+        "under the default vocabulary a captain seat is not a lead"
+    );
+    // A seat holding the foundation's word is nobody in a captain project.
+    assert!(decide_for_test_with(&authority(), FOUNDER, LEAD, ACTOR, "builder", &captain).is_err());
+}

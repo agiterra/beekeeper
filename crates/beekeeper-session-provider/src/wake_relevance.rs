@@ -436,6 +436,7 @@ pub(crate) async fn evaluate_at_dequeue(
     scope: &WakeScope,
     recipient: &str,
     text: &str,
+    vocabulary: &beekeeper_core::role_vocabulary::RoleVocabulary,
 ) -> Result<Option<(WakeDropReason, String)>, String> {
     let facts = crate::team_wake::fetch_verified_team_facts(rest, relay_self_pubkey, scope)
         .await
@@ -443,7 +444,8 @@ pub(crate) async fn evaluate_at_dequeue(
     let Some(fact) = fact_of_pointer(text, &facts.team_events) else {
         return Ok(None);
     };
-    let context = crate::team_wake::fold_context(scope, &facts.founder_pubkey, &facts.authority);
+    let context =
+        crate::team_wake::fold_context(scope, &facts.founder_pubkey, &facts.authority, vocabulary);
     let terminal = terminal_mark(&facts.team_events, &context)?;
     // Work records (`work.evidence_bound`) cite host results; a relay that
     // cannot list them costs this check that one source, never the wake.

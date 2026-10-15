@@ -93,9 +93,23 @@ export type CodingSessionLifecycleReceipt =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "resumed" | "stopped";
+      status: "resumed";
       session: CodingSessionTarget;
       error: null;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "stopped";
+      session: CodingSessionTarget;
+      error: null;
+      /**
+       * Round 2 Lane D (NIP-CSL § Checkpoint before stop): present only when
+       * the provider had `checkpointOnStop` on and the pre-stop checkpoint
+       * ran out of its budget. The stop still happened; only the checkpoint
+       * did not. `"timeout"` is the one value the key may hold.
+       */
+      checkpointSkipped?: "timeout";
     }
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
@@ -140,6 +154,21 @@ export type CodingSessionLifecycleReceipt =
         | "model_applied";
       session: CodingSessionTarget;
       error: null;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "turn_interrupted";
+      session: CodingSessionTarget;
+      error: null;
+      /**
+       * Always `"unconfirmed"`: the provider restarted while this turn's
+       * process was still present and could not establish whether it is
+       * still working. A confirmed quiescence is the terminal `failed`
+       * under the same command id, not this receipt (NIP-CSL §
+       * turn_interrupted).
+       */
+      quiescence: "unconfirmed";
     };
 
 /** Every status a 44224 can carry, lifecycle and turn alike. */
@@ -189,6 +218,11 @@ export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   // Its refusals are `turn_refused` with `MODEL_SWITCH_UNSUPPORTED`,
   // `MODEL_NOT_OFFERED` or `MODEL_SWITCH_FAILED`, read as bounded codes.
   "model_applied",
+  // The provider restarted while this turn's process was still present
+  // (NIP-CSL § turn_interrupted): neither finished nor proved ended. Carries
+  // `quiescence: "unconfirmed"`; one terminal `failed` under the same
+  // command id follows once the witness proves the process gone.
+  "turn_interrupted",
 ] as const;
 
 /** A per-stage turn status, as opposed to a generation lifecycle status. */
@@ -303,10 +337,20 @@ function parseReceiptEnvelope(
   value: Record<string, unknown>,
 ): Readonly<CodingSessionLifecycleReceipt> | null {
   if (typeof value.status !== "string") return null;
+  // The one optional key: `checkpointSkipped` on `stopped`, checked by value
+  // below. Its presence on any other status is an unexpected key. Mirrors
+  // the desktop decoder (`codingSessionIngressPayloads.ts`) so a stop the
+  // desktop reads as stopped is never dropped here.
+  const carriesCheckpointSkipped =
+    value.status === "stopped" && hasOwnKey(value, "checkpointSkipped");
   const expectedKeys =
     value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]
-      : RECEIPT_ENVELOPE_KEYS;
+      : value.status === "turn_interrupted"
+        ? [...RECEIPT_ENVELOPE_KEYS, "quiescence"]
+        : carriesCheckpointSkipped
+          ? [...RECEIPT_ENVELOPE_KEYS, "checkpointSkipped"]
+          : RECEIPT_ENVELOPE_KEYS;
   if (
     !hasExactKeys(value, expectedKeys) ||
     value.schema !== CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA ||
@@ -350,15 +394,32 @@ function parseReceiptEnvelope(
       }),
     });
   }
-  if (value.status === "resumed" || value.status === "stopped") {
+  if (value.status === "resumed") {
     const session = decodeTarget(value.session);
     if (!session || value.error !== null) return null;
     return Object.freeze({
       schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
       commandId: value.commandId,
-      status: value.status,
+      status: "resumed",
       session,
       error: null,
+    });
+  }
+  if (value.status === "stopped") {
+    const session = decodeTarget(value.session);
+    if (!session || value.error !== null) return null;
+    if (carriesCheckpointSkipped && value.checkpointSkipped !== "timeout") {
+      return null;
+    }
+    return Object.freeze({
+      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+      commandId: value.commandId,
+      status: "stopped",
+      session,
+      error: null,
+      ...(carriesCheckpointSkipped
+        ? { checkpointSkipped: "timeout" as const }
+        : {}),
     });
   }
   if (value.status === "resumed_without_context") {
@@ -452,6 +513,19 @@ function parseTurnReceipt(
       session,
       error: null,
       turnId: value.turnId,
+    });
+  }
+  // The third six-key status: the quiescence key is the whole claim, and
+  // `"unconfirmed"` is the only value it may hold.
+  if (status === "turn_interrupted") {
+    if (value.error !== null || value.quiescence !== "unconfirmed") return null;
+    return Object.freeze({
+      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+      commandId,
+      status,
+      session,
+      error: null,
+      quiescence: "unconfirmed" as const,
     });
   }
   if (

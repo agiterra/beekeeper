@@ -5,12 +5,16 @@ writes the list of descriptors it offers into `host.json` (`runtimes`) and
 hands it to the session provider as one environment variable,
 `BEEKEEPER_CSP_RUNTIMES`, a JSON array of these objects. The provider starts
 whatever ACP adapter the descriptor names; nothing in it checks the runtime's
-name. Claude and Codex are two descriptors with built-in defaults, not
-special cases of the loader.
+name. `claude`, `codex` and `goose` are words with a built-in driver
+(`claude-agent-acp`, `codex-acp`, `goose-acp`; `crates/beekeeper-cli/src/commands/host_commission.rs`);
+`claude` and `codex` also have a built-in credential list. None is a special
+case of the loader.
 
 Definition: `crates/beekeeper-core/src/coding_session_runtime.rs`. Unknown
 keys are refused — a key the sidecar does not know is a contract violation,
-not an extension point.
+not an extension point. How a descriptor is minted is
+[NIP-HC](nips/NIP-HC.md); the zero-to-reply path that uses one is
+[`INTEGRATING.md`](INTEGRATING.md).
 
 ## Fields
 
@@ -53,10 +57,20 @@ from the host, whatever the runtime word.
 
 The driver slug decides how the adapter is confined: `claude-agent-acp` and
 `codex-acp` get their vendor profiles; **every other slug runs as a generic
-managed adapter** on every platform — the project boundary, a private `HOME`,
-and only the environment the descriptor and credential file supply. A launch
-is refused as unsupported only when its command is empty or the managed-actor
+managed adapter** — the project boundary, a private `HOME`, and only the
+environment the descriptor and credential file supply. A launch is refused
+as unsupported only when its command is empty or the managed-actor
 placeholder, never because the slug is unfamiliar.
+
+The boundary itself exists on macOS only. On any other platform
+`execution_scope::prepare` returns a disclosed `Legacy` plan
+(`reason: "no-backend-for-platform"`,
+`crates/beekeeper-session-provider/src/execution_scope.rs`) and the adapter
+is spawned without confinement. The environment rule still holds there —
+inherited account variables are blanked and only the permitted names are
+injected (`runtime_credentials.rs`) — but nothing restricts what the
+adapter can read. See [`INTEGRATING.md` § What is not
+promised](INTEGRATING.md#what-is-not-promised).
 
 ## Commissioning
 

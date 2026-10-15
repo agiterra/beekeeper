@@ -106,6 +106,11 @@ impl CodingSessionTeamFoldAdapterContext {
             session_ref: self.session_ref.clone(),
             genesis_ref: self.genesis_ref.clone(),
             founder_pubkey: self.founder_pubkey.clone(),
+            // Lane E: the desktop holds no project team record at this call;
+            // the foundation names (`lead`, `verifier`) judge here. A project
+            // whose team.yml renames them is not yet honoured on this surface;
+            // see `RoleVocabulary::foundation`.
+            vocabulary: beekeeper_core_pkg::role_vocabulary::RoleVocabulary::foundation().clone(),
             active_seats: self
                 .active_seats
                 .iter()

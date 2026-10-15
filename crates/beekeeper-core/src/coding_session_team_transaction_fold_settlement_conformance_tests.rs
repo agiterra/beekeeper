@@ -94,6 +94,7 @@ pub(crate) fn sign_vector(vector: &Value) -> SignedVector {
     let assignee = keys(0x22);
     let stranger = keys(0x33);
     let context = CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: CHANNEL.into(),
         session_ref: SESSION.into(),
         genesis_ref: genesis(),

@@ -201,6 +201,61 @@ fn a_delivery_ref_must_be_a_full_ref_without_a_glob() {
     );
 }
 
+/// Round 2 Lane F: git is optional in a plan. A review-only plan writes no
+/// `code_repository` and no `delivery_ref` and parses; the pair is required
+/// exactly when a criterion's proof is `git-ref`; one half without the other
+/// is refused; and the parsed plan says "none" rather than inventing a ref.
+#[test]
+fn a_review_only_plan_needs_no_code_repository() {
+    let review_only = plan_text("{kind: review}", "refs/heads/main", "[]")
+        .replace("code_repository: pivot-test\n", "")
+        .replace("delivery_ref: refs/heads/main\n", "");
+    assert!(!review_only.contains("code_repository"));
+    let plan = parse_plan(review_only.as_bytes()).expect("a review-only plan parses");
+    assert_eq!(plan.git_delivery(), None);
+    assert!(!plan.requires_git());
+    assert_eq!(plan.code_repository, "");
+    assert_eq!(plan.delivery_ref, "");
+    let json = serde_json::to_value(&plan).expect("encode");
+    assert!(
+        json.get("codeRepository").is_none() && json.get("deliveryRef").is_none(),
+        "a plan that names no repository writes no key: {json}"
+    );
+    let back: Plan = serde_json::from_value(json).expect("decode");
+    assert_eq!(back, plan);
+
+    // The same plan with a git-ref criterion is refused by name.
+    let git_ref = plan_text("{kind: git-ref}", "refs/heads/main", "[]")
+        .replace("code_repository: pivot-test\n", "")
+        .replace("delivery_ref: refs/heads/main\n", "");
+    let refusal = parse_plan(git_ref.as_bytes()).unwrap_err_for("git-ref without a repository");
+    assert_eq!(refusal.code, PlanRefusalCode::MissingFrontmatterKey);
+    assert_eq!(refusal.path, "frontmatter.code_repository");
+    assert!(refusal.message.contains("git-ref"), "{}", refusal.message);
+
+    // Half a pair is refused as the missing half.
+    let half = plan_text("{kind: review}", "refs/heads/main", "[]")
+        .replace("delivery_ref: refs/heads/main\n", "");
+    let refusal = parse_plan(half.as_bytes()).unwrap_err_for("repository without a ref");
+    assert_eq!(refusal.code, PlanRefusalCode::MissingFrontmatterKey);
+    assert_eq!(refusal.path, "frontmatter.delivery_ref");
+    let half = plan_text("{kind: review}", "refs/heads/main", "[]")
+        .replace("code_repository: pivot-test\n", "");
+    let refusal = parse_plan(half.as_bytes()).unwrap_err_for("ref without a repository");
+    assert_eq!(refusal.path, "frontmatter.code_repository");
+
+    // The full pair still parses to a delivery, as every existing plan does.
+    let plan = parse_plan(KETTLE.as_bytes()).expect("kettle");
+    assert_eq!(
+        plan.git_delivery(),
+        Some(PlanGitDelivery {
+            repository: "pivot-test",
+            delivery_ref: "refs/heads/main",
+        })
+    );
+    assert!(plan.requires_git());
+}
+
 /// Small helper so a failing case names itself rather than panicking blind.
 trait UnwrapErrFor {
     fn unwrap_err_for(self, what: &str) -> PlanRefusal;

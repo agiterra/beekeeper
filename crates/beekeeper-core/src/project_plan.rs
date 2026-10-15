@@ -115,8 +115,20 @@ pub struct Plan {
     /// Single-line human title.
     pub title: String,
     /// Repository id of the **code** repository the work delivers into.
+    ///
+    /// Written together with `delivery_ref`, and required only when some
+    /// criterion's proof is `git-ref`: a review-only plan (a design, a
+    /// document, a decision) names no repository. **Empty when the plan
+    /// names none** — `""` is never a repository id, so the two cannot be
+    /// confused — and omitted from the JSON then. Read it through
+    /// [`Plan::git_delivery`], which says "none" as `None`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub code_repository: String,
     /// Full git ref the delivery is judged at, e.g. `refs/heads/main`.
+    ///
+    /// Same rule as `code_repository`: empty and omitted when the plan names
+    /// no code repository; read through [`Plan::git_delivery`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub delivery_ref: String,
     /// The active obligations, in presentation order.
     pub criteria: Vec<PlanCriterion>,
@@ -126,14 +138,42 @@ pub struct Plan {
     pub bytes: usize,
 }
 
+/// Where a plan's delivery is judged: the code repository and the ref in it.
+///
+/// Present only on a plan that wrote `code_repository` and `delivery_ref`;
+/// a plan with a `git-ref` criterion always has one (the parser refuses it
+/// otherwise), a review-only plan may have none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanGitDelivery<'a> {
+    /// Repository id of the code repository.
+    pub repository: &'a str,
+    /// Full git ref, e.g. `refs/heads/main` — the kind:30618 tag name the
+    /// fold matches verbatim.
+    pub delivery_ref: &'a str,
+}
+
 impl Plan {
-    /// The branch-or-tag portion of `delivery_ref`, if it names one.
-    ///
-    /// Returns the whole ref unchanged: the fold matches the ref **name** as
-    /// a kind:30618 tag, and 30618 carries `refs/heads/main` verbatim.
+    /// The code repository and delivery ref this plan is judged at, or
+    /// `None` for a plan that names none (a review-only plan).
     #[must_use]
-    pub fn delivery_ref_tag(&self) -> &str {
-        &self.delivery_ref
+    pub fn git_delivery(&self) -> Option<PlanGitDelivery<'_>> {
+        if self.code_repository.is_empty() || self.delivery_ref.is_empty() {
+            return None;
+        }
+        Some(PlanGitDelivery {
+            repository: &self.code_repository,
+            delivery_ref: &self.delivery_ref,
+        })
+    }
+
+    /// Whether any active criterion is answered by a ref observation — the
+    /// condition under which `code_repository` and `delivery_ref` are
+    /// required.
+    #[must_use]
+    pub fn requires_git(&self) -> bool {
+        self.criteria
+            .iter()
+            .any(|criterion| matches!(criterion.proof, PlanProof::GitRef))
     }
 
     /// Whether `id` names an active criterion of this plan.
@@ -451,6 +491,10 @@ pub fn check_plan_adoptable(plan: &Plan, path: &str) -> Result<(), PlanRefusal> 
     Ok(())
 }
 
+/// Keys a plan may omit: the git delivery pair, required only when a
+/// criterion's proof is `git-ref`. Written together or not at all.
+const OPTIONAL_FRONTMATTER_KEYS: [&str; 2] = ["code_repository", "delivery_ref"];
+
 /// The closed frontmatter key set, in contract order.
 const FRONTMATTER_KEYS: [&str; 8] = [
     "schema",
@@ -538,6 +582,9 @@ pub fn parse_plan(bytes: &[u8]) -> Result<Plan, PlanRefusal> {
         }
     }
     for key in FRONTMATTER_KEYS {
+        if OPTIONAL_FRONTMATTER_KEYS.contains(&key) {
+            continue;
+        }
         if !mapping.contains_key(serde_yaml::Value::from(key)) {
             return Err(PlanRefusal::new(
                 PlanRefusalCode::MissingFrontmatterKey,
@@ -577,20 +624,53 @@ pub fn parse_plan(bytes: &[u8]) -> Result<Plan, PlanRefusal> {
         ));
     }
 
-    let code_repository = required_str(mapping, "code_repository")?.to_owned();
-    if !is_repository_id(&code_repository) {
+    // The git delivery pair is optional as a pair: a plan that writes one
+    // half, or whose criteria need a ref observation, must write both.
+    let has_repository = mapping.contains_key(serde_yaml::Value::from("code_repository"));
+    let has_delivery_ref = mapping.contains_key(serde_yaml::Value::from("delivery_ref"));
+    if has_repository != has_delivery_ref {
+        let missing = if has_repository {
+            "delivery_ref"
+        } else {
+            "code_repository"
+        };
         return Err(PlanRefusal::new(
-            PlanRefusalCode::InvalidCodeRepository,
-            "code_repository",
-            format!("code_repository is a repository id, not {code_repository:?}"),
+            PlanRefusalCode::MissingFrontmatterKey,
+            format!("frontmatter.{missing}"),
+            "code_repository and delivery_ref are written together, or neither",
         ));
     }
-
-    let delivery_ref = required_str(mapping, "delivery_ref")?.to_owned();
-    check_delivery_ref(&delivery_ref)?;
+    let (code_repository, delivery_ref) = if has_repository {
+        let code_repository = required_str(mapping, "code_repository")?.to_owned();
+        if !is_repository_id(&code_repository) {
+            return Err(PlanRefusal::new(
+                PlanRefusalCode::InvalidCodeRepository,
+                "code_repository",
+                format!("code_repository is a repository id, not {code_repository:?}"),
+            ));
+        }
+        let delivery_ref = required_str(mapping, "delivery_ref")?.to_owned();
+        check_delivery_ref(&delivery_ref)?;
+        (code_repository, delivery_ref)
+    } else {
+        (String::new(), String::new())
+    };
 
     let criteria = parse_criteria(mapping)?;
     let retired_criteria = parse_retired(mapping, &criteria)?;
+
+    if !has_repository
+        && criteria
+            .iter()
+            .any(|criterion| matches!(criterion.proof, PlanProof::GitRef))
+    {
+        return Err(PlanRefusal::new(
+            PlanRefusalCode::MissingFrontmatterKey,
+            "frontmatter.code_repository",
+            "a git-ref criterion is judged at the plan's delivery_ref, so code_repository \
+             and delivery_ref are required when any criterion's proof is git-ref",
+        ));
+    }
 
     Ok(Plan {
         schema: schema.to_owned(),

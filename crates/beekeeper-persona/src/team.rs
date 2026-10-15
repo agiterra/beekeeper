@@ -8,7 +8,12 @@
 //! (D11). What the manifest does decide:
 //!
 //! - the synthesized pack's `id` and `version` (`name`, `version`);
-//! - which role is hired first (`lead`, D14);
+//! - which role is hired first (`lead`, D14), and which roles verify —
+//!   `verification_roles` — the two together being the project's
+//!   [`RoleVocabulary`]: the names every authority rule in core, db, relay,
+//!   CLI and provider compares seats against. Both default (`lead`;
+//!   `[verifier, runner]`) when absent, so a manifest that names neither
+//!   changes nothing;
 //! - per role, an alternative `file`, advisory `runtime` and `model` that
 //!   fill in when the role file's own frontmatter is silent, and
 //!   `workspace.agents_repo` — whether a seat in that role gets the
@@ -24,6 +29,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
+use beekeeper_core::role_vocabulary::RoleVocabulary;
 use serde::{Deserialize, Serialize};
 
 use crate::persona::is_valid_role_slug;
@@ -164,9 +170,18 @@ pub struct TeamManifest {
     pub name: Option<String>,
     /// Becomes the synthesized pack version.
     pub version: String,
-    /// The role hired first (D14).
+    /// The role hired first (D14), and the one role that may assign work,
+    /// dispose of reports, hire non-lead seats, hold a project-action
+    /// delegation and receive the team wake. Defaults to `lead` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<String>,
+    /// The roles whose assignment is a claim about a particular commit and
+    /// must name it (`baseSha`); the **first** is the judging role whose
+    /// `refutation` verdicts the fold authorizes. Defaults to
+    /// `[verifier, runner]` when absent. Every entry must be one of `roles`,
+    /// and the lead may not be among them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_roles: Option<Vec<String>>,
     #[serde(default)]
     pub roles: BTreeMap<String, TeamRole>,
     #[serde(default)]
@@ -210,6 +225,45 @@ impl TeamManifest {
     pub fn agents_for(&self, role: &str) -> Vec<&TeamAgent> {
         self.agents.iter().filter(|a| a.role == role).collect()
     }
+
+    /// The role names this project's authority rules compare against:
+    /// `lead:` and `verification_roles:`, each defaulted when absent.
+    ///
+    /// Cannot fail on a manifest [`parse_team_yml`] accepted — it ran the
+    /// same construction — so a manifest that parsed is a vocabulary.
+    pub fn role_vocabulary(&self) -> RoleVocabulary {
+        RoleVocabulary::from_team(self.lead.as_deref(), self.verification_roles.as_deref())
+            .unwrap_or_default()
+    }
+}
+
+/// The role vocabulary of the agents repository nearest to `start`.
+///
+/// For `start` and each of its ancestors, in order: the directory itself
+/// when it holds a `team.yml` (a seat standing inside its agents clone, or a
+/// clone opened by hand), then the `<dir>-agents` sibling the host cuts
+/// beside a seat's worktree. The first manifest found decides; a manifest
+/// that is present and wrong is an error, never skipped.
+///
+/// `Ok(None)` when no manifest is near: the caller applies the default and
+/// says so. Nothing here reaches the relay — this is the team record a
+/// machine already has on disk.
+///
+/// # Errors
+/// The nearest `team.yml` cannot be read or does not parse.
+pub fn role_vocabulary_near(start: &Path) -> Result<Option<(PathBuf, RoleVocabulary)>, TeamError> {
+    for dir in start.ancestors() {
+        let mut candidates = vec![dir.to_path_buf()];
+        if let Some(sibling) = beekeeper_core::model_registry_source::seat_agents_clone_path(dir) {
+            candidates.push(sibling);
+        }
+        for root in candidates {
+            if let Some(team) = load_team(&root)? {
+                return Ok(Some((root.join(TEAM_YML), team.role_vocabulary())));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Parse manifest text.
@@ -290,6 +344,29 @@ pub fn parse_team_yml(content: &str, path: &Path) -> Result<TeamManifest, TeamEr
             )));
         }
     }
+    if let Some(verification) = manifest.verification_roles.as_deref() {
+        for role in verification {
+            if !manifest.roles.contains_key(role) {
+                return Err(invalid(format!(
+                    "verification_roles names {role:?}, which is not one of roles: {}",
+                    manifest
+                        .roles
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+        }
+    }
+    // The vocabulary's own rules — slugs, an explicit empty list, a duplicate,
+    // a lead that also verifies — judged once here so `role_vocabulary` can
+    // never fail on a manifest this parser accepted.
+    RoleVocabulary::from_team(
+        manifest.lead.as_deref(),
+        manifest.verification_roles.as_deref(),
+    )
+    .map_err(invalid)?;
     let mut names = std::collections::BTreeSet::new();
     for agent in &manifest.agents {
         if agent.name.trim().is_empty() {
@@ -537,6 +614,93 @@ agents:
         assert!(is_archived_path("plans/archive/q3.md"));
         assert!(!is_archived_path("roles/lead.md"));
         assert!(!is_archived_path("roles/archived-lead.md"));
+    }
+
+    /// `verification_roles:` beside `lead:`; both default when absent, both
+    /// must name declared roles, and the lead may not also verify.
+    #[test]
+    fn verification_roles_and_lead_make_the_role_vocabulary() {
+        let team = parse(GOOD).expect("parses");
+        assert_eq!(team.verification_roles, None);
+        let vocabulary = team.role_vocabulary();
+        assert_eq!(vocabulary.lead(), "project-manager");
+        assert_eq!(vocabulary.verification_roles(), ["verifier", "runner"]);
+
+        let captain = GOOD
+            .replace(
+                "lead: project-manager",
+                "lead: captain\nverification_roles: [qa]",
+            )
+            .replace("  builder: {}", "  builder: {}\n  captain: {}\n  qa: {}");
+        let team = parse(&captain).expect("parses");
+        assert_eq!(
+            team.verification_roles.as_deref(),
+            Some(&["qa".to_owned()][..])
+        );
+        let vocabulary = team.role_vocabulary();
+        assert_eq!(vocabulary.lead(), "captain");
+        assert_eq!(vocabulary.verdict_role(), "qa");
+        assert!(vocabulary.verifies_a_commit("qa"));
+        assert!(!vocabulary.verifies_a_commit("verifier"));
+
+        let undeclared = GOOD.replace("lead: project-manager", "verification_roles: [qa]");
+        let error = parse(&undeclared).unwrap_err().to_string();
+        assert!(
+            error.contains("verification_roles") && error.contains("qa"),
+            "{error}"
+        );
+
+        let empty = GOOD.replace("lead: project-manager", "verification_roles: []");
+        let error = parse(&empty).unwrap_err().to_string();
+        assert!(error.contains("omit the key"), "{error}");
+
+        let judging_lead = GOOD.replace(
+            "lead: project-manager",
+            "lead: project-manager\nverification_roles: [project-manager]",
+        );
+        let error = parse(&judging_lead).unwrap_err().to_string();
+        assert!(error.contains("also a verification role"), "{error}");
+
+        // The absent manifest and the absent fields are the same vocabulary.
+        assert_eq!(
+            parse(&GOOD.replace("lead: project-manager\n", ""))
+                .expect("parses")
+                .role_vocabulary()
+                .verification_roles(),
+            ["verifier", "runner"]
+        );
+    }
+
+    /// The nearest manifest wins: the directory itself, then its `-agents`
+    /// sibling, then the parent's; a broken one refuses rather than skips.
+    #[test]
+    fn role_vocabulary_near_walks_up_through_agents_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("seat");
+        let nested = worktree.join("crates").join("deep");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert_eq!(role_vocabulary_near(&nested).unwrap(), None);
+
+        let beside = dir.path().join("seat-agents");
+        std::fs::create_dir_all(&beside).unwrap();
+        let captain = GOOD
+            .replace(
+                "lead: project-manager",
+                "lead: captain\nverification_roles: [qa]",
+            )
+            .replace("  builder: {}", "  builder: {}\n  captain: {}\n  qa: {}");
+        std::fs::write(beside.join(TEAM_YML), &captain).unwrap();
+        let (path, vocabulary) = role_vocabulary_near(&nested).unwrap().expect("found");
+        assert_eq!(path, beside.join(TEAM_YML));
+        assert_eq!(vocabulary.lead(), "captain");
+        assert_eq!(vocabulary.verdict_role(), "qa");
+
+        // Standing inside the agents clone itself finds it first.
+        let (path, _) = role_vocabulary_near(&beside).unwrap().expect("found");
+        assert_eq!(path, beside.join(TEAM_YML));
+
+        std::fs::write(beside.join(TEAM_YML), "schema: nope\n").unwrap();
+        assert!(role_vocabulary_near(&nested).is_err());
     }
 
     #[test]

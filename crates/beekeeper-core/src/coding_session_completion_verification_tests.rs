@@ -32,6 +32,7 @@ fn context(
     verifier_required: bool,
 ) -> CodingSessionTeamFoldContext {
     CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: CHANNEL.into(),
         session_ref: SESSION.into(),
         genesis_ref: genesis(),

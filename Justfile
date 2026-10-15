@@ -605,7 +605,7 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test: test-genesis test-git-push-gate test-ci-completion foreign-client-check
+test: test-genesis test-git-push-gate test-ci-completion foreign-client-check headless-acme-check
     ./scripts/run-tests.sh all
 
 # The relay as a foreign Nostr client sees it: composes the real
@@ -621,6 +621,22 @@ test: test-genesis test-git-push-gate test-ci-completion foreign-client-check
 foreign-client-check: _ensure-services
     cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin beekeeper-relay
     ./scripts/foreign-client-check.sh
+
+# A runtime this build has never heard of, plugged end to end with real
+# processes: the isolated relay above, a fresh `BEEKEEPER_HOST_HOME`
+# commissioned with `--runtime acme --driver conformance/acme-acp/acme-acp
+# --credential-env ACME_TOKEN --credential-source acme-vault` and a 0600
+# credential file, a foreground `beekeeper-host` supervising the real
+# provider, `bee agents create`, one addressed message, and the assertions:
+# exactly one signed reply carrying sha256(ACME_TOKEN)[:16] (never the
+# value), signed 44223 metadata with `credentialSource: acme-vault`, a live
+# 24224 presence via `/query`, a signed `stopped` receipt from `bee agents
+# stop`, then `bee host stop`. Round 1's in-process vector is
+# `runtime_descriptor_plug_tests.rs`; this is the out-of-process half. See
+# scripts/headless-acme-check.sh for what it does not prove (no real model).
+headless-acme-check: _ensure-services
+    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin beekeeper-relay -p beekeeper-host --bin beekeeper-host -p beekeeper-session-provider --bin beekeeper-session-provider
+    ./scripts/headless-acme-check.sh
 
 # The push gate's Postgres-backed acceptance cases: the binding gate, the
 # project/channel roster grants, the seat inheritance cap, and the

@@ -8,6 +8,15 @@
 //! waits for it to publish, and only then does quiescence begin. The host
 //! sets the variable where it sets the other `BEEKEEPER_CSP_*` ones
 //! (`docs/agent-host.md`); the host.json spelling is `checkpointOnStop`.
+//!
+//! **Budget (ledger 406 F7).** The whole decision runs under one
+//! [`CHECKPOINT_BEFORE_STOP_WAIT`] deadline that starts *before* the
+//! host-Git boundary is prepared, so a slow `prepare()` or a slow measure
+//! spends the stop's budget rather than running outside it. When the
+//! deadline passes the stop proceeds at once with
+//! [`StopCheckpointSkipped::Timeout`]; a capture already started keeps
+//! running off the loop and is published by the loop when it reports, so
+//! the wire still ends up saying what was captured, after the stop.
 
 use std::time::Duration;
 
@@ -19,9 +28,29 @@ use crate::Provider;
 /// Environment variable the provider reads; `1`, `true`, `on` or `yes` enable.
 pub const CHECKPOINT_ON_STOP_ENV: &str = "BEEKEEPER_CSP_CHECKPOINT_ON_STOP";
 
-/// Longest a stop waits for its checkpoint to publish: the end capture's own
-/// ceiling plus the host-Git preparation it runs behind.
-const CHECKPOINT_BEFORE_STOP_WAIT: Duration = Duration::from_secs(90);
+/// Longest a stop spends on its checkpoint, boundary preparation included:
+/// the end capture's own ceiling plus the host-Git preparation it runs
+/// behind. Measured from before `prepare()`.
+pub(crate) const CHECKPOINT_BEFORE_STOP_WAIT: Duration = Duration::from_secs(90);
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Test-only override of [`CHECKPOINT_BEFORE_STOP_WAIT`], scoped to the
+    /// test's own task so parallel tests never see it.
+    pub(crate) static STOP_CHECKPOINT_WAIT: Duration;
+}
+
+/// The budget this stop runs under.
+fn stop_checkpoint_wait() -> Duration {
+    #[cfg(test)]
+    if let Ok(wait) = STOP_CHECKPOINT_WAIT.try_with(|wait| *wait) {
+        return wait;
+    }
+    CHECKPOINT_BEFORE_STOP_WAIT
+}
+
+/// The wire word for a stop that skipped its checkpoint on the budget.
+pub(crate) const CHECKPOINT_SKIPPED_TIMEOUT: &str = "timeout";
 
 /// Read the switch from the process environment.
 pub fn checkpoint_on_stop_from_env() -> bool {
@@ -50,6 +79,10 @@ pub(crate) enum StopCheckpointSkipped {
     NoTurnToAttribute,
     /// The tree could not be measured; the sentence is the capture's own.
     NotMeasured(String),
+    /// [`CHECKPOINT_BEFORE_STOP_WAIT`] passed — during boundary preparation,
+    /// the measure, or the wait for the capture to report — and the stop
+    /// went ahead without it. Disclosed as `checkpointSkipped: "timeout"`.
+    Timeout,
 }
 
 impl Provider {
@@ -72,6 +105,19 @@ impl Provider {
         &mut self,
         plan: &StopPlan,
     ) -> anyhow::Result<Option<StopCheckpointSkipped>> {
+        self.checkpoint_before_stop_within(plan, stop_checkpoint_wait())
+            .await
+    }
+
+    /// [`Self::checkpoint_before_stop`] under an explicit budget. The
+    /// deadline is taken here, before the boundary is prepared, and every
+    /// await below runs under it.
+    pub(crate) async fn checkpoint_before_stop_within(
+        &mut self,
+        plan: &StopPlan,
+        budget: Duration,
+    ) -> anyhow::Result<Option<StopCheckpointSkipped>> {
+        let deadline = tokio::time::Instant::now() + budget;
         let session_id = plan.target.session_id.clone();
         let Some(record) = self
             .state
@@ -84,23 +130,33 @@ impl Provider {
         let generation = record.generation;
         let through_seq = record.next_seq.saturating_sub(1);
         let host_git = self.host_git_request(&record, &record.cwd);
-        let scope = host_git.prepare().await;
-        let measured = capture_tree(
-            &record.cwd,
-            scope.as_ref(),
-            &session_id,
-            generation,
-            RefLeaf::Through(through_seq),
-            None,
-            CapturePhase::TurnEnd,
-        )
+        // Preparation and the measure both spend the budget: a boundary that
+        // takes the whole 90 s to prepare is a timed-out checkpoint, not a
+        // free prelude to one.
+        let measured = tokio::time::timeout_at(deadline, async {
+            let scope = host_git.prepare().await;
+            capture_tree(
+                &record.cwd,
+                scope.as_ref(),
+                &session_id,
+                generation,
+                RefLeaf::Through(through_seq),
+                None,
+                CapturePhase::TurnEnd,
+            )
+            .await
+        })
         .await;
         let tree = match measured {
-            Ok(captured) => captured.tree,
-            Err(failure) => {
+            Ok(Ok(captured)) => captured.tree,
+            Ok(Err(failure)) => {
                 let sentence = failure.sentence.clone();
                 tracing::info!(target: "csp::checkpoint", %session_id, "no checkpoint before stop: {sentence}");
                 return Ok(Some(StopCheckpointSkipped::NotMeasured(sentence)));
+            }
+            Err(_elapsed) => {
+                tracing::warn!(target: "csp::checkpoint", %session_id, checkpoint_skipped = CHECKPOINT_SKIPPED_TIMEOUT, "no checkpoint before stop: the boundary was not prepared and measured within {}s; the stop proceeds without it", budget.as_secs());
+                return Ok(Some(StopCheckpointSkipped::Timeout));
             }
         };
         let last_tree = self
@@ -124,13 +180,14 @@ impl Provider {
             through_seq,
         );
         // Wait for this capture to report, handling whatever else reports
-        // meanwhile exactly as the loop would.
-        let deadline = tokio::time::Instant::now() + CHECKPOINT_BEFORE_STOP_WAIT;
+        // meanwhile exactly as the loop would. The same deadline: what the
+        // preparation and measure spent is not refunded.
         loop {
             let event = tokio::select! {
                 event = self.session_events.recv() => event,
                 () = tokio::time::sleep_until(deadline) => {
-                    anyhow::bail!("checkpoint before stop did not report within {}s", CHECKPOINT_BEFORE_STOP_WAIT.as_secs());
+                    tracing::warn!(target: "csp::checkpoint", %session_id, turn_id, checkpoint_skipped = CHECKPOINT_SKIPPED_TIMEOUT, "checkpoint before stop did not report within {}s; the stop proceeds and the capture publishes when it reports", budget.as_secs());
+                    return Ok(Some(StopCheckpointSkipped::Timeout));
                 }
             };
             let Some(event) = event else {
@@ -322,5 +379,131 @@ mod tests {
             Some(StopCheckpointSkipped::NoOpenRecord),
             "the record is closed after the stop"
         );
+    }
+
+    /// Shared fixture: switch on, a git worktree edited after the create, an
+    /// open turn to attribute the edit to. Returns the provider, channel and
+    /// target with the actor still live.
+    async fn edited_worktree_with_open_turn(
+        dir: &std::path::Path,
+    ) -> (
+        Provider,
+        uuid::Uuid,
+        beekeeper_core::coding_session_command::CodingSessionTarget,
+    ) {
+        let cwd = dir.join("ordinary-work");
+        std::fs::create_dir(&cwd).expect("workspace");
+        git_init_with_commit(&cwd);
+        let channel = uuid::Uuid::new_v4();
+        let projects = crate::tests::write_projects(dir, channel, &cwd);
+        let mut provider = crate::tests::provider(&dir.join("state"), Some(&projects));
+        provider.checkpoint_on_stop = true;
+        let event = crate::tests::create_event(&provider, channel, "create-budget");
+        provider
+            .handle_command_event(channel, &event)
+            .await
+            .expect("create");
+        let target = provider
+            .state
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.open_turn = Some(crate::state::OpenTurn {
+                    turn_id: "turn-budget".into(),
+                    command_id: Some("turn-cmd-budget".into()),
+                    team_wake_eligible: false,
+                    started_at_ms: crate::state::now_ms(),
+                    operator_pubkey: None,
+                });
+            })
+            .expect("open turn");
+        std::fs::write(cwd.join("edited.txt"), b"changed before stop\n").expect("edit");
+        (provider, channel, target)
+    }
+
+    /// F7: the budget starts before `prepare()`. With no budget at all the
+    /// decision times out before the boundary is prepared or anything is
+    /// measured, nothing is captured, and the answer is `Timeout`.
+    #[tokio::test]
+    async fn the_budget_covers_boundary_preparation() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let (mut provider, channel, target) = edited_worktree_with_open_turn(dir.path()).await;
+        let plan = StopPlan {
+            command_id: "stop-zero-budget".into(),
+            channel_id: channel,
+            target: target.clone(),
+        };
+        assert_eq!(
+            provider
+                .checkpoint_before_stop_within(&plan, Duration::ZERO)
+                .await
+                .expect("decide"),
+            Some(StopCheckpointSkipped::Timeout)
+        );
+        let sink = crate::tests::CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert!(sink
+            .contents_of(beekeeper_core::kind::KIND_CODING_SESSION_CHECKPOINT)
+            .is_empty());
+        provider
+            .sessions
+            .shutdown_and_join(&target.session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
+
+    /// F7: a capture that never reports within the budget does not hold the
+    /// stop. The decision says `Timeout`, and a `session.stop` run under the
+    /// same budget still signs `stopped`.
+    #[tokio::test]
+    async fn a_stop_whose_checkpoint_outlives_the_budget_still_stops() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let (mut provider, channel, target) = edited_worktree_with_open_turn(dir.path()).await;
+        // End captures wait for a permit that is never granted.
+        provider.turn_checkpoints.hold = Some(std::sync::Arc::new(tokio::sync::Semaphore::new(0)));
+        let budget = Duration::from_millis(500);
+        let plan = StopPlan {
+            command_id: "stop-held".into(),
+            channel_id: channel,
+            target: target.clone(),
+        };
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            provider
+                .checkpoint_before_stop_within(&plan, budget)
+                .await
+                .expect("decide"),
+            Some(StopCheckpointSkipped::Timeout)
+        );
+        assert!(started.elapsed() >= budget, "the budget was waited out");
+        let stop = crate::tests::lifecycle_target_event(
+            &provider,
+            channel,
+            "stop-held",
+            "session.stop",
+            &target,
+        );
+        STOP_CHECKPOINT_WAIT
+            .scope(budget, async {
+                provider
+                    .handle_command_event(channel, &stop)
+                    .await
+                    .expect("stop proceeds on timeout");
+            })
+            .await;
+        let sink = crate::tests::CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert!(
+            sink.contents_of(beekeeper_core::kind::KIND_CODING_SESSION_CHECKPOINT)
+                .is_empty(),
+            "the held capture never reported, so the stop path published no 44231"
+        );
+        assert!(sink
+            .contents_of(beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .iter()
+            .any(|r| r["commandId"] == "stop-held" && r["status"] == "stopped"));
     }
 }

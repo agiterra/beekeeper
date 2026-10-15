@@ -2398,6 +2398,9 @@ impl Db {
     /// the serialization argument. No mention rows are written: the
     /// transition envelope permits exactly three tags — `h`, `csat-v`,
     /// `csat-genesis` — so a transition can never carry a `p` tag to extract.
+    ///
+    /// `vocabulary` names the project's lead role, which is the one seat
+    /// that may grant non-lead seats and may never manage its own role.
     #[datastore_span(
         name = "insert_coding_session_authority_transition_event",
         system = "postgresql"
@@ -2408,13 +2411,15 @@ impl Db {
         event: &nostr::Event,
         channel_id: Uuid,
         thread_meta: Option<event::ThreadMetadataParams<'_>>,
+        vocabulary: &beekeeper_core::role_vocabulary::RoleVocabulary,
     ) -> Result<event::CodingSessionAuthorityTransitionInsertOutcome> {
-        event::insert_coding_session_authority_transition_event(
+        event::insert_coding_session_authority_transition_event_with(
             &self.pool,
             community_id,
             event,
             channel_id,
             thread_meta,
+            vocabulary,
         )
         .await
     }

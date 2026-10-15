@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CircleAlert, CircleHelp } from "lucide-react";
+import { CircleAlert, CircleHelp, TriangleAlert } from "lucide-react";
 
 import {
   clearPendingCodingSessionTurns,
@@ -163,6 +163,11 @@ function CodingSessionPendingTurnRow({
   const state = pendingCodingSessionTurnState(turn, now);
   const stalled = state === "stalled";
   const unknown = state === "unknown";
+  // A warning, not a failure and not success: the provider restarted under
+  // this turn, and nobody has said yet what became of it. Amber keeps it
+  // apart from the red that means "nobody picked this up" and the muted
+  // grey of a turn that is simply waiting.
+  const interrupted = state === "interrupted";
   const caption = describePendingCodingSessionTurn(
     state,
     Math.max(0, now - turn.recordedAt),
@@ -221,7 +226,9 @@ function CodingSessionPendingTurnRow({
           "min-w-0 max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1",
           stalled || unknown
             ? "ring-destructive/40"
-            : "opacity-70 ring-border/40",
+            : interrupted
+              ? "ring-amber-500/40"
+              : "opacity-70 ring-border/40",
         )}
       >
         {body}
@@ -267,12 +274,22 @@ function CodingSessionPendingTurnRow({
         <p
           className={cn(
             "inline-flex items-center gap-1 pe-1 text-2xs",
-            stalled || unknown ? "text-destructive" : "text-muted-foreground",
+            stalled || unknown
+              ? "text-destructive"
+              : interrupted
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-muted-foreground",
           )}
           data-testid="coding-session-pending-turn-status"
+          data-tone={
+            stalled || unknown ? "error" : interrupted ? "warning" : "neutral"
+          }
         >
           {stalled ? <CircleAlert aria-hidden className="size-3" /> : null}
           {unknown ? <CircleHelp aria-hidden className="size-3" /> : null}
+          {interrupted ? (
+            <TriangleAlert aria-hidden className="size-3" />
+          ) : null}
           {caption}
         </p>
       )}
@@ -366,7 +383,10 @@ export function describePendingCodingSessionTurn(
   // it and there is no 44220 that unsends one.
   const irrevocable = "it cannot be recalled";
   if (state === "interrupted") {
-    return "Interrupted, outcome unconfirmed — the provider restarted while this turn was running; a final answer follows once its process is proved gone";
+    // Neither failed nor done: the restart cut the link to the process, not
+    // the process. What follows is a terminal receipt from the provider once
+    // the old process has exited — that receipt, not this row, settles it.
+    return "Interrupted, outcome unconfirmed — the provider restarted while this turn was running. A terminal receipt follows once the old process exits; nothing here is final until it does";
   }
   if (state === "unknown") {
     const detail = deliveryUnknown?.message.trim() || deliveryUnknown?.code;

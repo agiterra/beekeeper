@@ -9,6 +9,7 @@ use nostr::Event;
 use serde_json::Value;
 
 use super::*;
+use crate::role_vocabulary::RoleVocabulary;
 
 /// Strictly decode and validate kind 44244 content **about to be signed**.
 ///
@@ -145,7 +146,11 @@ fn decode_team_transaction_with(
     // which the Value map above cannot represent.
     let payload: CodingSessionTeamTransactionPayload = serde_json::from_str(content)
         .map_err(|_| "malformed coding-session team-transaction payload".to_owned())?;
-    payload.validate_for(stance)?;
+    // The publication-stance decode is reached from the SDK builder, which
+    // holds no team record, so the default verification roles decide which
+    // assignments must name `baseSha` here. The recorded stance never reads
+    // the list. See `RoleVocabulary::foundation`.
+    payload.validate_for(stance, RoleVocabulary::foundation())?;
     Ok(payload)
 }
 

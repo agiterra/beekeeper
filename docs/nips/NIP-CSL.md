@@ -1326,6 +1326,16 @@ one read the same. Presence tells them apart: the provider publishes one
 heartbeat per channel it serves every `ttlSecs / 3` while it runs — idle
 included — signed by the provider key.
 
+**Spread, not burst.** The reference provider cuts that 30 s period into
+thirty one-second slots and assigns each subscribed channel one slot by its
+position in the sorted channel list, so a provider in N channels signs at
+most `ceil(N / 30)` heartbeats in any second — never N at once. The relay
+admits at most ten ephemeral frames per key per second, so past 300 channels
+the period widens to `ceil(N / 10)` seconds and the provider logs the
+widening; past 900 channels that period exceeds the 90 s TTL and presence
+reads expired between beats. The provider says so rather than exceed the
+admission rate (`crates/beekeeper-session-provider/src/presence.rs`).
+
 Strict content (`buzz-coding-session-provider-presence/v1`), no unknown keys:
 
 ```json
@@ -1377,11 +1387,48 @@ the one retained (an equal `seq` with the same id is an idempotent replay;
 with a different id it is refused as a conflict). The relay keeps each
 heartbeat for its `ttlSecs`, **capped at 600 seconds**, measured from
 acceptance — a provider asking for an hour cannot keep a dead instance
-readable for an hour. A `REQ` or `/query` for kind 24224 must name an
+readable for an hour.
+
+**Instance cap.** Membership is the whole admission rule: the relay does
+not check that the signer has authored a 44223 in the channel (that is a
+Postgres lookup per heartbeat on a once-a-second path), and readers already
+verify the provider key and `instanceId` against the session's own 44223, so
+a member's stray heartbeat can never make a session read `live`. What it
+could do is fill the register, so each (channel, pubkey) holds at most
+**8 live instance keys**: a heartbeat for a ninth distinct `instanceId` is
+refused with `OK false "restricted: PROVIDER_PRESENCE_INSTANCE_CAP: …"` and
+stores nothing, while a heartbeat for an instance already registered is
+never counted against the cap. A slot frees when its instance's retained
+TTL expires (`crates/beekeeper-pubsub/src/provider_presence.rs`,
+`PROVIDER_PRESENCE_INSTANCE_CAP`).
+
+A `REQ` or `/query` for kind 24224 must name an
 explicit, accessible `#h` (the lease rule); the relay re-verifies the signed
 event against the register's facts before returning it. Readers still judge
 liveness from the event itself (`created_at + ttlSecs > now`), never from
 the fact that the relay returned it.
+
+## Checkpoint before stop: the budget
+
+With `checkpointOnStop` on (`docs/agent-host.md`), a `session.stop` first
+takes one [NIP-CSCK](NIP-CSCK.md) `turn` checkpoint of a changed worktree
+and waits for it to publish before quiescence begins. The whole decision —
+host-Git boundary preparation, the measure, and the wait for the capture to
+report — runs under one **90 s** deadline taken before preparation starts;
+preparation is never a free prelude. When the deadline passes the stop
+proceeds at once and signs `stopped` exactly as it would have; a capture
+already started keeps running and publishes its 44231 when it reports, so
+the wire still says what was captured, after the stop.
+
+The skipped checkpoint is on the wire: the `stopped` receipt carries one
+optional key, `checkpointSkipped: "timeout"`, present exactly when the
+budget passed and absent otherwise (a stop that checkpointed, or was never
+asked to, signs the plain five keys). `"timeout"` is the only value; any
+other value, a `null`, or the key on any status but `stopped` is refused by
+`decode_coding_session_lifecycle_receipt` and by the desktop and mobile
+decoders alike. The fact is also in the provider log
+(`checkpoint_skipped="timeout"` on the warn and on the `session stopped`
+line, `crates/beekeeper-session-provider/src/{checkpoint_on_stop.rs,session_stop.rs}`).
 
 ## Implementation
 

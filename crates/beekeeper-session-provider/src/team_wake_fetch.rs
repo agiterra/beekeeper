@@ -52,6 +52,9 @@ pub(crate) enum TeamWakeFetch {
         channel_id: Uuid,
         intent: Box<WakeIntent>,
         relay_self: String,
+        /// The project's role names, resolved from this channel's seats
+        /// before the read was spawned; the fold judges with them.
+        vocabulary: beekeeper_core::role_vocabulary::RoleVocabulary,
     },
 }
 
@@ -150,10 +153,11 @@ pub(crate) async fn fetch_snapshot(
     relay_self: &str,
     intent: &WakeIntent,
     timeout: Duration,
+    vocabulary: beekeeper_core::role_vocabulary::RoleVocabulary,
 ) -> Result<VerifiedWakeSnapshot, WakeSnapshotError> {
     match tokio::time::timeout(
         timeout,
-        team_wake::fetch_verified_snapshot(rest, relay_self, &intent.scope),
+        team_wake::fetch_verified_snapshot_with(rest, relay_self, &intent.scope, vocabulary),
     )
     .await
     {
@@ -176,8 +180,10 @@ async fn run_fetch(rest: RestClient, fetch: TeamWakeFetch, timeout: Duration) ->
             channel_id,
             intent,
             relay_self,
+            vocabulary,
         } => {
-            let result = Box::new(fetch_snapshot(&rest, &relay_self, &intent, timeout).await);
+            let result =
+                Box::new(fetch_snapshot(&rest, &relay_self, &intent, timeout, vocabulary).await);
             TeamWakeFetched::Snapshot {
                 channel_id,
                 intent,
@@ -246,12 +252,14 @@ impl Provider {
             return Ok(());
         }
         if let Some((rest, relay_self, intent)) = self.prepare_team_wake_snapshot(channel_id)? {
+            let vocabulary = self.role_vocabulary_for_channel(channel_id);
             self.spawn_team_wake_fetch(
                 rest,
                 TeamWakeFetch::Snapshot {
                     channel_id,
                     intent: Box::new(intent),
                     relay_self,
+                    vocabulary,
                 },
             );
         }

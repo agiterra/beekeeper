@@ -22,6 +22,7 @@ import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
 import {
   agentCommunityAvailability,
+  agentCommunityBadgeVariant,
   MANAGED_AGENT_PAIR_ACTION_LABELS,
   type ManagedAgentPairAction,
 } from "@/features/agents/managedAgentRuntimeStatus";
@@ -214,9 +215,7 @@ export function MembersSidebarMemberCard({
               data-testid={`sidebar-managed-agent-status-${member.pubkey}`}
               variant={
                 managedAgentRuntime
-                  ? agentCommunityAvailability(managedAgentRuntime) === "Here"
-                    ? "default"
-                    : "secondary"
+                  ? agentCommunityBadgeVariant(managedAgentRuntime)
                   : managedAgent && isManagedAgentActive(managedAgent)
                     ? "default"
                     : "secondary"

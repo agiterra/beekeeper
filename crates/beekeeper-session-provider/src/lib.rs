@@ -2781,11 +2781,13 @@ impl Provider {
         let Some((rest, relay_self, intent)) = self.prepare_team_wake_snapshot(channel_ref)? else {
             return Ok(());
         };
+        let vocabulary = self.role_vocabulary_for_channel(channel_ref);
         let result = team_wake_fetch::fetch_snapshot(
             &rest,
             &relay_self,
             &intent,
             self.team_wake_fetch.timeout,
+            vocabulary,
         )
         .await;
         self.apply_team_wake_snapshot(channel_ref, intent, result, publisher)
@@ -2902,6 +2904,7 @@ impl Provider {
                 &intent.scope,
                 &snapshot.founder_pubkey,
                 &snapshot.authority,
+                &snapshot.vocabulary,
             );
             if team_wake::wake_author_is_foreign(&context, author) {
                 tracing::info!(
@@ -3055,6 +3058,7 @@ impl Provider {
                     &intent.scope,
                     &snapshot.founder_pubkey,
                     &snapshot.authority,
+                    &snapshot.vocabulary,
                 );
                 let assignment_ref = match team_wake::turn_requires_report(
                     &snapshot.package,
@@ -3112,7 +3116,7 @@ impl Provider {
         // deferred — every one of those answers only hardens with time — and
         // the retirement goes through the durable resolved ledger, so a
         // restart or a replay cannot resurrect it.
-        if let Some(lead) = team_wake::lead_actor(&snapshot.authority) {
+        if let Some(lead) = team_wake::lead_actor(&snapshot.authority, &snapshot.vocabulary) {
             let fact = wake_relevance::fact_of_source(&intent.source, &snapshot.team_events);
             let mut view = wake_relevance::view_for(
                 &lead,
@@ -3139,7 +3143,11 @@ impl Provider {
             }
         }
 
-        let target = match team_wake::resolve_lead_target(&snapshot.package, &snapshot.authority) {
+        let target = match team_wake::resolve_lead_target(
+            &snapshot.package,
+            &snapshot.authority,
+            &snapshot.vocabulary,
+        ) {
             Ok(target) => target,
             Err(error) => {
                 tracing::info!(target: "csp::team_wake", %error, "team wake has no exact active lead target");
@@ -8105,7 +8113,10 @@ impl Provider {
         let Some(role) = record.role.clone() else {
             return TurnInput::Open;
         };
-        if !verification_input::role_verifies_a_commit(&role) {
+        // The seat's own project's role names, from the agents clone beside
+        // its worktree: they decide whether this role is fenced at all.
+        let vocabulary = team_wake::vocabulary_near(Some(&record.cwd));
+        if !verification_input::role_verifies_a_commit(&role, &vocabulary) {
             return TurnInput::Open;
         }
         let recorded_cwd = record.cwd.clone();
@@ -8132,19 +8143,26 @@ impl Provider {
         let Some(relay_self) = self.relay_self.clone() else {
             return verification_input::unresolved("relay_identity_unavailable");
         };
-        let snapshot = match team_wake::fetch_verified_snapshot(&rest, &relay_self, &scope).await {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                tracing::warn!(
-                    target: "csp::verification_input",
-                    %error,
-                    "assignment facts are unavailable; leaving the turn undecided"
-                );
-                return verification_input::unresolved("verified_snapshot_unavailable");
-            }
-        };
-        let context =
-            team_wake::fold_context(&scope, &snapshot.founder_pubkey, &snapshot.authority);
+        let snapshot =
+            match team_wake::fetch_verified_snapshot_with(&rest, &relay_self, &scope, vocabulary)
+                .await
+            {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::verification_input",
+                        %error,
+                        "assignment facts are unavailable; leaving the turn undecided"
+                    );
+                    return verification_input::unresolved("verified_snapshot_unavailable");
+                }
+            };
+        let context = team_wake::fold_context(
+            &scope,
+            &snapshot.founder_pubkey,
+            &snapshot.authority,
+            &snapshot.vocabulary,
+        );
         let (assignment_ref, base_sha) = match verification_input::turn_input_requirement(
             &snapshot.team_events,
             &context,
@@ -8292,7 +8310,12 @@ impl Provider {
         else {
             return;
         };
-        let context = team_wake::fold_context(scope, &snapshot.founder_pubkey, &snapshot.authority);
+        let context = team_wake::fold_context(
+            scope,
+            &snapshot.founder_pubkey,
+            &snapshot.authority,
+            &snapshot.vocabulary,
+        );
         let Ok(fold) = team::fold_coding_session_team_transactions(&snapshot.team_events, &context)
         else {
             return;
@@ -8310,7 +8333,10 @@ impl Provider {
             else {
                 continue;
             };
-            if !team::role_requires_verification_input(&assignment.assignee_role) {
+            if !team::role_requires_verification_input_in(
+                &assignment.assignee_role,
+                &snapshot.vocabulary,
+            ) {
                 continue;
             }
             let Some(base_sha) = assignment.base_sha else {
@@ -9236,13 +9262,21 @@ impl Provider {
             session_ref,
             genesis_ref,
         };
+        let vocabulary = team_wake::vocabulary_near(Some(&record.cwd));
         let session_id = session_id.to_owned();
         let command_id = command_id.to_owned();
         let text = text.to_owned();
         tokio::spawn(async move {
             let verdict = tokio::time::timeout(
                 WAKE_RELEVANCE_TIMEOUT,
-                wake_relevance::evaluate_at_dequeue(&rest, &relay_self, &scope, &recipient, &text),
+                wake_relevance::evaluate_at_dequeue(
+                    &rest,
+                    &relay_self,
+                    &scope,
+                    &recipient,
+                    &text,
+                    &vocabulary,
+                ),
             )
             .await;
             let answer = match verdict {
@@ -9535,7 +9569,10 @@ impl Provider {
                         return None;
                     }
                     let caused_by_command_id = open_turn.command_id.clone()?;
-                    (role != "lead").then(|| {
+                    // The lead's own turn ending wakes nobody; which seat is
+                    // the lead is the seat's own project's word for it.
+                    let is_lead = team_wake::vocabulary_near(Some(&record.cwd)).is_lead(&role);
+                    (!is_lead).then(|| {
                         (
                             team_wake::WakeScope {
                                 channel_ref: record.channel_id,
@@ -10976,6 +11013,7 @@ impl Provider {
             Priority::High,
         )?;
         if open_turn.team_wake_eligible {
+            let vocabulary = team_wake::vocabulary_near(Some(&record.cwd));
             if let (
                 Some((_, terminal_event_id)),
                 Some(actor),
@@ -10986,7 +11024,7 @@ impl Provider {
             ) = (
                 terminal,
                 record.actor.clone(),
-                record.role.clone().filter(|role| role != "lead"),
+                record.role.clone().filter(|role| !vocabulary.is_lead(role)),
                 record.session_ref.clone(),
                 record.genesis_ref.clone(),
                 open_turn.command_id.clone(),

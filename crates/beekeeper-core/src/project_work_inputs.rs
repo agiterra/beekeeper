@@ -417,6 +417,10 @@ fn derive_team_projection(raw: &RawWorkInputs) -> Result<WorkTeamProjection, Ass
         session_ref,
         genesis_ref,
         founder_pubkey: resolve_founder(&raw.authority)?,
+        // The raw inputs carry no team record, so the default role names
+        // judge this projection. A project whose manifest renames its lead
+        // is not yet honoured here; see `RoleVocabulary::foundation`.
+        vocabulary: crate::role_vocabulary::RoleVocabulary::foundation().clone(),
         active_seats: raw
             .authority
             .active_seats

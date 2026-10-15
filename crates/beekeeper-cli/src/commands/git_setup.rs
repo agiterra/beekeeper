@@ -1841,6 +1841,15 @@ async fn fetch_verdict_candidates(
     repository: &str,
 ) -> Result<Vec<VerdictAdmissionCandidate>, CliError> {
     let channel = &scope.channels;
+    // This is a prediction of what the relay's push gate will do, so it must
+    // judge with the vocabulary the relay enforces. Today that is the
+    // foundation words (`lead`/`verifier`/`runner`): the relay's
+    // `verdict_admission` and the db's seat checks do not read `team.yml`
+    // yet (NIP-CSTX § What the relay enforces today). Reading the project's
+    // manifest here would print "admitted" for a `captain`/`qa` project the
+    // relay then refuses. Relay adoption is the follow-up that moves this
+    // line to `cwd_role_vocabulary()`.
+    let vocabulary = beekeeper_core::role_vocabulary::RoleVocabulary::foundation().clone();
     let decode = |rows: Vec<serde_json::Value>| -> Result<Vec<nostr::Event>, CliError> {
         rows.into_iter()
             .map(|row| {
@@ -1985,6 +1994,7 @@ async fn fetch_verdict_candidates(
             genesis_ref.clone(),
             founder_pubkey.clone(),
             seats.clone(),
+            vocabulary.clone(),
         );
         // A mission that does not fold admits nothing; it must not make the
         // whole prediction unavailable.
@@ -2080,6 +2090,7 @@ async fn fetch_verdict_candidates(
             gate_policy,
             bound_repositories,
             excluded_unauthorized_policies,
+            vocabulary: vocabulary.clone(),
         });
     }
     Ok(candidates)

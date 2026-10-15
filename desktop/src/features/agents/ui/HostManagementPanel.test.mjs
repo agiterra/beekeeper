@@ -12,6 +12,7 @@ let calls = [];
 let client;
 let info;
 let failure = false;
+let runtimes = [];
 const status = () => ({
   relayUrl: "ws://127.0.0.1:3037",
   revision: null,
@@ -41,6 +42,7 @@ before(() => {
         if (failure) throw Error("provider observation unavailable");
         return info;
       }
+      if (command === "list_managed_agent_runtimes") return runtimes;
       if (command === "set_managed_agent_start_on_app_launch") {
         info = {
           ...info,
@@ -64,6 +66,7 @@ afterEach(async () => {
   client?.clear();
   calls = [];
   failure = false;
+  runtimes = [];
 });
 after(() => dom.window.close());
 async function mount(callback) {
@@ -142,6 +145,59 @@ test("modern adopted status keeps ownership distinct from runtime availability",
   );
   assert.equal(observed.at(-1).ownershipPhase, "adopted");
   assert.equal(observed.at(-1).runtimeAvailable, null);
+});
+test("an adopted pair with a host-managed runtime row shows the presence pill and its evidence", async () => {
+  info = status();
+  runtimes = [
+    {
+      pubkey: actor,
+      relayUrl: "ws://127.0.0.1:3037",
+      localSetup: false,
+      lifecycle: "host_managed",
+      runtimeAvailable: false,
+      providerPresence: "live",
+      execution: "idle",
+      pid: null,
+      error: null,
+      logPath: null,
+    },
+  ];
+  await mount();
+  const { screen, waitFor } = await import("@testing-library/react");
+  await waitFor(() =>
+    assert.equal(
+      screen.getByTestId("agent-host-availability").textContent,
+      "Idle",
+    ),
+  );
+  const pill = screen.getByTestId("agent-host-availability");
+  assert.equal(pill.dataset.providerPresence, "live");
+  assert.equal(pill.dataset.execution, "idle");
+  assert.match(
+    screen.getByTestId("agent-host-availability-detail").textContent,
+    /Here and idle: the host's presence heartbeat is live/,
+  );
+  // The pill replaces the one-sentence fallback rather than sitting beside it.
+  assert.equal(
+    screen.queryByText("Runtime availability is unconfirmed."),
+    null,
+  );
+  // Same panel, host gone quiet: the word and the colour change together.
+  runtimes = [
+    { ...runtimes[0], providerPresence: "expired", execution: "disconnected" },
+  ];
+  const { act } = await import("@testing-library/react");
+  await act(async () => client.invalidateQueries());
+  await waitFor(() =>
+    assert.equal(
+      screen.getByTestId("agent-host-availability").textContent,
+      "Provider not heard from",
+    ),
+  );
+  assert.match(
+    screen.getByTestId("agent-host-availability-detail").textContent,
+    /heartbeat expired/,
+  );
 });
 test("shared status prefix invalidation updates a mounted host panel after other surface stop", async () => {
   info = status();

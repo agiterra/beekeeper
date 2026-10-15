@@ -393,6 +393,11 @@ pub async fn search_verdict_admission(
         Err(()) => return VerdictSearch::Unavailable,
     };
 
+    // The relay holds no project team record at the push gate, so the
+    // default role names (`lead`, `verifier`) judge every mission here. A
+    // project whose `team.yml` renames its judging role is not yet honoured
+    // by this gate; see `RoleVocabulary::foundation`.
+    let vocabulary = beekeeper_core::role_vocabulary::RoleVocabulary::foundation();
     let mut candidates: Vec<VerdictAdmissionCandidate> = Vec::with_capacity(geneses.len());
     for stored in &geneses {
         // A mission is read in the channel it was founded in, and nowhere
@@ -546,6 +551,7 @@ pub async fn search_verdict_admission(
                 gate_policy,
                 bound_repositories,
                 excluded_unauthorized_policies,
+                vocabulary: vocabulary.clone(),
             });
             continue;
         }
@@ -556,6 +562,7 @@ pub async fn search_verdict_admission(
             genesis_ref.clone(),
             founder_pubkey.clone(),
             seats.clone(),
+            vocabulary.clone(),
         );
         // One malformed mission must not deny every ref update: a fold that
         // errors contributes no records, so it admits nothing and refuses
@@ -581,6 +588,7 @@ pub async fn search_verdict_admission(
             gate_policy,
             bound_repositories,
             excluded_unauthorized_policies,
+            vocabulary: vocabulary.clone(),
         });
     }
 

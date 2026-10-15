@@ -98,6 +98,7 @@ fn builder_inputs() -> WorkBriefInputs {
             genesis_ref: "c".repeat(64),
             assignment_ref: "a".repeat(64),
             role: "builder".into(),
+            vocabulary: Default::default(),
             report_ref: None,
             verdict_assignment_ref: None,
         },

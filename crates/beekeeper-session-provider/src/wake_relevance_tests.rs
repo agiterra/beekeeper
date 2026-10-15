@@ -456,6 +456,7 @@ mod obligation {
         let run = run(269);
         let context =
             beekeeper_core::coding_session_team_transaction::CodingSessionTeamFoldContext {
+                vocabulary: Default::default(),
                 channel_ref: CHANNEL.into(),
                 session_ref: SESSION.into(),
                 genesis_ref: genesis(),

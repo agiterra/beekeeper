@@ -42,6 +42,65 @@ pub const MAX_HOST_STEP_WORKFLOW_NAME_BYTES: usize = 255;
 pub const MAX_HOST_NAME_BYTES: usize = 128;
 /// Maximum UTF-8 byte length of a refusal message or artifact path.
 pub const MAX_HOST_STEP_TEXT_BYTES: usize = 4096;
+/// Maximum number of capability tags one host declares, or one step requires.
+pub const MAX_HOST_CAPABILITIES: usize = 32;
+/// Maximum UTF-8 byte length of one capability tag.
+pub const MAX_HOST_CAPABILITY_BYTES: usize = 64;
+/// Refusal code the relay signs when a claim's `capabilities` do not cover
+/// the step's `requires`, and a host names on its own 46023 when it declines
+/// before claiming for the same reason (NIP-HS § The claim rule, step 5).
+pub const HOST_STEP_REFUSAL_CAPABILITY_MISSING: &str = "HOST_CAPABILITY_MISSING";
+
+/// Whether `tag` is a capability tag: 1..=[`MAX_HOST_CAPABILITY_BYTES`] bytes
+/// of lowercase ASCII letters, digits, `.`, `_`, `-` and `:` (`gpu`,
+/// `toolchain:rust`, `os:macos`). Free strings otherwise: no registry, so a
+/// project and its hosts agree on the words themselves.
+#[must_use]
+pub fn is_host_capability_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= MAX_HOST_CAPABILITY_BYTES
+        && tag.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'_' | b'-' | b':')
+        })
+        && !tag.starts_with([':', '.', '-'])
+}
+
+/// Validate a capability list: every entry a tag, no duplicates, at most
+/// [`MAX_HOST_CAPABILITIES`] entries. `what` names the list in the error.
+pub fn validate_host_capabilities(what: &str, tags: &[String]) -> Result<(), String> {
+    if tags.len() > MAX_HOST_CAPABILITIES {
+        return Err(format!(
+            "{what} lists {} capabilities; at most {MAX_HOST_CAPABILITIES}",
+            tags.len()
+        ));
+    }
+    for (index, tag) in tags.iter().enumerate() {
+        if !is_host_capability_tag(tag) {
+            return Err(format!(
+                "{what} entry {tag:?} is not a capability tag (lowercase letters, digits, \
+                 '.', '_', '-', ':'; 1 to {MAX_HOST_CAPABILITY_BYTES} bytes)"
+            ));
+        }
+        if tags[..index].contains(tag) {
+            return Err(format!("{what} lists {tag:?} twice"));
+        }
+    }
+    Ok(())
+}
+
+/// The tags in `requires` that `declared` does not cover, in `requires`
+/// order. Empty means the host may claim; a tag is covered only by its exact
+/// spelling — `toolchain:rust` does not cover `toolchain:rust-nightly`.
+#[must_use]
+pub fn missing_host_capabilities(requires: &[String], declared: &[String]) -> Vec<String> {
+    requires
+        .iter()
+        .filter(|tag| !declared.contains(tag))
+        .cloned()
+        .collect()
+}
 
 /// Approval that released a host step: the granting event and its scope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +190,13 @@ pub struct HostStepClaim {
     /// Who is claiming.
     #[serde(default)]
     pub host: HostIdentity,
+    /// The capability tags this host declares (`host.json` `capabilities`),
+    /// each a [`is_host_capability_tag`]. The relay refuses the claim with
+    /// [`HOST_STEP_REFUSAL_CAPABILITY_MISSING`] when a `run_on_host` step's
+    /// `requires` names a tag absent here. Omitted on the wire when empty, so
+    /// a claim from a host that declares nothing reads as it always did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
 }
 
 /// How a claimed host step ended.
@@ -527,6 +593,7 @@ fn validate_claim(claim: &HostStepClaim) -> Result<(), String> {
     if let Some(name) = &claim.host.name {
         validate_nonempty_bounded("host name", name, MAX_HOST_NAME_BYTES)?;
     }
+    validate_host_capabilities("host step claim capabilities", &claim.capabilities)?;
     Ok(())
 }
 
@@ -867,10 +934,58 @@ mod tests {
             host: HostIdentity {
                 name: Some("andy-mbp".into()),
             },
+            capabilities: Vec::new(),
         };
         let (tags, content) = build_host_step_claim(&claim).expect("build");
+        assert!(
+            !content.contains("capabilities"),
+            "a host that declares nothing writes no key: {content}"
+        );
         let event = signed(KIND_HOST_STEP_CLAIM, tags, content);
         assert_eq!(decode_host_step_claim(&event).expect("decode"), claim);
+    }
+
+    /// Round 2 Lane F: a claim carries the host's declared capability tags,
+    /// a malformed or duplicated tag is refused by name, and coverage is by
+    /// exact spelling.
+    #[test]
+    fn claim_capabilities_round_trip_and_are_validated() {
+        let mut claim = HostStepClaim {
+            schema: HOST_STEP_SCHEMA.into(),
+            run_id: Uuid::nil().to_string(),
+            step_id: "build".into(),
+            requested_event_id: hex64(0x55),
+            channel_id: Uuid::from_u128(9).to_string(),
+            host: HostIdentity::default(),
+            capabilities: vec!["gpu".into(), "toolchain:rust".into()],
+        };
+        let (tags, content) = build_host_step_claim(&claim).expect("build");
+        assert!(content.contains("\"capabilities\":[\"gpu\",\"toolchain:rust\"]"));
+        let event = signed(KIND_HOST_STEP_CLAIM, tags, content);
+        assert_eq!(decode_host_step_claim(&event).expect("decode"), claim);
+
+        for bad in ["GPU", "", "has space", ":lead", "x".repeat(65).as_str()] {
+            claim.capabilities = vec![bad.to_owned()];
+            let error = build_host_step_claim(&claim).unwrap_err();
+            assert!(error.contains("not a capability tag"), "{bad:?}: {error}");
+        }
+        claim.capabilities = vec!["gpu".into(), "gpu".into()];
+        assert!(build_host_step_claim(&claim).unwrap_err().contains("twice"));
+        claim.capabilities = (0..=MAX_HOST_CAPABILITIES)
+            .map(|index| format!("cap{index}"))
+            .collect();
+        assert!(build_host_step_claim(&claim)
+            .unwrap_err()
+            .contains("at most"));
+
+        let requires = vec!["gpu".to_owned(), "toolchain:rust".to_owned()];
+        assert!(missing_host_capabilities(&requires, &requires).is_empty());
+        assert_eq!(
+            missing_host_capabilities(&requires, &["toolchain:rust-nightly".to_owned()]),
+            requires,
+            "coverage is exact spelling, never a prefix"
+        );
+        assert!(missing_host_capabilities(&[], &[]).is_empty());
     }
 
     /// Closed-record vector (ledger 250): a kind:46023 whose content carries

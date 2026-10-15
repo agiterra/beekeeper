@@ -270,7 +270,34 @@ pub enum ActionDef {
         /// Where the command runs; defaults to the checkout as it is.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checkout: Option<HostCheckout>,
+        /// Capability tags a host must declare (`host.json` `capabilities`,
+        /// carried on its kind:46022 claim) to run this step, e.g.
+        /// `[gpu, toolchain:rust]`. Free strings under
+        /// `beekeeper_core::host_step::is_host_capability_tag`; the relay
+        /// refuses a claim that does not cover every tag with
+        /// `HOST_CAPABILITY_MISSING`, and a host that reads its own
+        /// `actions.yml` declines before claiming. Absent from the canonical
+        /// JSON when unset, so an existing definition's hash is unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requires: Option<Vec<String>>,
     },
+}
+
+/// The capability tags a `run_on_host` step requires, validated; empty when
+/// it names none. Refuses a step that is not `run_on_host`.
+///
+/// Kept beside [`resolve_run_on_host`] rather than on [`ResolvedRunOnHost`]
+/// so the resolved command shape every host already builds is unchanged.
+pub fn run_on_host_requires(action: &ActionDef) -> Result<Vec<String>, WorkflowError> {
+    let ActionDef::RunOnHost { requires, .. } = action else {
+        return Err(WorkflowError::InvalidDefinition(
+            "step is not run_on_host".into(),
+        ));
+    };
+    let requires = requires.clone().unwrap_or_default();
+    beekeeper_core::host_step::validate_host_capabilities("requires", &requires)
+        .map_err(|detail| WorkflowError::InvalidDefinition(format!("run_on_host {detail}")))?;
+    Ok(requires)
 }
 
 /// Who a `wake_agent` step addresses: an agent named in the project's
@@ -374,12 +401,16 @@ pub fn resolve_run_on_host(action: &ActionDef) -> Result<ResolvedRunOnHost, Work
         env_from_host,
         capture,
         checkout,
+        requires: _,
     } = action
     else {
         return Err(WorkflowError::InvalidDefinition(
             "step is not run_on_host".into(),
         ));
     };
+    // `requires` is validated here too, so a definition with a malformed tag
+    // is refused when it is saved, not first when a host reads it.
+    run_on_host_requires(action)?;
     let invalid =
         |detail: String| WorkflowError::InvalidDefinition(format!("run_on_host {detail}"));
     if command.is_empty() || command.iter().any(|arg| arg.is_empty()) {
@@ -901,6 +932,48 @@ mod tests {
             "name: verify\nproject: '30621:{owner}:pulse'\ntrigger: {trigger}\nsteps:\n  - id: verify\n    action: run_on_host\n    command: ['python3', '-m', 'unittest', 'discover', '-s', 'tests']\n    working_directory: '.'\n    checkout: {checkout}\n",
             owner = "1".repeat(64)
         )
+    }
+
+    /// Round 2 Lane F: a `run_on_host` step may declare `requires`; the
+    /// tags are validated on save; an omitted `requires` leaves the canonical
+    /// JSON — and so the definition hash — exactly as before.
+    #[test]
+    fn requires_parses_validates_and_leaves_an_unset_definition_unchanged() {
+        let yaml = format!(
+            "name: train\nproject: '30621:{owner}:pulse'\ntrigger: {{ on: manual }}\nsteps:\n  - id: train\n    action: run_on_host\n    command: ['make', 'train']\n    requires: [gpu, 'toolchain:rust']\n",
+            owner = "1".repeat(64)
+        );
+        let (def, canonical) = parse_yaml(&yaml).expect("requires parses");
+        assert_eq!(
+            run_on_host_requires(&def.steps[0].action).expect("validated"),
+            vec!["gpu".to_owned(), "toolchain:rust".to_owned()]
+        );
+        assert!(canonical.contains("\"requires\":[\"gpu\",\"toolchain:rust\"]"));
+        resolve_run_on_host(&def.steps[0].action).expect("a step with requires still resolves");
+
+        let without = yaml.replace("    requires: [gpu, 'toolchain:rust']\n", "");
+        let (def, canonical) = parse_yaml(&without).expect("no requires parses");
+        assert!(
+            !canonical.contains("requires"),
+            "an unset requires writes no key, so the hash is unchanged: {canonical}"
+        );
+        assert_eq!(
+            run_on_host_requires(&def.steps[0].action).expect("empty"),
+            Vec::<String>::new()
+        );
+
+        for bad in ["[GPU]", "['']", "[gpu, gpu]", "['has space']"] {
+            let broken = yaml.replace("[gpu, 'toolchain:rust']", bad);
+            let error = parse_yaml(&broken).expect_err(bad).to_string();
+            assert!(
+                error.contains("run_on_host requires"),
+                "{bad}: refused by name on save, got {error}"
+            );
+        }
+        assert!(
+            run_on_host_requires(&ActionDef::SetChannelTopic { topic: "y".into() }).is_err(),
+            "only run_on_host requires anything of a host"
+        );
     }
 
     #[test]

@@ -28,8 +28,9 @@ use nostr::Event;
 use uuid::Uuid;
 
 use beekeeper_core::host_step::{
-    build_host_step_exited, decode_host_step_claim, decode_host_step_result, HostStepDisposition,
-    HostStepExited, HOST_STEP_SCHEMA,
+    build_host_step_exited, decode_host_step_claim, decode_host_step_result,
+    missing_host_capabilities, HostStepClaim, HostStepDisposition, HostStepExited, HostStepRefusal,
+    HostStepResult, HOST_STEP_REFUSAL_CAPABILITY_MISSING, HOST_STEP_SCHEMA,
 };
 use beekeeper_core::kind::KIND_WORKFLOW_HOST_STEP_EXITED;
 use beekeeper_core::tenant::{CommunityId, TenantContext};
@@ -138,11 +139,98 @@ fn hex_of(bytes: &Option<Vec<u8>>) -> Option<String> {
     bytes.as_ref().map(hex::encode)
 }
 
+/// The capability tags the row's step `requires`, read from the stored
+/// definition the run was created against (its hash is pinned on the run,
+/// so this is the definition every host recompiles). Empty for a step that
+/// names none, and for any step that is not `run_on_host`.
+async fn step_requires(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    row: &HostStepRecord,
+) -> Result<Vec<String>, IngestError> {
+    let workflow = state
+        .db
+        .get_workflow(tenant.community(), row.workflow_id)
+        .await
+        .map_err(|error| IngestError::Internal(format!("error: db get_workflow: {error}")))?;
+    let definition: beekeeper_workflow::schema::WorkflowDef =
+        serde_json::from_value(workflow.definition).map_err(|error| {
+            IngestError::Internal(format!(
+                "error: workflow {} definition does not decode: {error}",
+                row.workflow_id
+            ))
+        })?;
+    let Some(step) = usize::try_from(row.step_index)
+        .ok()
+        .and_then(|index| definition.steps.get(index))
+    else {
+        return Ok(Vec::new());
+    };
+    if !matches!(
+        step.action,
+        beekeeper_workflow::schema::ActionDef::RunOnHost { .. }
+    ) {
+        return Ok(Vec::new());
+    }
+    beekeeper_workflow::schema::run_on_host_requires(&step.action).map_err(|error| {
+        IngestError::Internal(format!(
+            "error: workflow {} step {} requires does not validate: {error}",
+            row.workflow_id, row.step_id
+        ))
+    })
+}
+
+/// The relay-signed refusal of a claim whose capabilities fall short: the
+/// same `HostStepResult` shape a host signs when it declines before claiming,
+/// so a reader of kind:46014 sees one vocabulary. `claimEventId` is absent —
+/// nothing was claimed — and the echo's `resultEventId` names the refused
+/// 46022 so the refusal is traceable to the claim it answers.
+fn capability_refusal_result(
+    claim: &HostStepClaim,
+    requires: &[String],
+    missing: &[String],
+) -> HostStepResult {
+    HostStepResult {
+        schema: HOST_STEP_SCHEMA.into(),
+        run_id: claim.run_id.clone(),
+        step_id: claim.step_id.clone(),
+        requested_event_id: claim.requested_event_id.clone(),
+        claim_event_id: None,
+        channel_id: claim.channel_id.clone(),
+        disposition: HostStepDisposition::Refused,
+        exit_code: None,
+        refusal: Some(HostStepRefusal {
+            code: HOST_STEP_REFUSAL_CAPABILITY_MISSING.into(),
+            message: format!(
+                "the step requires [{}] and the claiming host declares [{}]; missing [{}]",
+                requires.join(", "),
+                claim.capabilities.join(", "),
+                missing.join(", ")
+            ),
+        }),
+        timed_out: false,
+        duration_ms: None,
+        head_sha: None,
+        agents_commit: None,
+        dirty: None,
+        checkout: None,
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        truncated: false,
+        artifact_path: None,
+        routed: None,
+        artifacts: Vec::new(),
+    }
+}
+
 /// Handle a kind:46022 claim.
 ///
 /// Response on success: `{"status":"claimed"}`. A second claim by the same
 /// host is an accepted duplicate; a claim by any other host after the row is
-/// taken is rejected with `claimed by <hex>` naming the winner.
+/// taken is rejected with `claimed by <hex>` naming the winner. A claim whose
+/// `capabilities` do not cover the step's `requires` is rejected
+/// `HOST_CAPABILITY_MISSING: …` and the refusal is echoed as a relay-signed
+/// kind:46014 (NIP-HS § The claim rule, step 4); the row stays open.
 pub async fn handle_host_step_claim(
     tenant: &TenantContext,
     state: &Arc<AppState>,
@@ -151,7 +239,11 @@ pub async fn handle_host_step_claim(
 ) -> Result<IngestResult, IngestError> {
     let claim = decode_host_step_claim(event)
         .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
-    let Admitted { row, signer, .. } = admit(
+    let Admitted {
+        row,
+        channel_id,
+        signer,
+    } = admit(
         tenant,
         state,
         auth,
@@ -167,6 +259,44 @@ pub async fn handle_host_step_claim(
                 "invalid: claim does not name the recorded request event".into(),
             ));
         }
+    }
+
+    // Capability selection, before the conditional UPDATE: a host that does
+    // not declare what the step requires never takes the row, and the
+    // refusal is signed so the seat that triggered the run can read why no
+    // host ran it. The claim itself is stored so the echo's pointer resolves.
+    let requires = step_requires(tenant, state, &row).await?;
+    let missing = missing_host_capabilities(&requires, &claim.capabilities);
+    if !missing.is_empty() {
+        // A refused claim re-sent is refused again, never answered as a
+        // duplicate: `duplicate` is an accept, and a host retrying the same
+        // event would read it as having won. The echo is published once.
+        if let PersistResult::Inserted(tx) =
+            persist_command_event(&state.db, tenant, event, None).await?
+        {
+            tx.commit().await.map_err(|error| {
+                IngestError::Internal(format!("error: commit transaction: {error}"))
+            })?;
+            let refusal = capability_refusal_result(&claim, &requires, &missing);
+            echo_result(
+                state,
+                tenant,
+                channel_id,
+                &row,
+                &refusal,
+                &signer,
+                event,
+                EchoRecord::NotOnRow,
+            )
+            .await;
+        }
+        return Err(IngestError::Rejected(format!(
+            "{HOST_STEP_REFUSAL_CAPABILITY_MISSING}: the step requires [{}] and this host \
+             declares [{}]; missing [{}]",
+            requires.join(", "),
+            claim.capabilities.join(", "),
+            missing.join(", ")
+        )));
     }
 
     let tx = match persist_command_event(&state.db, tenant, event, None).await? {
@@ -973,6 +1103,7 @@ mod tests {
                 requested_event_id: hex::encode(requested_id),
                 channel_id: channel.id.to_string(),
                 host: Default::default(),
+                capabilities: Vec::new(),
             };
             let (tags, content) = build_host_step_claim(&claim).expect("build claim");
             signed(keys, KIND_HOST_STEP_CLAIM, tags, content)
@@ -1102,5 +1233,290 @@ mod tests {
             .await
             .expect("row");
         assert!(row.exited_event_id.is_some(), "kind:46014 id recorded");
+    }
+
+    /// Everything a parked `run_on_host` row needs: the community, a private
+    /// channel both hosts are members of, a workflow built from `steps`, a
+    /// run parked `waiting_host` at step 0, and the request id the row
+    /// records. Hosts are created by the caller and passed in so a test can
+    /// say which one declares what.
+    struct ParkedRun {
+        tenant: TenantContext,
+        community: beekeeper_core::tenant::CommunityId,
+        channel_id: Uuid,
+        run_id: Uuid,
+        requested_id: [u8; 32],
+    }
+
+    async fn park_run_on_host(
+        state: &Arc<AppState>,
+        owner: &Keys,
+        hosts: &[&Keys],
+        steps_yaml: &str,
+    ) -> ParkedRun {
+        let owner_bytes = owner.public_key().to_bytes().to_vec();
+        let host = format!("host-steps-{}.example", Uuid::new_v4().simple());
+        let community = match state
+            .db
+            .create_community_with_owner(&host, &owner.public_key().to_hex())
+            .await
+            .expect("create community")
+        {
+            CreateCommunityWithOwnerResult::Created(rec) => rec.id,
+            other => panic!("expected fresh community, got {other:?}"),
+        };
+        let tenant = TenantContext::resolved(community, host);
+        let channel = state
+            .db
+            .create_channel(
+                community,
+                "actions",
+                ChannelType::Stream,
+                ChannelVisibility::Private,
+                None,
+                &owner_bytes,
+                None,
+                None,
+            )
+            .await
+            .expect("create channel");
+        for keys in hosts {
+            let bytes = keys.public_key().to_bytes().to_vec();
+            state
+                .db
+                .ensure_user(community, &bytes)
+                .await
+                .expect("ensure host user");
+            state
+                .db
+                .add_member(
+                    community,
+                    channel.id,
+                    &bytes,
+                    MemberRole::Member,
+                    Some(&owner_bytes),
+                )
+                .await
+                .expect("add host member");
+        }
+        state
+            .db
+            .ensure_user(community, &owner_bytes)
+            .await
+            .expect("ensure owner user");
+        let yaml = format!(
+            "name: nightly\nproject: '30621:{}:pulse'\ntrigger:\n  on: manual\nsteps:\n{steps_yaml}",
+            "1".repeat(64)
+        );
+        let (_, canonical) = beekeeper_workflow::WorkflowEngine::parse_yaml(&yaml).expect("parse");
+        let definition: serde_json::Value = serde_json::from_str(&canonical).expect("json");
+        let hash = beekeeper_workflow::hash_definition_value(&definition).expect("hash");
+        let workflow_id = Uuid::new_v4();
+        state
+            .db
+            .upsert_workflow(
+                community,
+                workflow_id,
+                Some(channel.id),
+                &owner_bytes,
+                "nightly",
+                &canonical,
+                &hash,
+                None,
+            )
+            .await
+            .expect("upsert workflow");
+        let trigger_ctx = serde_json::to_value(TriggerContext::default()).expect("ctx");
+        let run_id = match state
+            .db
+            .create_workflow_run(community, workflow_id, None, Some(&trigger_ctx), &hash)
+            .await
+            .expect("create run")
+        {
+            beekeeper_db::workflow::CreateRunOutcome::Created(id) => id,
+            other => panic!("expected a run, got {other:?}"),
+        };
+        let parked_trace = serde_json::json!([
+            {"step_id": "build", "status": "requested_on_host"}
+        ]);
+        state
+            .db
+            .update_workflow_run(
+                community,
+                run_id,
+                RunStatus::WaitingHost,
+                0,
+                &parked_trace,
+                None,
+            )
+            .await
+            .expect("park run");
+        state
+            .db
+            .create_host_step(CreateHostStepParams {
+                community_id: community,
+                run_id,
+                workflow_id,
+                step_id: "build",
+                step_index: 0,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            })
+            .await
+            .expect("create host step");
+        let requested_id = [0xab; 32];
+        state
+            .db
+            .set_host_step_requested_event(community, run_id, "build", &requested_id)
+            .await
+            .expect("record request id");
+        ParkedRun {
+            tenant,
+            community,
+            channel_id: channel.id,
+            run_id,
+            requested_id,
+        }
+    }
+
+    /// Round 2 Lane F (NIP-HS § The claim rule, step 4): two workers, one
+    /// declaring `gpu` and one declaring nothing, race for a step that
+    /// `requires: [gpu]`. The bare worker's claim — even though it lands
+    /// first — is rejected `HOST_CAPABILITY_MISSING: …`, echoed as one
+    /// relay-signed kind:46014 carrying that code, and leaves the row open;
+    /// the `gpu` worker then claims and wins.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_step_requiring_gpu_is_won_only_by_the_worker_that_declares_it() {
+        let state = crate::state::tests::test_state().await;
+        let owner = Keys::generate();
+        let gpu_worker = Keys::generate();
+        let bare_worker = Keys::generate();
+        let parked = park_run_on_host(
+            &state,
+            &owner,
+            &[&gpu_worker, &bare_worker],
+            "  - id: build\n    action: run_on_host\n    command: [\"true\"]\n    requires: [gpu]\n",
+        )
+        .await;
+        let ParkedRun {
+            tenant,
+            community,
+            channel_id,
+            run_id,
+            requested_id,
+        } = parked;
+
+        let claim_for = |keys: &Keys, capabilities: &[&str]| {
+            let claim = HostStepClaim {
+                schema: HOST_STEP_SCHEMA.into(),
+                run_id: run_id.to_string(),
+                step_id: "build".into(),
+                requested_event_id: hex::encode(requested_id),
+                channel_id: channel_id.to_string(),
+                host: Default::default(),
+                capabilities: capabilities.iter().map(|tag| (*tag).to_owned()).collect(),
+            };
+            let (tags, content) = build_host_step_claim(&claim).expect("build claim");
+            signed(keys, KIND_HOST_STEP_CLAIM, tags, content)
+        };
+
+        // The bare worker lands first and is refused by name.
+        let bare_claim = claim_for(&bare_worker, &[]);
+        let refused = rejection(
+            handle_host_step_claim(&tenant, &state, &bare_claim, &http_auth(&bare_worker)).await,
+        );
+        assert!(
+            refused.starts_with("HOST_CAPABILITY_MISSING: "),
+            "the rejection names the code: {refused}"
+        );
+        assert!(refused.contains("requires [gpu]"), "{refused}");
+        assert!(refused.contains("missing [gpu]"), "{refused}");
+
+        // The refusal is signed by the relay as a kind:46014 that points at
+        // the refused claim, and the row is untouched.
+        let echoes = state
+            .db
+            .query_events(&beekeeper_db::EventQuery {
+                kinds: Some(vec![KIND_WORKFLOW_HOST_STEP_EXITED as i32]),
+                tags_containing: Some(vec![("e".into(), bare_claim.id.to_hex())]),
+                limit: Some(10),
+                ..beekeeper_db::EventQuery::for_community(community)
+            })
+            .await
+            .expect("query echoes");
+        assert_eq!(
+            echoes.len(),
+            1,
+            "one kind:46014 echoes the capability refusal"
+        );
+        let echoed: HostStepExited =
+            serde_json::from_str(&echoes[0].event.content).expect("echo content");
+        assert_eq!(echoed.claimed_by, bare_worker.public_key().to_hex());
+        assert_eq!(echoed.result_event_id, bare_claim.id.to_hex());
+        assert_eq!(echoed.result.disposition, HostStepDisposition::Refused);
+        assert_eq!(echoed.result.claim_event_id, None);
+        let refusal = echoed.result.refusal.expect("carries the refusal");
+        assert_eq!(refusal.code, HOST_STEP_REFUSAL_CAPABILITY_MISSING);
+        assert!(
+            refusal.message.contains("missing [gpu]"),
+            "{}",
+            refusal.message
+        );
+        let open = state
+            .db
+            .get_host_step(community, run_id, "build")
+            .await
+            .expect("row");
+        assert_eq!(open.status, HostStepStatus::Requested);
+        assert_eq!(open.claimed_by, None, "a refused claim takes nothing");
+
+        // A worker whose declared capabilities cover the step wins it. A
+        // surplus tag is not held against it.
+        let gpu_claim = claim_for(&gpu_worker, &["toolchain:rust", "gpu"]);
+        let won = handle_host_step_claim(&tenant, &state, &gpu_claim, &http_auth(&gpu_worker))
+            .await
+            .expect("claim by the gpu worker");
+        assert!(won.accepted);
+        assert_eq!(won.message, r#"response:{"status":"claimed"}"#);
+        let taken = state
+            .db
+            .get_host_step(community, run_id, "build")
+            .await
+            .expect("row");
+        assert_eq!(
+            taken.claimed_by.as_deref(),
+            Some(gpu_worker.public_key().to_bytes().as_slice())
+        );
+
+        // The bare worker trying again after the row is taken is still told
+        // about its capabilities, not the winner: selection runs first, so
+        // a host that could never run the step is never told it lost a race.
+        // Re-sending the very same refused event (same second, same id) is
+        // refused again too, never answered `duplicate` — an accept — and
+        // echoes nothing new.
+        for again in [claim_for(&bare_worker, &[]), bare_claim.clone()] {
+            let refused_again = rejection(
+                handle_host_step_claim(&tenant, &state, &again, &http_auth(&bare_worker)).await,
+            );
+            assert!(
+                refused_again.starts_with("HOST_CAPABILITY_MISSING: "),
+                "{refused_again}"
+            );
+        }
+        let echoes_after = state
+            .db
+            .query_events(&beekeeper_db::EventQuery {
+                kinds: Some(vec![KIND_WORKFLOW_HOST_STEP_EXITED as i32]),
+                tags_containing: Some(vec![("e".into(), bare_claim.id.to_hex())]),
+                limit: Some(10),
+                ..beekeeper_db::EventQuery::for_community(community)
+            })
+            .await
+            .expect("query echoes");
+        assert_eq!(
+            echoes_after.len(),
+            1,
+            "a re-sent refused claim echoes nothing new"
+        );
     }
 }

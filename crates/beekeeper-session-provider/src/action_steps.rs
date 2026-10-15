@@ -33,7 +33,9 @@ use beekeeper_core::host_step::{
     HostStepDisposition, HostStepRefusal, HostStepRequested, HostStepResult, HOST_STEP_SCHEMA,
 };
 use beekeeper_core::host_step::{
-    HOST_STEP_KIND_HIRE_AGENT, HOST_STEP_KIND_RUN_ON_HOST, HOST_STEP_KIND_WAKE_AGENT,
+    is_host_capability_tag, missing_host_capabilities, HOST_STEP_KIND_HIRE_AGENT,
+    HOST_STEP_KIND_RUN_ON_HOST, HOST_STEP_KIND_WAKE_AGENT, HOST_STEP_REFUSAL_CAPABILITY_MISSING,
+    MAX_HOST_CAPABILITIES,
 };
 use beekeeper_core::kind::{KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT};
 
@@ -145,6 +147,74 @@ pub const ACTION_STEP_INVALID: &str = host_command::ACTION_STEP_INVALID;
 /// Directory under the state directory that holds per-step artifacts.
 pub const ARTIFACTS_DIR: &str = "actions";
 
+/// The variable this host's declared capability tags arrive in: `host.json`
+/// `capabilities`, exported by the host launcher as a comma-separated list
+/// (`gpu,toolchain:rust`). Unset or empty means the host declares nothing,
+/// and a step that `requires` anything is declined before it is claimed.
+pub const HOST_CAPABILITIES_ENV: &str = "BEEKEEPER_CSP_CAPABILITIES";
+
+/// Split a `BEEKEEPER_CSP_CAPABILITIES` value into the tags this host will
+/// put on its claims and the entries it will not: a malformed or duplicated
+/// entry is dropped and named, never silently carried, because the relay
+/// would refuse the whole claim for it. Entries past
+/// [`MAX_HOST_CAPABILITIES`] are dropped too.
+pub fn parse_declared_capabilities(raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut declared: Vec<String> = Vec::new();
+    let mut dropped = Vec::new();
+    for entry in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        if !is_host_capability_tag(entry)
+            || declared.iter().any(|known| known == entry)
+            || declared.len() >= MAX_HOST_CAPABILITIES
+        {
+            dropped.push(entry.to_owned());
+        } else {
+            declared.push(entry.to_owned());
+        }
+    }
+    (declared, dropped)
+}
+
+/// This host's declared capability tags, read from [`HOST_CAPABILITIES_ENV`]
+/// at claim time so a recommissioning is seen without a restart of this
+/// code path. Each dropped entry is logged once per read.
+pub fn declared_capabilities() -> Vec<String> {
+    let raw = std::env::var(HOST_CAPABILITIES_ENV).unwrap_or_default();
+    let (declared, dropped) = parse_declared_capabilities(&raw);
+    for entry in dropped {
+        tracing::warn!(
+            target: "csp::actions",
+            entry,
+            "{HOST_CAPABILITIES_ENV} entry is not a capability tag this host can claim; ignored"
+        );
+    }
+    declared
+}
+
+/// The refusal a host signs before claiming when the step's `requires` is
+/// not covered by what it declares — the same code the relay signs when a
+/// host claims anyway (NIP-HS § The claim rule, step 5).
+#[must_use]
+pub fn capability_refusal(requires: &[String], declared: &[String]) -> Option<HostStepRefusal> {
+    let missing = missing_host_capabilities(requires, declared);
+    if missing.is_empty() {
+        return None;
+    }
+    Some(HostStepRefusal {
+        code: HOST_STEP_REFUSAL_CAPABILITY_MISSING.to_owned(),
+        message: format!(
+            "the step requires [{}] and this host declares [{}]; missing [{}] \
+             (host.json capabilities)",
+            requires.join(", "),
+            declared.join(", "),
+            missing.join(", ")
+        ),
+    })
+}
+
 /// What verification found: the checkout and the step, ready to prepare.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedStep {
@@ -158,7 +228,13 @@ pub struct VerifiedStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifiedAction {
     /// `run_on_host`, with defaults applied.
-    Command(ResolvedRunOnHost),
+    Command {
+        /// The command, with defaults applied.
+        spec: ResolvedRunOnHost,
+        /// Capability tags the step requires of the host that runs it, from
+        /// this host's own `actions.yml`; empty when it names none.
+        requires: Vec<String>,
+    },
     /// `wake_agent`: deliver `brief` to the agent `team.yml` calls `agent`.
     Wake {
         /// The agent's name in `team.yml`.
@@ -358,10 +434,12 @@ pub fn verify_request(
         return Err(mismatch("a different id"));
     }
     let action = match (&step.action, request.step_kind.as_str()) {
-        (ActionDef::RunOnHost { .. }, HOST_STEP_KIND_RUN_ON_HOST) => VerifiedAction::Command(
-            resolve_run_on_host(&step.action)
+        (ActionDef::RunOnHost { .. }, HOST_STEP_KIND_RUN_ON_HOST) => VerifiedAction::Command {
+            spec: resolve_run_on_host(&step.action)
                 .map_err(|error| refusal(ACTION_STEP_INVALID, error.to_string()))?,
-        ),
+            requires: beekeeper_workflow::schema::run_on_host_requires(&step.action)
+                .map_err(|error| refusal(ACTION_STEP_INVALID, error.to_string()))?,
+        },
         (ActionDef::WakeAgent { to, brief }, HOST_STEP_KIND_WAKE_AGENT) => VerifiedAction::Wake {
             agent: to.agent.clone(),
             brief: brief.clone(),
@@ -782,6 +860,7 @@ impl Provider {
         // open execution here, so a brief nobody can receive is never claimed.
         let projects = ProjectsFile::load(self.config.projects_file.as_deref());
         let host_env: HashMap<String, String> = std::env::vars().collect();
+        let declared_capabilities = declared_capabilities();
         // The definition comes from the agents repository's fetched tip
         // (spec § 4.11), read before the sync verification below.
         let files = match crate::agents_checkout::ScopedGitAuth::provider(&self.config) {
@@ -795,7 +874,13 @@ impl Provider {
         }
         let plan = match files.and_then(|files| verify_request(&request, &projects.projects, &files).map(|verified| (verified, files))).and_then(|(verified, files)| {
             match verified.action {
-                VerifiedAction::Command(spec) => {
+                VerifiedAction::Command { spec, requires } => {
+                    // Declined here, before any claim, when this host does
+                    // not declare what the step requires: the signed
+                    // refusal names both lists, and another host may claim.
+                    if let Some(refusal) = capability_refusal(&requires, &declared_capabilities) {
+                        return Err(refusal);
+                    }
                     let bound_commit = bound_commit(&spec, &request.trigger_context)?;
                     host_command::prepare(&spec, &verified.checkout, &host_env)
                         .map(|prepared| StepPlan::Command {
@@ -926,6 +1011,7 @@ impl Provider {
             host: HostIdentity {
                 name: host_command::hostname(),
             },
+            capabilities: declared_capabilities,
         };
         let (tags, content) =
             build_host_step_claim(&claim).map_err(|error| anyhow::anyhow!(error))?;
@@ -949,6 +1035,22 @@ impl Provider {
                         );
                         self.action_steps
                             .mark_lost_claim(requested_event_id, &winner)?;
+                        return Ok(());
+                    }
+                    if message.contains(HOST_STEP_REFUSAL_CAPABILITY_MISSING) {
+                        // The relay judged this host's capabilities short of
+                        // the step's requires (its own actions.yml said
+                        // otherwise, or the relay's definition is newer) and
+                        // signed the refusal; the step is not ours.
+                        tracing::warn!(
+                            target: "csp::actions",
+                            %requested_event_id,
+                            "the relay refused this host's claim for want of a capability: {message}"
+                        );
+                        self.action_steps.mark_refused(
+                            requested_event_id,
+                            HOST_STEP_REFUSAL_CAPABILITY_MISSING,
+                        )?;
                         return Ok(());
                     }
                     if message.contains("relay rejected durable event") {
@@ -1924,9 +2026,65 @@ mod tests {
             verify_request(&request(&real_hash()), &projects, &files(ACTIONS)).expect("verified");
         assert_eq!(verified.checkout, checkout.path());
         match verified.action {
-            VerifiedAction::Command(spec) => assert_eq!(spec.command, vec!["true".to_owned()]),
+            VerifiedAction::Command { spec, requires } => {
+                assert_eq!(spec.command, vec!["true".to_owned()]);
+                assert!(requires.is_empty(), "the fixture step requires nothing");
+            }
             other => panic!("expected a command, got {other:?}"),
         }
+    }
+
+    /// Round 2 Lane F: the host reads `requires` from its own `actions.yml`,
+    /// declares what `BEEKEEPER_CSP_CAPABILITIES` names, and declines before
+    /// claiming — by the relay's own code — when the two do not meet.
+    #[test]
+    fn a_step_requiring_a_capability_this_host_lacks_is_declined_before_claiming() {
+        let actions = ACTIONS.replace(
+            "command: [\"true\"]\n",
+            "command: [\"true\"]\n        requires: [gpu]\n",
+        );
+        let hash = parse_actions_yml(&actions, PROJECT).expect("parse")[0]
+            .hash
+            .clone();
+        assert_ne!(hash, real_hash(), "requires is part of the definition hash");
+        let checkout = checkout_with(Some(&actions));
+        let projects = BTreeMap::from([(PROJECT.to_owned(), checkout.path().to_path_buf())]);
+        let verified =
+            verify_request(&request(&hash), &projects, &files(&actions)).expect("verified");
+        let VerifiedAction::Command { requires, .. } = verified.action else {
+            panic!("expected a command");
+        };
+        assert_eq!(requires, vec!["gpu".to_owned()]);
+
+        let (declared, dropped) = parse_declared_capabilities(" gpu , GPU,toolchain:rust,gpu,,");
+        assert_eq!(
+            declared,
+            vec!["gpu".to_owned(), "toolchain:rust".to_owned()]
+        );
+        assert_eq!(dropped, vec!["GPU".to_owned(), "gpu".to_owned()]);
+        assert_eq!(parse_declared_capabilities(""), (Vec::new(), Vec::new()));
+
+        assert_eq!(capability_refusal(&requires, &declared), None);
+        let refusal = capability_refusal(&requires, &[]).expect("a bare host declines");
+        assert_eq!(refusal.code, HOST_STEP_REFUSAL_CAPABILITY_MISSING);
+        assert!(
+            refusal.message.contains("requires [gpu]"),
+            "{}",
+            refusal.message
+        );
+        assert!(
+            refusal.message.contains("missing [gpu]"),
+            "{}",
+            refusal.message
+        );
+        let result = refused_result(&request(&hash), &"ab".repeat(32), &refusal);
+        assert!(result.claim_event_id.is_none());
+        build_host_step_result(&result).expect("a capability refusal is a valid 46023");
+        assert_eq!(
+            capability_refusal(&[], &[]),
+            None,
+            "a step requiring nothing never declines"
+        );
     }
 
     #[test]

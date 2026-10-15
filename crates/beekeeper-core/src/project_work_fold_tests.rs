@@ -295,6 +295,59 @@ fn an_unreadable_plan_blob_reads_unknown_and_never_open() {
     }
 }
 
+/// Round 2 Lane F: git is optional in a plan. The happy-path sequence folded
+/// against a review-only plan that names no `code_repository` and no
+/// `delivery_ref` — the same declaration, the same review verdicts — settles
+/// its review criteria as covered with **no ref state supplied at all**, and
+/// discloses the bindings that name criteria this plan never had.
+#[test]
+fn a_review_only_plan_with_no_repository_settles_without_ref_state() {
+    const REVIEW_ONLY: &str = "---\nschema: beekeeper-plan/v1\nid: kettle-cli\nstatus: in-force\n\
+        title: Review-only kettle\ncriteria:\n  - id: cli-behaviour\n    accept: the CLI does what \
+        the plan says\n    proof: {kind: review}\n  - id: shared-storage-and-parser\n    accept: \
+        one store, one parser\n    proof: {kind: review}\n  - id: usage-documentation\n    accept: \
+        README has Usage\n    proof: {kind: review}\nretired_criteria: []\n---\nBody.\n";
+    let plan = parse_plan(REVIEW_ONLY.as_bytes()).expect("a review-only plan validates");
+    assert_eq!(plan.git_delivery(), None);
+
+    let mut inputs = SEQUENCES[0].inputs();
+    for blob in inputs.plan_blobs.values_mut() {
+        *blob = REVIEW_ONLY.to_owned();
+    }
+    inputs.ref_states.clear();
+    let projection = fold_work(&inputs);
+    let declaration = &projection.declarations[0];
+    assert!(
+        declaration.plan_resolved,
+        "the plan at the pinned commit parsed"
+    );
+    assert_eq!(declaration.state, WorkDeclarationState::Head);
+    let statuses: Vec<(&str, WorkCriterionStatus)> = declaration
+        .criteria
+        .iter()
+        .map(|criterion| (criterion.criterion_id.as_str(), criterion.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            ("cli-behaviour", WorkCriterionStatus::Covered),
+            ("shared-storage-and-parser", WorkCriterionStatus::Covered),
+            ("usage-documentation", WorkCriterionStatus::Covered),
+        ],
+        "{}",
+        serde_json::to_string_pretty(&as_json(&projection)).expect("json")
+    );
+    assert!(
+        declaration.coverage_complete,
+        "every criterion of a review-only plan is settled by its verdicts alone: {:?}",
+        declaration.coverage_reason
+    );
+    // Order independence holds for this plan too.
+    let mut reversed = inputs.clone();
+    reversed.events.reverse();
+    assert_eq!(as_json(&fold_work(&reversed)), as_json(&projection));
+}
+
 #[test]
 fn an_unestablished_evidence_event_reads_unknown() {
     let mut inputs = SEQUENCES[0].inputs();
@@ -392,6 +445,7 @@ fn team_transaction_events() -> (Vec<nostr::Event>, CodingSessionTeamFoldContext
     .sign_with_keys(&keys)
     .expect("sign");
     let context = CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: channel.to_owned(),
         session_ref: session.to_owned(),
         genesis_ref: genesis,

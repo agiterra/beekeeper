@@ -215,6 +215,7 @@ fn state_with_genesis(
         founder: hex64("f0"),
         authority: Some(SessionAuthority {
             context: CodingSessionTeamFoldContext {
+                vocabulary: Default::default(),
                 channel_ref: CHANNEL.to_owned(),
                 session_ref: SESSION.to_owned(),
                 genesis_ref: GENESIS.to_owned(),

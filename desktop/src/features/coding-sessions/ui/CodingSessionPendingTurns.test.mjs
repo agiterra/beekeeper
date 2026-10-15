@@ -228,3 +228,27 @@ test("a delivery-unknown row leads with the provider's own words and offers dism
   assert.match(source, /coding-session-pending-turn-dismiss/);
   assert.match(source, /forgetPendingCodingSessionTurn\(/);
 });
+
+test("an interrupted turn reads as a warning with the next step, never as failed or done", () => {
+  const caption = describePendingCodingSessionTurn("interrupted", 90_000);
+  assert.match(caption, /^Interrupted, outcome unconfirmed/);
+  // What happens next, in one line: a terminal receipt from the provider
+  // once the old process exits. Neither word of a verdict appears.
+  assert.match(caption, /terminal receipt follows once the old process exits/);
+  assert.doesNotMatch(caption, /\b(failed|error|done|completed|answered)\b/i);
+  // The age is not part of this sentence: a restart is not a stall.
+  assert.doesNotMatch(caption, /\d+\s*(s|m|h)\b/);
+  const source = readFileSync(
+    new URL("./CodingSessionPendingTurns.tsx", import.meta.url),
+    "utf8",
+  );
+  // Amber ring and amber caption for the interrupted row — the destructive
+  // red stays reserved for stalled/unknown, and the muted grey for waiting.
+  assert.match(source, /interrupted\s*\?\s*"ring-amber-500\/40"/);
+  assert.match(
+    source,
+    /interrupted\s*\?\s*"text-amber-600 dark:text-amber-400"/,
+  );
+  assert.match(source, /interrupted \? "warning" : "neutral"/);
+  assert.match(source, /\{interrupted \? \(\s*<TriangleAlert/);
+});

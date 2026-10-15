@@ -101,9 +101,20 @@ Tags: `d` = `<runId>:<stepId>`, `e` = the 46013 event id, `h`, `schema`.
   "runId": "...", "stepId": "...",
   "requestedEventId": "<64 hex: the 46013>",
   "channelId": "...",
-  "host": {"name": "optional display name"}
+  "host": {"name": "optional display name"},
+  "capabilities": ["gpu", "toolchain:rust"]
 }
 ```
+
+- `capabilities` is the list of **capability tags** the claiming host
+  declares — `host.json` `capabilities`, which the host launcher exports to
+  the provider as `BEEKEEPER_CSP_CAPABILITIES`. Each tag is 1–64 bytes of
+  lowercase ASCII letters, digits, `.`, `_`, `-` and `:`, not starting with
+  `:`, `.` or `-`; at most 32, no duplicates
+  (`beekeeper_core::host_step::is_host_capability_tag`). Tags are free
+  strings: there is no registry, and a project agrees with its hosts on the
+  words. The key is omitted when the host declares nothing, so an older
+  host's claim reads exactly as it did.
 
 ### The claim rule
 
@@ -115,12 +126,32 @@ these hold, in this order (`admit`, then the claim handler):
    it;
 3. `requestedEventId` equals the request event the row records
    (`invalid: claim does not name the recorded request event`);
-4. the row is still open and unexpired. Winning is a single conditional
+4. the claim's `capabilities` cover the step's `requires` — every tag a
+   `run_on_host` step lists under `requires` in the definition the run was
+   created against, matched by exact spelling (`toolchain:rust` does not
+   cover `toolchain:rust-nightly`). A claim that falls short is rejected
+   `HOST_CAPABILITY_MISSING: the step requires [..] and this host declares
+   [..]; missing [..]`, the claim event is stored, and the relay **signs the
+   refusal**: one kind:46014 whose `result` is `disposition: refused` with
+   `refusal.code: HOST_CAPABILITY_MISSING`, no `claimEventId`, `claimedBy`
+   the refused host and `resultEventId` the refused 46022 — the same shape a
+   host's own pre-claim refusal takes, so a reader sees one vocabulary. The
+   row is untouched and stays open for a host that can run the step. This
+   check runs **before** the conditional update, so a host that could never
+   run the step is told that, never that it lost a race. A step without
+   `requires`, or one that is not `run_on_host`, requires nothing;
+5. the row is still open and unexpired. Winning is a single conditional
    `UPDATE` (`beekeeper_db::workflow::claim_host_step`): the first claim to
    land takes the row. A later claim by the **same** host is an accepted
    duplicate (`duplicate: already processed`); a claim by **another** host is
    rejected with `claimed by <64 hex>` naming the winner, so every loser can
    read who executes. A claim after `expiresAt` is rejected `expired`.
+
+A host reads `requires` from its own `actions.yml` when it verifies the
+definition, so a host that does not declare what the step requires declines
+**before claiming** with a 46023 `refused` carrying the same code,
+`HOST_CAPABILITY_MISSING`; the relay's check is the gate for a host that
+claims anyway (an older provider, or a foreign client).
 
 The winning claim is answered `{"status":"claimed"}`. A host MUST wait for
 that admission before producing any effect: a signed claim alone proves
@@ -168,10 +199,12 @@ provider's codes today are `ACTION_DEFINITION_DRIFT`,
 `ACTION_HOST_EXECUTABLE_MISSING`, `ACTION_CHECKOUT_NOT_RECORDED`,
 `ACTION_AGENTS_REPO_NOT_RECORDED`, `ACTION_AGENTS_FETCH_FAILED`,
 `ACTION_NO_TRIGGER_COMMIT`, `ACTION_UNKNOWN` and the other `ACTION_*`
-constants in `crates/beekeeper-session-provider` — but the field is an open
-string on the wire, not a closed vocabulary, and a foreign host may use its
-own (the foreign conformance client answers
-`FOREIGN_EXECUTION_UNSUPPORTED`).
+constants in `crates/beekeeper-session-provider`, and
+`HOST_CAPABILITY_MISSING` (the step's `requires` is not covered by what the
+host declares; the relay signs the same code on a kind:46014 when a host
+claims anyway — § The claim rule, step 4) — but the field is an open string
+on the wire, not a closed vocabulary, and a foreign host may use its own (the
+foreign conformance client answers `FOREIGN_EXECUTION_UNSUPPORTED`).
 
 Bounds the relay enforces: `stdoutTail`/`stderrTail` ≤ 65 536 bytes each, at
 most 8 artifacts, SHAs lowercase 40-hex, event ids lowercase 64-hex, a
@@ -272,4 +305,7 @@ so the row does not sit claimed until expiry.
 Signatures and the "is this the witnessed relay" question are the reader's.
 The relay does not run the command, does not know `actions.yml`, and does not
 verify `definitionHash` against anything a host reports — the host is the
-only party that holds the repository, which is the point.
+only party that holds the repository, which is the point. It does not verify
+that a host *has* the capability it declares, either: `capabilities` is the
+host's own word, taken at face value, and the operator who wrote `host.json`
+is the one it binds.

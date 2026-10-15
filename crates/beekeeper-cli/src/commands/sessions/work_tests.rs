@@ -268,6 +268,7 @@ fn fixture_session(fixture: &Value) -> SessionContext {
         genesis_ref: "ab".repeat(32),
         project_ref: format!("30621:{}:kettle", "1ead".to_owned() + &"0".repeat(60)),
         context: CodingSessionTeamFoldContext {
+            vocabulary: Default::default(),
             channel_ref: FIXTURE_CHANNEL.to_owned(),
             session_ref: FIXTURE_SESSION.to_owned(),
             genesis_ref: "ab".repeat(32),

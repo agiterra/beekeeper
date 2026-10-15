@@ -94,7 +94,15 @@ pub(super) async fn bind_ref_with(
     let bound =
         BoundDeclaration::resolve(wire, session, &args.envelope, Some(&probe), plans).await?;
     require_only_git_ref(&bound.plan, &args.envelope.criteria)?;
-    let delivery_ref = bound.plan.delivery_ref.clone();
+    let Some(delivery) = bound.plan.git_delivery() else {
+        return Err(CliError::Usage(
+            "plan-not-git: this plan names no code repository or delivery ref, so no ref \
+             observation can answer any of its criteria; bind evidence another way"
+                .into(),
+        ));
+    };
+    let delivery_ref = delivery.delivery_ref.to_owned();
+    let repository = delivery.repository.to_owned();
     if let Some(named) = &args.git_ref {
         if named != &delivery_ref {
             return Err(CliError::Usage(format!(
@@ -110,7 +118,6 @@ pub(super) async fn bind_ref_with(
                 .into(),
         )
     })?;
-    let repository = bound.plan.code_repository.clone();
     let (observation, observed) =
         newest_observation(wire, &relay_self, &repository, &delivery_ref).await?;
     if let Some(expected) = &expected {

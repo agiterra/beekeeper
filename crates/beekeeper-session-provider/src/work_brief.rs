@@ -175,6 +175,9 @@ pub struct CommandFacts {
     pub assignment_ref: String,
     /// The seat's role, which decides whether a verdict line is rendered.
     pub role: String,
+    /// The project's role names: the verdict line is rendered when `role`
+    /// is the judging role (`verifier` by default).
+    pub vocabulary: beekeeper_core::role_vocabulary::RoleVocabulary,
     /// The report a verifier is ruling on, when the host could resolve one.
     pub report_ref: Option<String>,
     /// That report's own `assignmentRef` — the builder's assignment a
@@ -534,6 +537,7 @@ fn render_commands(facts: &CommandFacts) -> String {
         genesis_ref,
         assignment_ref,
         role,
+        vocabulary,
         report_ref,
         verdict_assignment_ref,
     } = facts;
@@ -548,7 +552,7 @@ fn render_commands(facts: &CommandFacts) -> String {
          --body - --wake-to lead\n\nThe report body's `assignmentRef` is {assignment_ref}. \
          There is no `--assignment` flag: the assignment id travels in the body."
     );
-    if role.eq_ignore_ascii_case("verifier") {
+    if role.eq_ignore_ascii_case(vocabulary.verdict_role()) {
         let _ = write!(
             out,
             "\n\n  {BEE} sessions verdict --example refutation\n  {BEE} sessions verdict \

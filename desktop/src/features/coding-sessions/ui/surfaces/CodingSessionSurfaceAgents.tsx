@@ -81,6 +81,7 @@ export function CodingSessionSurfaceAgentsPanel({
           actorNames={
             ctx.layout === "umbrella" ? ctx.resolveActorName : undefined
           }
+          channelId={ctx.channelId}
           machine={machine}
           resolveReachability={ctx.resolveReachability}
           // The orchestration's Direct spawns is the one list of subagents

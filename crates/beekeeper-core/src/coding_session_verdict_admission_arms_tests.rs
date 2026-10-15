@@ -218,10 +218,12 @@ fn candidate_with(
         GENESIS,
         mission.founder.public_key().to_hex(),
         mission.seats.clone(),
+        Default::default(),
     );
     let canonical =
         fold_candidate_records(&mission.events, &context).expect("the fixture folds cleanly");
     VerdictAdmissionCandidate {
+        vocabulary: Default::default(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
         founder_pubkey: mission.founder.public_key().to_hex(),

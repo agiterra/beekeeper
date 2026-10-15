@@ -40,7 +40,9 @@ BEEKEEPER_HOST_HOME="$SERVICE_HOME" beekeeper-host check
 BEEKEEPER_HOST_HOME="$SERVICE_HOME" beekeeper-host run
 ```
 
-`--runtime` supports `claude`, `codex` or `goose`; `--model` selects an explicit
+`--runtime` takes `claude`, `codex` or `goose` (built-in drivers) or any other
+lowercase word with `--driver <adapter>` (a runtime you plug in;
+`conformance/acme-acp/` is a worked example). `--model` selects an explicit
 model when supported. Use absolute adapter/provider paths. The commissioned
 host resolves its own restricted credentials; it must not depend on reading
 the owner's key or Keychain later. Do not launch a second host over the same
@@ -106,6 +108,55 @@ An authenticated exact-event readback can establish that an older publication
 was already accepted without submitting it again outside the relay timestamp
 window. An unpublished expired event or a denied readback remains a refusal;
 this is not an indefinite publication guarantee.
+
+## Capability tags: which host runs a step
+
+A worker declares what it has; a step declares what it needs; the relay
+matches the two by exact spelling. Both sides are free strings — `gpu`,
+`toolchain:rust`, `os:macos`, `site:lab-2` — of 1–64 lowercase ASCII letters,
+digits, `.`, `_`, `-` and `:`, at most 32 per list, with no registry: a
+project and its hosts agree on the words.
+
+On the host, `host.json` gains `capabilities`:
+
+```json
+{ "version": 1, "...": "...", "capabilities": ["gpu", "toolchain:rust"] }
+```
+
+The host launcher exports it to the provider as
+`BEEKEEPER_CSP_CAPABILITIES=gpu,toolchain:rust` (comma-separated; the
+provider drops and logs an entry that is not a tag rather than carrying it,
+because the relay would refuse the whole claim for it). Absent or empty means
+the host declares nothing, which is what every host declared before this
+field existed. A host that runs the provider without the launcher sets the
+variable itself.
+
+In `actions.yml`, a `run_on_host` step declares `requires`:
+
+```yaml
+steps:
+  - id: train
+    action: run_on_host
+    command: ["make", "train"]
+    requires: [gpu, "toolchain:rust"]
+```
+
+`requires` is part of the definition and so of its hash; a step without it
+requires nothing and its canonical JSON — and hash — are unchanged. A tag that
+is not a capability tag is refused when the definition is saved
+(`run_on_host requires entry … is not a capability tag`), not first when a
+host reads it.
+
+Selection happens twice, with one code. A host that reads the step from its
+own `actions.yml` and does not declare every tag declines **before
+claiming**: a signed 46023 `refused` with `refusal.code:
+HOST_CAPABILITY_MISSING` naming both lists, echoed by the relay as a 46014 so
+the seat that triggered the run learns no host here can run it. A host that
+claims anyway — an older provider, a foreign client — is refused by the
+relay, which signs the same code on a kind:46014 pointing at the refused
+claim and leaves the row open (NIP-HS § The claim rule, step 4). The relay
+checks coverage, not truth: `capabilities` is the operator's own word in
+`host.json`, and nothing verifies a host that says `gpu` has one.
 
 ## Install one event hook
 

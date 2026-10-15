@@ -19,9 +19,14 @@ use crate::error::CliError;
 
 #[derive(Subcommand)]
 pub enum HostCmd {
-    /// Commission a scoped provider without launching the desktop.
+    /// Set up this machine as an agent host from a terminal: mint its identity,
+    /// name the runtime and its driver, prove the relay admits it. No desktop
+    /// needed; run once, then `bee host install` and `bee agents create`.
     Commission(super::host_commission::CommissionArgs),
-    /// Materialize an authorized project checkout and its pinned agents source.
+    /// Record an existing project checkout and agents-repo clone on this host
+    /// as the project's authorized workspace, after verifying the project on
+    /// the relay, so agents created with `--project` can work in it. No
+    /// desktop needed.
     TrustProject(super::host_project::ProjectArgs),
     /// Ask the running host for its status, as JSON.
     ///
@@ -35,11 +40,14 @@ pub enum HostCmd {
         #[arg(long)]
         bytes: Option<u64>,
     },
-    /// Start the provider if it is not running.
+    /// Start the session provider (the process that runs this machine's
+    /// agents) if it is not running. Needs the host itself up: `bee host
+    /// install`, or `beekeeper-host run` in a terminal.
     Start,
-    /// Stop the provider. The host keeps running and keeps answering.
+    /// Stop the session provider and every agent it runs. The host keeps
+    /// running and keeps answering; `bee host start` brings them back.
     Stop,
-    /// Stop and start the provider, with a clean restart ladder.
+    /// Stop and start the session provider, with a clean restart ladder.
     Restart,
     /// Re-read `host.json` and the identity, then restart onto the result.
     Bind,
@@ -345,9 +353,19 @@ fn host_error(
             registration.path.display(),
             layout::host_log_path(home, instance).display()
         ),
+        // Not installed and never commissioned is the first-run case on a
+        // headless machine: `bee host install` would register a host with no
+        // identity, so the fix is one step earlier.
+        (false, _) if !layout::host_config_path(home, instance).is_file() => format!(
+            "{message} — and this machine has no host.json at {}: commission it first with \
+             `bee host commission --runtime <runtime> --driver <adapter>` (or open Beekeeper, \
+             which writes it), then `bee host install` or `beekeeper-host run` in a terminal",
+            layout::host_config_path(home, instance).display()
+        ),
         (false, _) => format!(
             "{message} — and it is not registered to start: `bee host install`, or on a Mac \
-             nobody logs in to, `sudo bee host install --system --user $USER`"
+             nobody logs in to, `sudo bee host install --system --user $USER`; to try it in \
+             the foreground first, `beekeeper-host run`"
         ),
     })
 }

@@ -57,6 +57,8 @@ export default defineConfig({
       name: "smoke",
       testMatch: [
         "**/smoke.spec.ts",
+        // Round 2 Lane I: one member pill per host-managed availability word.
+        "**/agent-community-states-screenshots.spec.ts",
         "**/dashboard.spec.ts",
         "**/dashboard-relay-health.spec.ts",
         "**/sidebar-offcanvas-rail.spec.ts",

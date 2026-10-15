@@ -80,6 +80,7 @@ pub(crate) async fn commission_host(
         turn_idle_timeout_secs: store.turn_idle_timeout_secs,
         turn_budget: store.turn_budget,
         checkpoint_on_stop: store.checkpoint_on_stop,
+        capabilities: Vec::new(),
         // Resolved by the host itself: it knows where its own sidecars are,
         // and naming a path here would pin the provider this app shipped with
         // across an update of the host.

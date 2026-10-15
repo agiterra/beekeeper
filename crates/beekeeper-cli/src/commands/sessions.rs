@@ -129,7 +129,7 @@ pub mod registry;
 pub mod registry_measure;
 pub mod registry_propose;
 pub mod route;
-mod seat_authority;
+pub(crate) mod seat_authority;
 #[cfg(test)]
 mod seat_authority_tests;
 pub mod whoami;

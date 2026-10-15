@@ -65,13 +65,14 @@ identity is never silently re-homed.
 ## The steps
 
 1. **Resolve prerequisites locally, before any network.** `--home` must be
-   absolute; `--adapter` (and `--provider-command`, if given) must resolve to
-   an executable file; a `--credential-file` must be a regular file with mode
-   `0600`; each `--runtime-install-root` must be a directory that is not the
-   OS home, not the service home, and not inside or around the host's custody
-   directory. Any failure here is a usage error and nothing is written.
+   absolute; `--adapter` or `--driver` (one is required; and
+   `--provider-command`, if given) must resolve to an executable file; a
+   `--credential-file` must be a regular file with mode `0600`; each
+   `--runtime-install-root` must be a directory that is not the OS home, not
+   the service home, and not inside or around the host's custody directory.
+   Any failure here is a usage error and nothing is written.
 2. **Mint or reuse the provider identity.** Load
-   `<home>/<instance>/host/service/session-provider/coding-session-provider.json`
+   `<host>/service/session-provider/coding-session-provider.json`
    (`STORE_FILE_NAME`). If a record for this relay exists, reuse it — a lost
    reply or a retry keeps the same key and `instanceId`. Otherwise
    `mint_provider_record`: generate a key, derive `instanceId` from the pubkey
@@ -121,10 +122,16 @@ and it is idempotent.
 | `<state>/runtime-credentials-source.json` | `{"path": <credential file>}` — a pointer, resolved again at every session start | no (the file it points at is) |
 | `<state>/runtime-installations.json` | `{"runtimes": {"<runtime>-primary": [<roots>]}}` | no |
 
-`<host>` is `layout::host_dir(home, instance)`; `<state>` is
-`<host>/service/session-provider/<provider pubkey>/`. The `instance`
-(production or a named dev instance) comes from the environment
-(`layout::Instance::from_env`). Nothing commission writes names the owner.
+`<host>` is `layout::host_dir(home, instance)` =
+`<home>/.local/state/buzz/host` (production) or
+`<home>/.local/state/buzz-dev/host` (dev instance), with `<home>` the
+`--home` / `BEEKEEPER_HOST_HOME` service home
+(`crates/beekeeper-host-core/src/layout.rs`). `<state>` is
+`<host>/service/session-provider/<provider pubkey>/`. The `instance` comes
+from `BEEKEEPER_HOST_INSTANCE` (`layout::Instance::from_env`). The host's
+control socket defaults to `<host>/host.sock` (`BEEKEEPER_HOST_SOCK`
+overrides it); an AF_UNIX path is capped near 104 bytes, so keep the service
+home short. Nothing commission writes names the owner.
 
 **No secret travels.** The credential file's contents are never read by
 `commission`; only its path and mode are checked. The attestation is public
@@ -132,14 +139,16 @@ data. The provider key leaves the machine only as signatures.
 
 ## The runtime descriptor
 
-`--runtime` picks the descriptor written into `host.json`. In the code at the
-time of writing it accepts `claude`, `codex` or `goose` and maps each to its
-driver (`claude-agent-acp`, `codex-acp`, `goose-acp`); the pluggable slice
-(spec Step 1, Lane A) extends this so that **any** name is accepted when
-`--driver <command>` is given, with `--driver-arg` and a repeatable
-`--credential-env VAR`, and adds `credentialEnv`/`credentialSource` to the
-descriptor. See `docs/runtime-descriptor.md` once that lands; the fields in
-`host.json` are the descriptor's and this page does not restate them.
+`--runtime` picks the descriptor written into `host.json`. `claude`, `codex`
+and `goose` map to their built-in drivers (`claude-agent-acp`, `codex-acp`,
+`goose-acp`) and take `--adapter <path>`; **any other word** is accepted
+when `--driver <command>` names the ACP adapter, whose file name becomes
+the driver slug. `--driver-arg` and `--credential-env VAR` repeat;
+`--credential-source <label>` is echoed into 44223 metadata and
+auth-failure items, never a secret
+(`crates/beekeeper-cli/src/commands/host_commission.rs`). The fields are
+[`docs/runtime-descriptor.md`](../runtime-descriptor.md)'s and this page
+does not restate them.
 
 ## What a reader can verify from the relay
 

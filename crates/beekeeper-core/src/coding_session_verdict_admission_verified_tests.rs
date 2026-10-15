@@ -220,11 +220,13 @@ fn candidate(
         GENESIS,
         mission.founder.public_key().to_hex(),
         mission.seats.clone(),
+        Default::default(),
     );
     let canonical =
         fold_candidate_records(&mission.transactions, &context).expect("the fixture folds cleanly");
     let gates = folded(&mission.provider, SESSION, GENESIS, &observations);
     VerdictAdmissionCandidate {
+        vocabulary: Default::default(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
         founder_pubkey: mission.founder.public_key().to_hex(),

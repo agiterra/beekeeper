@@ -46,8 +46,8 @@ Exactly these keys. An unknown key is a refusal, never an ignored key.
 | `id` | slug | yes | plan id, unique within the project, slug grammar below, ≤ 64 bytes |
 | `status` | enum | yes | `in-force` \| `superseded` |
 | `title` | string | yes | 1–200 bytes, single line |
-| `code_repository` | string | yes | a repository id (1–64 bytes, `[a-z0-9][a-z0-9-]*`), resolved to a project-associated repository at adoption |
-| `delivery_ref` | string | yes | a full git ref, e.g. `refs/heads/main`; 1–256 bytes; no glob |
+| `code_repository` | string | when any proof is `git-ref` | a repository id (1–64 bytes, `[a-z0-9][a-z0-9-]*`), resolved to a project-associated repository at adoption |
+| `delivery_ref` | string | when any proof is `git-ref` | a full git ref, e.g. `refs/heads/main`; 1–256 bytes; no glob |
 | `criteria` | list | yes | 1–64 entries, order is presentation only |
 | `retired_criteria` | list of slug | yes | may be empty; default `[]` is **written**, not implied |
 

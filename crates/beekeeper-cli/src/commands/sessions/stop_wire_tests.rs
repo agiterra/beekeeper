@@ -106,6 +106,7 @@ fn signed_receipt(
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     };
     let event = build_coding_session_lifecycle_receipt(
         uuid::Uuid::parse_str(CHANNEL).expect("channel"),
@@ -543,6 +544,48 @@ fn a_stopped_receipt_naming_another_target_or_signer_is_never_a_confirmation() {
     );
     assert!(matches!(
         classify_stop_receipts(&[right], CHANNEL, "cmd-1", &authority, &wanted),
+        Ok(Some(StopAnswer::Stopped { .. }))
+    ));
+}
+
+/// Round 2 Lane D: a `stopped` receipt that discloses the pre-stop
+/// checkpoint ran out of budget (`checkpointSkipped: "timeout"`) is still a
+/// signed Stopped — the stop happened; only the checkpoint did not.
+#[test]
+fn a_stopped_receipt_disclosing_a_skipped_checkpoint_still_counts_as_stopped() {
+    let provider = nostr::Keys::generate();
+    let authority = provider.public_key().to_hex();
+    let wanted = target(SESSION, 2);
+    let receipt = LifecycleReceipt {
+        schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+        command_id: "cmd-1".to_owned(),
+        status: ReceiptStatus::Stopped,
+        session: Some(wanted.clone()),
+        error: None,
+        turn_id: None,
+        rewind: None,
+        quiescence: None,
+        checkpoint_skipped: Some(
+            beekeeper_core::coding_session_payload::CHECKPOINT_SKIPPED_TIMEOUT.to_owned(),
+        ),
+    };
+    let event = build_coding_session_lifecycle_receipt(
+        uuid::Uuid::parse_str(CHANNEL).expect("channel"),
+        "cmd-1",
+        &serde_json::to_string(&receipt).expect("receipt"),
+    )
+    .expect("receipt builder")
+    .sign_with_keys(&provider)
+    .expect("sign receipt");
+    let event = serde_json::to_value(event).expect("event json");
+    assert!(
+        event["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("\"checkpointSkipped\":\"timeout\"")),
+        "the fixture carries the disclosure on the wire"
+    );
+    assert!(matches!(
+        classify_stop_receipts(&[event], CHANNEL, "cmd-1", &authority, &wanted),
         Ok(Some(StopAnswer::Stopped { .. }))
     ));
 }

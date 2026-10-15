@@ -294,6 +294,45 @@ test("a stopped execution (a session, no error) is a strict lifecycle receipt", 
   );
 });
 
+// Round 2 Lane D: `checkpointSkipped: "timeout"` is the one optional key a
+// `stopped` receipt may carry (NIP-CSL § Checkpoint before stop). Before this
+// the strict ingress dropped the signed stop that disclosed it.
+test("a stopped receipt may say checkpointSkipped: timeout, and only that", () => {
+  const stopped = {
+    schema: "buzz-coding-session-lifecycle-receipt/v1",
+    commandId: "cmd-1",
+    status: "stopped",
+    session: {
+      driver: "claude-agent-acp",
+      instanceId: "0123456789abcdef",
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      generation: 1,
+    },
+    error: null,
+  };
+  const accepted = { ...stopped, checkpointSkipped: "timeout" };
+  assert.equal(
+    hasStrictLifecycleReceiptJson(JSON.stringify(accepted), accepted) &&
+      hasStrictLifecycleReceiptValues(accepted),
+    true,
+    "a stop that ran out of checkpoint budget is still a strict stop",
+  );
+  for (const [label, receipt] of [
+    ["null", { ...stopped, checkpointSkipped: null }],
+    ["another value", { ...stopped, checkpointSkipped: "error" }],
+    [
+      "on created",
+      { ...stopped, status: "created", checkpointSkipped: "timeout" },
+    ],
+  ]) {
+    assert.equal(
+      hasStrictLifecycleReceiptJson(JSON.stringify(receipt), receipt),
+      false,
+      `${label} must be refused`,
+    );
+  }
+});
+
 test("a receipt that tries to carry a usage block is refused", () => {
   const receipt = {
     schema: "buzz-coding-session-lifecycle-receipt/v1",

@@ -290,6 +290,11 @@ class CodingSessionReceipt {
   /// ([CodingSessionReceiptStatus.carriesQuiescence]); null otherwise.
   final String? quiescence;
 
+  /// `timeout` on a `stopped` receipt whose provider ran out of checkpoint
+  /// budget before the stop (NIP-CSL § Checkpoint before stop); null
+  /// otherwise, including on a stop that checkpointed or was never asked to.
+  final String? checkpointSkipped;
+
   const CodingSessionReceipt({
     required this.ref,
     required this.commandId,
@@ -298,6 +303,7 @@ class CodingSessionReceipt {
     this.error,
     this.turnId,
     this.quiescence,
+    this.checkpointSkipped,
   });
 
   /// True for a per-turn stage; see [CodingSessionReceiptStatus.isTurnStage].

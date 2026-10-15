@@ -213,10 +213,12 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         GENESIS,
         mission.founder.public_key().to_hex(),
         mission.seats.clone(),
+        Default::default(),
     );
     let canonical =
         fold_candidate_records(&mission.events, &context).expect("the fixture folds cleanly");
     VerdictAdmissionCandidate {
+        vocabulary: Default::default(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
         founder_pubkey: mission.founder.public_key().to_hex(),
@@ -691,6 +693,7 @@ fn an_unauthorized_disposition_is_not_canonical_and_never_admits() {
         GENESIS,
         founder.public_key().to_hex(),
         seats,
+        Default::default(),
     );
     let canonical = fold_candidate_records(&[assignment, report, ruling], &context)
         .expect("the fixture folds cleanly");
@@ -698,6 +701,7 @@ fn an_unauthorized_disposition_is_not_canonical_and_never_admits() {
     let pusher = builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[VerdictAdmissionCandidate {
+            vocabulary: Default::default(),
             session_ref: SESSION.into(),
             genesis_ref: GENESIS.into(),
             founder_pubkey: owner.clone(),
@@ -881,6 +885,7 @@ fn a_superseded_approval_no_longer_admits() {
         GENESIS,
         founder.public_key().to_hex(),
         seats,
+        Default::default(),
     );
     let events = vec![assignment, report_event, approval.clone(), retraction];
     let canonical = fold_candidate_records(&events, &context).expect("the fixture folds cleanly");
@@ -895,6 +900,7 @@ fn a_superseded_approval_no_longer_admits() {
     let pusher = builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[VerdictAdmissionCandidate {
+            vocabulary: Default::default(),
             session_ref: SESSION.into(),
             genesis_ref: GENESIS.into(),
             founder_pubkey: owner.clone(),
@@ -969,6 +975,7 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
     });
     let outcome = evaluate_verdict_admission(
         &[VerdictAdmissionCandidate {
+            vocabulary: Default::default(),
             session_ref: SESSION.into(),
             genesis_ref: GENESIS.into(),
             founder_pubkey: owner.clone(),
@@ -995,3 +1002,70 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
 /// and this one is already 900 lines.
 #[path = "coding_session_verdict_admission_founder_tests.rs"]
 mod founders;
+
+// ── the project's own role names ─────────────────────────────────────────
+
+/// Arm (C) clears on the project's judging role: in a `captain` / `qa`
+/// project a `qa` seat's `not-refuted` admits a seat's push, and the same
+/// records judged under the default vocabulary admit nothing, because there
+/// the judging seat is `verifier` and nobody holds it.
+#[test]
+fn a_qa_seat_clears_a_push_in_a_captain_qa_project() {
+    let captain_qa = crate::role_vocabulary::RoleVocabulary::from_team(
+        Some("captain"),
+        Some(&["qa".to_owned()]),
+    )
+    .expect("a vocabulary");
+    let mut mission = mission(
+        Some(HEAD_SHA),
+        Some("whoami/cli"),
+        CodingSessionTeamDispositionDecision::Approve,
+        true,
+    );
+    for seat in &mut mission.seats {
+        seat.role = match seat.role.as_str() {
+            "lead" => "captain".to_owned(),
+            "verifier" => "qa".to_owned(),
+            other => other.to_owned(),
+        };
+    }
+    let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
+
+    let under = |vocabulary: crate::role_vocabulary::RoleVocabulary| {
+        let context = verdict_admission_fold_context(
+            CHANNEL,
+            SESSION,
+            GENESIS,
+            mission.founder.public_key().to_hex(),
+            mission.seats.clone(),
+            vocabulary.clone(),
+        );
+        let canonical =
+            fold_candidate_records(&mission.events, &context).expect("the fixture folds cleanly");
+        VerdictAdmissionCandidate {
+            vocabulary,
+            canonical,
+            ..candidate(&mission)
+        }
+    };
+
+    let (session_ref, head_sha) = verifier_evidence(evaluate_verdict_admission(
+        &[under(captain_qa)],
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
+    ));
+    assert_eq!(
+        (session_ref.as_str(), head_sha.as_str()),
+        (SESSION, HEAD_SHA)
+    );
+
+    let outcome = evaluate_verdict_admission(
+        &[under(Default::default())],
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
+    );
+    assert!(
+        !outcome.is_admitted(),
+        "under the default vocabulary neither the captain's disposition nor qa's clearance \
+         is canonical, so nothing admits: {outcome:?}"
+    );
+}

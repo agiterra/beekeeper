@@ -570,6 +570,11 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         session_ref: request.session_ref.clone(),
         genesis_ref: request.genesis_ref.clone(),
         founder_pubkey: request.founder_pubkey.clone(),
+        // Lane E: the desktop holds no project team record at this call;
+        // the foundation names (`lead`, `verifier`) judge here. A project
+        // whose team.yml renames them is not yet honoured on this surface;
+        // see `RoleVocabulary::foundation`.
+        vocabulary: beekeeper_core_pkg::role_vocabulary::RoleVocabulary::foundation().clone(),
         canonical: records.clone(),
         active_seats: request
             .active_seats

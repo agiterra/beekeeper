@@ -828,6 +828,9 @@ async fn handle_workflow_def(
                         project,
                         &self_bytes,
                         ProjectActionCapability::PublishDefinition,
+                        // No project team record is in hand at this handler; the default
+                        // lead name applies. See `RoleVocabulary::foundation`.
+                        beekeeper_core::role_vocabulary::RoleVocabulary::foundation(),
                     )
                     .await
                 }
@@ -892,6 +895,9 @@ async fn handle_workflow_def(
                         project,
                         &self_bytes,
                         ProjectActionCapability::PublishDefinition,
+                        // No project team record is in hand at this handler; the default
+                        // lead name applies. See `RoleVocabulary::foundation`.
+                        beekeeper_core::role_vocabulary::RoleVocabulary::foundation(),
                     )
                     .await;
                 if let crate::handlers::project_action_grant::ProjectActionDelegation::Refused(
@@ -1102,6 +1108,9 @@ async fn handle_workflow_trigger(
                         project,
                         &self_bytes,
                         ProjectActionCapability::TriggerManualRun,
+                        // No project team record is in hand at this handler; the default
+                        // lead name applies. See `RoleVocabulary::foundation`.
+                        beekeeper_core::role_vocabulary::RoleVocabulary::foundation(),
                     )
                     .await,
                     crate::handlers::project_action_grant::ProjectActionDelegation::Admitted { .. }

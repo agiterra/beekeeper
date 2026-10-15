@@ -27,6 +27,7 @@ use beekeeper_core::coding_session_team_transaction::{
     fold_coding_session_team_transactions, CodingSessionTeamFoldContext,
     CodingSessionTeamTransactionBody,
 };
+use beekeeper_core::role_vocabulary::RoleVocabulary;
 use nostr::Event;
 
 /// The assignment named no commit at all: `baseSha` was absent.
@@ -57,12 +58,10 @@ pub const VERIFICATION_INPUT_UNVERIFIED: &str = "VERIFICATION_INPUT_UNVERIFIED";
 /// commands against one; both publish a result that names a commit, and both
 /// are wrong in a way nobody can see if the tree was not that commit. A
 /// builder's assignment describes work to *do*, so it is not fenced: it starts
-/// wherever the lead cut the seat.
-pub fn role_verifies_a_commit(role: &str) -> bool {
-    matches!(
-        role.trim().to_ascii_lowercase().as_str(),
-        "verifier" | "runner"
-    )
+/// wherever the lead cut the seat. Which roles those are is the project's
+/// `team.yml verification_roles:`, carried in `vocabulary`.
+pub fn role_verifies_a_commit(role: &str, vocabulary: &RoleVocabulary) -> bool {
+    vocabulary.verifies_a_commit(role.trim().to_ascii_lowercase().as_str())
 }
 
 /// The operation id of a turn whose text is the two-key assignment pointer.
@@ -117,7 +116,7 @@ pub fn turn_input_requirement(
     role: &str,
     operation_id: &str,
 ) -> InputRequirement {
-    if !role_verifies_a_commit(role) {
+    if !role_verifies_a_commit(role, &context.vocabulary) {
         return InputRequirement::NotRequired;
     }
     let Ok(fold) = fold_coding_session_team_transactions(events, context) else {
@@ -552,6 +551,7 @@ mod tests {
             session_ref,
             genesis_ref,
             founder_pubkey: founder.public_key().to_hex(),
+            vocabulary: Default::default(),
             active_seats: vec![CodingSessionTeamActiveSeat {
                 actor_pubkey: actor.clone(),
                 role: role.to_owned(),
@@ -569,12 +569,57 @@ mod tests {
 
     #[test]
     fn only_a_commit_bound_role_is_fenced() {
-        assert!(role_verifies_a_commit("verifier"));
-        assert!(role_verifies_a_commit("runner"));
-        assert!(role_verifies_a_commit(" Verifier "));
+        let default = RoleVocabulary::default();
+        assert!(role_verifies_a_commit("verifier", &default));
+        assert!(role_verifies_a_commit("runner", &default));
+        assert!(role_verifies_a_commit(" Verifier ", &default));
         for open in ["builder", "lead", "designer", "architect", ""] {
-            assert!(!role_verifies_a_commit(open), "{open} must not be fenced");
+            assert!(
+                !role_verifies_a_commit(open, &default),
+                "{open} must not be fenced"
+            );
         }
+    }
+
+    /// The fence follows the project's `verification_roles:`: a `qa` seat is
+    /// fenced where a `verifier` is not, and the fold context carries it.
+    #[test]
+    fn the_fence_reads_the_projects_own_verification_roles() {
+        let qa = RoleVocabulary::from_team(Some("captain"), Some(&["qa".to_owned()]))
+            .expect("a vocabulary");
+        assert!(role_verifies_a_commit("qa", &qa));
+        assert!(role_verifies_a_commit(" QA ", &qa));
+        assert!(!role_verifies_a_commit("verifier", &qa));
+        assert!(!role_verifies_a_commit("runner", &qa));
+        assert!(!role_verifies_a_commit("captain", &qa));
+
+        let mut fixture = fixture("qa", Some(&"ab".repeat(20)));
+        fixture.context.vocabulary = qa.clone();
+        let requirement = turn_input_requirement(
+            &fixture.events,
+            &fixture.context,
+            "assignment-turn",
+            &fixture.actor,
+            "qa",
+            &fixture.assignment_ref,
+        );
+        assert!(
+            matches!(requirement, InputRequirement::Required { .. }),
+            "a qa assignment is fenced under its own vocabulary: {requirement:?}"
+        );
+        let builder = turn_input_requirement(
+            &fixture.events,
+            &fixture.context,
+            "assignment-turn",
+            &fixture.actor,
+            "verifier",
+            &fixture.assignment_ref,
+        );
+        assert_eq!(
+            builder,
+            InputRequirement::NotRequired,
+            "the foundation's `verifier` is not a verification role of this project"
+        );
     }
 
     #[test]

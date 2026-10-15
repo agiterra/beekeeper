@@ -14,7 +14,7 @@ fn fixture() -> (
         runtimes:serde_json::from_value(serde_json::json!([{"instanceRef":"codex-primary","driver":"codex-acp","runtime":"codex",
             "agentCommand":"/operator/not-on-path/node","agentArgs":["/operator/codex/adapter.js"],"defaultModel":"chosen-model",
             "allowedModels":["chosen-model","other"],"discoverModels":false,"titleModel":null}])).unwrap(),
-        max_sessions:Some(7),turn_idle_timeout_secs:Some(123),turn_budget:Some(91),checkpoint_on_stop:false,provider_command:Some(home.path().join("bin/provider")),
+        max_sessions:Some(7),turn_idle_timeout_secs:Some(123),turn_budget:Some(91),checkpoint_on_stop:false,capabilities:Vec::new(),provider_command:Some(home.path().join("bin/provider")),
         written_at:"2026-10-12T00:00:00Z".into()};
     crate::provision::write_commissioning(home.path(), &config, &record).unwrap();
     (home, owner, record, config)

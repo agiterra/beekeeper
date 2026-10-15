@@ -7,6 +7,15 @@
 //! when the register accepted it. A cold `REQ` for kind 24224 is answered
 //! from that register (`super::req`), so an idle provider stays readable
 //! between heartbeats and a dead one reads as expired, then absent.
+//!
+//! Admission is channel membership (ledger 406 F4): the relay does not look
+//! up whether the signer has authored a 44223 here — that is a Postgres
+//! query per heartbeat on a path that runs every second — so instead the
+//! register caps live instance keys per (channel, pubkey) at
+//! [`PROVIDER_PRESENCE_INSTANCE_CAP`] and the ninth is refused with
+//! [`PRESENCE_INSTANCE_CAP_REFUSAL`]. Readers still verify the provider key
+//! and `instanceId` against the session's 44223, so a stray heartbeat never
+//! makes a session read `live`.
 
 use std::sync::Arc;
 
@@ -25,6 +34,28 @@ use crate::state::AppState;
 /// Same allowance the lease envelope grants.
 const MAX_FUTURE_SKEW_SECS: u64 =
     beekeeper_core::coding_session_lease::CODING_SESSION_LEASE_MAX_FUTURE_SKEW_SECS;
+
+/// The `OK false` code a capped heartbeat is refused with.
+pub(crate) const PRESENCE_INSTANCE_CAP_REFUSAL: &str = "PROVIDER_PRESENCE_INSTANCE_CAP";
+
+/// What a register outcome means for admission: `Ok(true)` fan out,
+/// `Ok(false)` accepted silently (replay), `Err` the `OK false` message.
+pub(crate) fn admission_of(outcome: &PresenceApplyOutcome) -> Result<bool, String> {
+    match outcome {
+        PresenceApplyOutcome::Applied(_) => Ok(true),
+        PresenceApplyOutcome::Duplicate(_) => Ok(false),
+        PresenceApplyOutcome::Conflict(_) => {
+            Err("invalid: conflicting event for existing presence seq".into())
+        }
+        PresenceApplyOutcome::Stale(_) => Err("invalid: stale presence seq".into()),
+        PresenceApplyOutcome::Capped {
+            live_instances,
+            cap,
+        } => Err(format!(
+            "restricted: {PRESENCE_INSTANCE_CAP_REFUSAL}: this key already holds {live_instances} live presence instances in this channel (cap {cap}); a new instanceId is admitted once one expires"
+        )),
+    }
+}
 
 /// Validate and atomically register one kind-24224 WebSocket event.
 // Transport context arrives as separate values from the existing event handler,
@@ -108,22 +139,34 @@ async fn admit_provider_presence(
         .await
         .map_err(|error| format!("error: provider presence register failed: {error}"))?;
 
-    match outcome {
-        PresenceApplyOutcome::Applied(_) => {
-            super::event::fan_out_admitted_channel_ephemeral(
-                event,
-                presence.channel_id,
-                conn_id,
-                &state,
-                &conn.tenant,
-            )
-            .await;
-            Ok(())
-        }
-        PresenceApplyOutcome::Duplicate(_) => Ok(()),
-        PresenceApplyOutcome::Conflict(_) => {
-            Err("invalid: conflicting event for existing presence seq".into())
-        }
-        PresenceApplyOutcome::Stale(_) => Err("invalid: stale presence seq".into()),
+    if admission_of(&outcome)? {
+        super::event::fan_out_admitted_channel_ephemeral(
+            event,
+            presence.channel_id,
+            conn_id,
+            &state,
+            &conn.tenant,
+        )
+        .await;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beekeeper_pubsub::provider_presence::PROVIDER_PRESENCE_INSTANCE_CAP;
+
+    #[test]
+    fn a_capped_heartbeat_is_refused_with_the_cap_code_and_nothing_else_changes() {
+        let refused = admission_of(&PresenceApplyOutcome::Capped {
+            live_instances: 8,
+            cap: PROVIDER_PRESENCE_INSTANCE_CAP,
+        })
+        .expect_err("capped is a refusal");
+        assert!(refused.starts_with("restricted: PROVIDER_PRESENCE_INSTANCE_CAP: "));
+        assert!(refused.contains("8 live presence instances"));
+        assert!(refused.contains("(cap 8)"));
+        assert_eq!(PROVIDER_PRESENCE_INSTANCE_CAP, 8);
     }
 }

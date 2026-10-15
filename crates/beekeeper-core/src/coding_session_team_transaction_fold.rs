@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 
 use nostr::Event;
 
+use crate::role_vocabulary::RoleVocabulary;
+
 use super::{
     validate_coding_session_team_transaction_envelope,
     validate_coding_session_team_transaction_supersession, validate_event_id, validate_role,
@@ -45,9 +47,16 @@ pub struct CodingSessionTeamFoldContext {
     pub genesis_ref: String,
     /// Pubkey of the genesis signer.
     pub founder_pubkey: String,
-    /// Current signed seat projection; only exact `lead` and `verifier` roles
-    /// affect the v1 authority matrix.
+    /// Current signed seat projection; only the exact lead and judging roles
+    /// of [`Self::vocabulary`] affect the v1 authority matrix.
     pub active_seats: Vec<CodingSessionTeamActiveSeat>,
+    /// The role names this project's team manifest gives the authority
+    /// matrix: which seat is the lead, which seat's refutations count.
+    ///
+    /// Built from `team.yml` by the caller that holds it; a caller with no
+    /// team record passes [`RoleVocabulary::foundation`]'s clone, which is
+    /// the default (`lead` / `verifier`) and is deliberately greppable.
+    pub vocabulary: RoleVocabulary,
     /// Current signed grant projection. Only grants with `may_steer=true`
     /// qualify an operator for founder/lead operations.
     pub active_grants: Vec<CodingSessionTeamActiveGrant>,
@@ -92,8 +101,16 @@ impl CodingSessionTeamFoldContext {
             .any(|seat| seat.actor_pubkey == author && seat.role == role)
     }
 
+    /// Whether `author` holds the judging seat — the vocabulary's first
+    /// verification role, `verifier` by default — whose refutations the
+    /// matrix authorizes and whose ruling clears a completion.
+    pub(super) fn is_active_verdict_role(&self, author: &str) -> bool {
+        self.is_active_role(author, self.vocabulary.verdict_role())
+    }
+
     /// Whether `author` may act for the mission as a whole: the founder, an
-    /// active `lead` seat, or an actor holding a steer grant.
+    /// active lead seat (the vocabulary's lead role), or an actor holding a
+    /// steer grant.
     ///
     /// Public since batch 2 lane B2 so `bee sessions policy set|clear` can
     /// pre-check standing against the same context the fold judges with,
@@ -102,7 +119,7 @@ impl CodingSessionTeamFoldContext {
     /// whether a published record counts.
     pub fn may_lead(&self, author: &str) -> bool {
         author == self.founder_pubkey
-            || self.is_active_role(author, "lead")
+            || self.is_active_role(author, self.vocabulary.lead())
             || self
                 .active_grants
                 .iter()
@@ -455,7 +472,7 @@ pub fn fold_coding_session_team_transactions(
         );
     }
 
-    let mut assignments = settle_assignments(&records, &active, &mut conflicts);
+    let mut assignments = settle_assignments(&records, &active, &mut conflicts, context);
     let settled: HashMap<&str, bool> = assignments
         .iter()
         .map(|state| (state.assignment_event_id.as_str(), state.settled))
@@ -740,7 +757,7 @@ fn is_authorized(
         }
         CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation {
             ..
-        }) => context.is_active_role(&record.author, "verifier"),
+        }) => context.is_active_verdict_role(&record.author),
         CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition {
             ..
         }) => context.may_lead(&record.author),
@@ -921,6 +938,10 @@ fn sort_indices(indices: &mut [usize], records: &[Record<'_>]) {
 #[cfg(test)]
 #[path = "coding_session_team_transaction_fold_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "coding_session_role_vocabulary_fixture_tests.rs"]
+mod role_vocabulary_fixture_tests;
 
 #[cfg(test)]
 #[path = "coding_session_team_transaction_fold_settlement_tests.rs"]

@@ -18,6 +18,7 @@ use beekeeper_core::coding_session_team_transaction::{
     CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat,
 };
 use beekeeper_core::kind::{KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_SYSTEM_MESSAGE};
+use beekeeper_core::role_vocabulary::RoleVocabulary;
 use nostr::Event;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -159,12 +160,38 @@ pub(super) async fn fetch_trusted_relay_self(client: &BeekeeperClient) -> Result
     Ok(relay_self.to_ascii_lowercase())
 }
 
-/// Read the relay-receipt-backed accepted authority chain for one genesis.
+/// Read the relay-receipt-backed accepted authority chain for one genesis,
+/// under the default role vocabulary.
+///
+/// For callers that hold no team record; see [`RoleVocabulary::foundation`].
+/// A caller that has read the project's `team.yml` uses
+/// [`fetch_projected_authority_with`].
 pub(super) async fn fetch_projected_authority(
     client: &BeekeeperClient,
     channel: &str,
     genesis: &str,
     founder: &str,
+) -> Result<ProjectedAuthority, CliError> {
+    fetch_projected_authority_with(
+        client,
+        channel,
+        genesis,
+        founder,
+        RoleVocabulary::foundation(),
+    )
+    .await
+}
+
+/// Read the relay-receipt-backed accepted authority chain for one genesis.
+///
+/// `vocabulary.lead()` is the seat that may grant non-lead seats and may
+/// never manage its own role — the rule each accepted link is re-judged by.
+pub(super) async fn fetch_projected_authority_with(
+    client: &BeekeeperClient,
+    channel: &str,
+    genesis: &str,
+    founder: &str,
+    vocabulary: &RoleVocabulary,
 ) -> Result<ProjectedAuthority, CliError> {
     let relay_self = fetch_trusted_relay_self(client).await?;
     let transitions = client
@@ -195,13 +222,14 @@ pub(super) async fn fetch_projected_authority(
                 "relay returned malformed authority receipt: {error}"
             ))
         })?;
-    project_receipt_backed_authority_chain(
+    project_receipt_backed_authority_chain_with(
         &transitions,
         &receipts,
         channel,
         genesis,
         founder,
         &relay_self,
+        vocabulary,
     )
     .map_err(|error| CliError::Other(format!("invalid accepted authority chain: {error}")))
 }
@@ -276,6 +304,10 @@ fn validate_accepted_authority_transition(
     Ok((event.pubkey.to_hex(), payload))
 }
 
+/// [`project_receipt_backed_authority_chain_with`] under the default role
+/// vocabulary. Production callers go through [`fetch_projected_authority`];
+/// this form exists for the chain tests, which hold no team record.
+#[cfg(test)]
 pub(super) fn project_receipt_backed_authority_chain(
     transition_events: &[Event],
     receipt_events: &[Event],
@@ -284,6 +316,30 @@ pub(super) fn project_receipt_backed_authority_chain(
     founder: &str,
     relay_self: &str,
 ) -> Result<ProjectedAuthority, String> {
+    project_receipt_backed_authority_chain_with(
+        transition_events,
+        receipt_events,
+        channel,
+        genesis,
+        founder,
+        relay_self,
+        RoleVocabulary::foundation(),
+    )
+}
+
+/// Fold the receipt-backed chain, re-judging each accepted link's signer
+/// against `vocabulary.lead()` — the one seat that may grant non-lead seats
+/// and may never grant or revoke its own role.
+pub(super) fn project_receipt_backed_authority_chain_with(
+    transition_events: &[Event],
+    receipt_events: &[Event],
+    channel: &str,
+    genesis: &str,
+    founder: &str,
+    relay_self: &str,
+    vocabulary: &RoleVocabulary,
+) -> Result<ProjectedAuthority, String> {
+    let lead_role = vocabulary.lead();
     let mut transitions = BTreeMap::new();
     for event in transition_events {
         let event_id = event.id.to_hex();
@@ -387,7 +443,7 @@ pub(super) fn project_receipt_backed_authority_chain(
             .is_some_and(|grant: &CodingSessionTeamActiveGrant| grant.may_steer);
         let signer_is_lead = seats
             .get(signer)
-            .is_some_and(|seat: &CodingSessionTeamActiveSeat| seat.role == "lead");
+            .is_some_and(|seat: &CodingSessionTeamActiveSeat| seat.role == lead_role);
         // The claim as it stands *before* this link, which is what a
         // `transfer`'s signer is judged against.
         let claim_before = fold_current_claim(claim_links.iter().cloned());
@@ -454,7 +510,7 @@ pub(super) fn project_receipt_backed_authority_chain(
         if signer_is_lead
             && !signer_is_founder
             && !signer_is_operator
-            && payload.role.as_deref() == Some("lead")
+            && payload.role.as_deref() == Some(lead_role)
         {
             return Err("active lead cannot grant or revoke lead authority".into());
         }

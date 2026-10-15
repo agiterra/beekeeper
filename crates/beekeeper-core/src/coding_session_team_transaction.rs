@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
+use crate::role_vocabulary::RoleVocabulary;
 
 // Decoding, envelope validation and the correction rules live in a sibling
 // file for the same reason.
@@ -74,10 +75,13 @@ pub const CODING_SESSION_TEAM_DECISION_FOUNDER: &str = "founder";
 /// without `baseSha` the seat resolves its own starting point, and a hired
 /// seat's worktree is cut from the trunk, not from the commit under judgement.
 ///
-/// This is the single place the rule names its roles. Other crates read this
-/// constant rather than restating the list; a restated list drifts, and a
-/// drifted list silently stops requiring the input.
-pub const ROLES_REQUIRING_VERIFICATION_INPUT: [&str; 2] = ["verifier", "runner"];
+/// Since 2026-10-14 this is the **default** list — the one a project gets
+/// when its `team.yml` names no `verification_roles:`. The rule itself reads
+/// the project's [`RoleVocabulary`]; this constant exists for examples and
+/// schema text that describe the default, never for a decision. A decision
+/// reads [`role_requires_verification_input_in`].
+pub const ROLES_REQUIRING_VERIFICATION_INPUT: [&str; 2] =
+    crate::role_vocabulary::DEFAULT_VERIFICATION_ROLES;
 
 /// Which stance a validation takes toward the verification-input rule.
 ///
@@ -104,13 +108,24 @@ pub enum CodingSessionTeamTransactionValidation {
     Recorded,
 }
 
-/// Whether an assignment in `role` must carry `baseSha`.
+/// Whether an assignment in `role` must carry `baseSha`, under the default
+/// vocabulary.
 ///
-/// Membership of [`ROLES_REQUIRING_VERIFICATION_INPUT`], compared against the
-/// exact wire token in `assigneeRole`.
+/// For callers that hold no team record; see [`RoleVocabulary::foundation`]
+/// for what that means. A caller with the project's manifest in hand uses
+/// [`role_requires_verification_input_in`].
 #[must_use]
 pub fn role_requires_verification_input(role: &str) -> bool {
-    ROLES_REQUIRING_VERIFICATION_INPUT.contains(&role)
+    role_requires_verification_input_in(role, RoleVocabulary::foundation())
+}
+
+/// Whether an assignment in `role` must carry `baseSha` under `vocabulary`.
+///
+/// Membership of the vocabulary's verification roles, compared against the
+/// exact wire token in `assigneeRole`.
+#[must_use]
+pub fn role_requires_verification_input_in(role: &str, vocabulary: &RoleVocabulary) -> bool {
+    vocabulary.verifies_a_commit(role)
 }
 
 /// Exact refusal for an assignment in a verification role with no `baseSha`.
@@ -571,22 +586,43 @@ impl CodingSessionTeamTransactionPayload {
     /// [`Self::validate_recorded`] — see
     /// [`CodingSessionTeamTransactionValidation`] for why the two differ.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_for(CodingSessionTeamTransactionValidation::Publication)
+        self.validate_with(RoleVocabulary::foundation())
+    }
+
+    /// Validate for publication under the project's own role vocabulary.
+    ///
+    /// Identical to [`Self::validate`] except that *which* roles must name a
+    /// `baseSha` is read from `vocabulary` — the team manifest's
+    /// `verification_roles:` — rather than from the default list. A writer
+    /// that holds the team record calls this one.
+    pub fn validate_with(&self, vocabulary: &RoleVocabulary) -> Result<(), String> {
+        self.validate_for(
+            CodingSessionTeamTransactionValidation::Publication,
+            vocabulary,
+        )
     }
 
     /// Validate a record that is already signed and on a relay.
     ///
     /// The **recorded** stance: identical to [`Self::validate`] except that an
-    /// absent verification input on a
-    /// [`ROLES_REQUIRING_VERIFICATION_INPUT`] assignment is tolerated, because
-    /// records predating that rule were signed without one and history must
-    /// not become unreadable. A *malformed* `baseSha` is refused here exactly
-    /// as it is on the publication path.
+    /// absent verification input on a verification-role assignment is
+    /// tolerated, because records predating that rule were signed without one
+    /// and history must not become unreadable. A *malformed* `baseSha` is
+    /// refused here exactly as it is on the publication path. Because the
+    /// one stance-dependent rule is switched off here, no vocabulary is
+    /// needed: a recorded assignment is read the same under every manifest.
     pub fn validate_recorded(&self) -> Result<(), String> {
-        self.validate_for(CodingSessionTeamTransactionValidation::Recorded)
+        self.validate_for(
+            CodingSessionTeamTransactionValidation::Recorded,
+            RoleVocabulary::foundation(),
+        )
     }
 
-    fn validate_for(&self, stance: CodingSessionTeamTransactionValidation) -> Result<(), String> {
+    fn validate_for(
+        &self,
+        stance: CodingSessionTeamTransactionValidation,
+        vocabulary: &RoleVocabulary,
+    ) -> Result<(), String> {
         if self.schema != CODING_SESSION_TEAM_TRANSACTION_SCHEMA {
             return Err("unsupported coding-session team-transaction schema".into());
         }
@@ -617,7 +653,7 @@ impl CodingSessionTeamTransactionPayload {
         if let Some(command_id) = &self.delivery_command_id {
             validate_delivery_command_id(command_id)?;
         }
-        self.body.validate_for(stance)
+        self.body.validate_for(stance, vocabulary)
     }
 
     /// Return all explicit causal event references in the operation body.
@@ -654,10 +690,14 @@ impl CodingSessionTeamTransactionPayload {
 }
 
 impl CodingSessionTeamTransactionBody {
-    fn validate_for(&self, stance: CodingSessionTeamTransactionValidation) -> Result<(), String> {
+    fn validate_for(
+        &self,
+        stance: CodingSessionTeamTransactionValidation,
+        vocabulary: &RoleVocabulary,
+    ) -> Result<(), String> {
         match self {
             // The assignment is the only body whose rules differ by stance.
-            Self::Assignment(body) => body.validate_for(stance),
+            Self::Assignment(body) => body.validate_for(stance, vocabulary),
             Self::Report(body) => body.validate(),
             Self::Verdict(body) => body.validate(),
             Self::Acknowledgement(body) => body.validate(),
@@ -741,7 +781,11 @@ impl CodingSessionTeamDecisionAnswer {
 }
 
 impl CodingSessionTeamAssignment {
-    fn validate_for(&self, stance: CodingSessionTeamTransactionValidation) -> Result<(), String> {
+    fn validate_for(
+        &self,
+        stance: CodingSessionTeamTransactionValidation,
+        vocabulary: &RoleVocabulary,
+    ) -> Result<(), String> {
         validate_event_id("assigneeActor", &self.assignee_actor)?;
         validate_role(&self.assignee_role)?;
         validate_text(
@@ -759,7 +803,7 @@ impl CodingSessionTeamAssignment {
         validate_optional_git_sha("baseSha", self.base_sha.as_deref())?;
         if stance == CodingSessionTeamTransactionValidation::Publication
             && self.base_sha.is_none()
-            && role_requires_verification_input(&self.assignee_role)
+            && role_requires_verification_input_in(&self.assignee_role, vocabulary)
         {
             return Err(missing_verification_input_message(&self.assignee_role));
         }

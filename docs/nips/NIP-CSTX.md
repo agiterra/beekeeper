@@ -339,6 +339,86 @@ qualify. Role seats must be active in the supplied accepted NIP-CSAT
 not authority and an absent seat grant is unauthorized, never inferred. The
 event signature is always the signer; the body never claims authority.
 
+### Role names come from the project's team manifest
+
+`lead` and `verifier` in the matrix above are the **default** names, not
+fixed tokens. The names a project's authority rules compare seats against are
+its own, read from `team.yml` at the root of its agents repository
+(`beekeeper_persona::team::TeamManifest::role_vocabulary`) and carried into
+the fold as `CodingSessionTeamFoldContext::vocabulary`
+(`beekeeper_core::role_vocabulary::RoleVocabulary`, since 2026-10-14):
+
+```yaml
+schema: beekeeper-team/v1
+version: 0.4.0
+lead: captain                 # default: lead
+verification_roles: [qa]      # default: [verifier, runner]
+roles:
+  captain: {}
+  qa: {}
+  builder: {}
+```
+
+| Field | Meaning | Default when absent |
+|---|---|---|
+| `lead` | The one role that may `assignment`, `verdict/disposition`, `mission.completed` and `mission.blocked`; may hire non-lead seats and may never grant or revoke its own role (NIP-CSAT); may hold a project-action delegation; receives the team wake; is the `owedByRole` of an assignment awaiting a disposition. | `lead` |
+| `verification_roles` | Every role whose assignment is a claim about a particular commit: it must name `baseSha` on publication and the seat is fenced onto that commit before its turn opens. The **first** entry is the judging role: the only seat whose `verdict/refutation` the fold authorizes, whose `not-refuted` satisfies `gates.verifierRequired`, and whose clearance admits a push under NIP-SDV arm (C). Later entries name their commit but do not refute (`runner`, by default). | `[verifier, runner]` |
+
+The default rule: each field defaults independently, so a manifest naming
+only `lead: captain` keeps `[verifier, runner]`, and a manifest naming neither
+— Beekeeper's own — changes nothing. Every entry must be one of `roles`; the
+lead may not also be a verification role; an explicit empty list is refused
+(omit the key for the default). Tokens are compared exactly, lowercase: a
+seat holding `qa-2` is not the judging seat.
+
+A reader that holds no team record — the relay's chain insert and push gate,
+the db's hire check, a CLI run outside any seat — judges with the default and
+says so in code by calling `RoleVocabulary::foundation()`; a grep for that
+call is the list of surfaces the project's manifest has not yet reached. In a
+seat, the CLI and the session provider read the manifest from the agents
+clone beside the worktree (`<worktree>-agents/team.yml`, walking up), so a
+`bee sessions hire` or a team wake inside a `captain` project judges with
+`captain`.
+
+#### What the relay enforces today
+
+The split above is real, and it has a seam a reader must not paper over:
+
+- **The relay and the push gate still judge with the foundation words**
+  `lead` / `verifier` / `runner`. Every relay enforcement site — the 44244
+  chain insert (`verdict_admission.rs`), the command executor, ingest, the
+  db's seat ACL and event checks — calls `RoleVocabulary::foundation()`
+  and does not read `team.yml`. A project whose manifest says `lead:
+  captain` or `verification_roles: [qa]` has its `captain` seat's
+  assignments and its `qa` seat's refutations **refused at the relay**, and
+  its pushes are not admitted under NIP-SDV arm (C). Relay adoption of the
+  project vocabulary is a follow-up, not a fact.
+- **`team.yml lead:` and `verification_roles:` are honoured on the provider
+  side**: team wakes, work briefs, the situation card and verification-input
+  collection read the manifest beside the seat and judge with the project's
+  words. These are the surfaces the relay does not enforce.
+- **CLI pre-checks that predict the relay use the foundation words.** `bee
+  git check`'s push prediction (`git_setup.rs`, `fetch_verdict_candidates`)
+  and `bee sessions hire`'s authority pre-check (`seat_authority.rs`) say
+  what the relay will do, so they judge as the relay judges. Reading the
+  manifest there printed "admitted" and "allowed" for a `captain`/`qa`
+  project the relay then refused (round-2 review, 2026-10-14). When the
+  relay adopts the project vocabulary, those two lines move to
+  `cwd_role_vocabulary()` in the same change.
+
+Behaviour changes this introduced, so nobody is surprised by them:
+
+- `lead:` now gates assign, hire and wake authority on the provider side; a
+  seat whose role is not the manifest's `lead` does not receive the team
+  wake and cannot hire, even if its role is literally `lead`.
+- A manifest whose `lead:` is also one of `verification_roles` is refused at
+  parse: a lead cannot be the seat that refutes its own assignments.
+- A broken `team.yml` near the current directory fails the `bee` commands
+  that read it (`cwd_role_vocabulary`, `seat_authority.rs`) with a usage
+  error naming the parse failure, rather than silently judging with the
+  default: a broken project record is not a reason to guess. The provider's
+  per-channel reader logs the failure at warn and skips that seat.
+
 ## Validation boundary and deterministic fold
 
 The core single-event validator proves structural validity only. The canonical

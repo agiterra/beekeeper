@@ -111,6 +111,7 @@ fn receipt_content(
         turn_id: None,
         rewind: None,
         quiescence: None,
+        checkpoint_skipped: None,
     })
     .expect("receipt")
 }

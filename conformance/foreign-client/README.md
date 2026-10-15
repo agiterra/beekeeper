@@ -8,6 +8,10 @@ the "outside" view the acceptance stories in
 `scripts/foreign-client-check.sh` (`just foreign-client-check`) runs them
 against an isolated relay and asserts the documented outcomes.
 
+If you are starting from zero, read `docs/INTEGRATING.md` first: it gets a
+host and an agent running with `bee`, then hands over to these scripts for
+the view a client of your own will have.
+
 They were lifted from the 2026-10-11 headless acceptance run (agents
 repository, `plans/archive/2026-10-11-headless-extensibility/foreign-*.mjs`
 and `collect-conversation.mjs`). Two things changed: the hardcoded

@@ -213,6 +213,7 @@ fn the_steering_set_is_the_founder_and_the_grants_that_still_stand() {
     let revoked = "cc".repeat(32);
     let authority = SessionAuthority {
         context: CodingSessionTeamFoldContext {
+            vocabulary: Default::default(),
             channel_ref: "c0066ddd-8214-4baf-81d2-3046fead0d32".to_owned(),
             session_ref: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned(),
             genesis_ref: "dd".repeat(32),

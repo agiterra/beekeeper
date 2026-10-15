@@ -155,3 +155,6 @@ both believe they are real. The composition proof is
 Verify the signature, then the five tags against the content, then decide
 standing from the 44228 chain. Do not pick "the latest checkpoint" by
 `created_at`: follow `prevCheckpointRef` within one author.
+`conformance/foreign-client/foreign-native-read.mjs` is that read with
+signature verification; [`docs/INTEGRATING.md`](../INTEGRATING.md) is the
+page that puts it beside the other kinds a foreign client meets.

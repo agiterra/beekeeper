@@ -183,6 +183,9 @@ pub mod relay;
 /// Who founded a repository — signer, NIP-34 maintainers, project owners.
 pub mod repository_founders;
 pub mod repository_protection;
+/// The role names a project's team manifest gives the authority rules:
+/// `team.yml lead:` and `verification_roles:`, with the default rule.
+pub mod role_vocabulary;
 /// `sandbox.yml` — how a project's build state is seeded into a fresh sandbox,
 /// and what counts as build state when that sandbox is reclaimed.
 pub mod sandbox_manifest;

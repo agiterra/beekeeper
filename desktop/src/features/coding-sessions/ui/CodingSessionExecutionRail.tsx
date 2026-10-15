@@ -1,10 +1,15 @@
 import * as React from "react";
 import { Bot, Users } from "lucide-react";
 
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  buildCodingSessionIngressAuthorityIdentity,
+  OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+} from "@/features/coding-sessions/lib/codingSessionIngressAuthority";
+import { peekCodingSessionIngressStore } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
 import {
   formatCodingSessionExecutionLabel,
   formatCodingSessionModelSummary,
-  formatCodingSessionRuntimeLabel,
 } from "@/features/coding-sessions/lib/codingSessionLabels";
 import {
   codingSessionDispositionWord,
@@ -23,6 +28,10 @@ import type { CodingSessionSubagentPanel } from "@/features/coding-sessions/lib/
 import { markdownToPlainText } from "@/features/projects/lib/projectsViewHelpers";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionSubagentsSection } from "./CodingSessionSubagentsPanel";
+import {
+  codingSessionRuntimeName,
+  describeCodingSessionCredentialSource,
+} from "./codingSessionExecutionFacts";
 
 type ExecutionRailTab = "overview" | `execution:${string}`;
 
@@ -35,6 +44,7 @@ type ExecutionRailTab = "overview" | `execution:${string}`;
 export function CodingSessionExecutionRail({
   actorNames,
   canSteer = false,
+  channelId,
   machine,
   resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
   subagents = null,
@@ -51,6 +61,13 @@ export function CodingSessionExecutionRail({
    * waiting strings a waiting seat reads, and nothing else.
    */
   canSteer?: boolean;
+  /**
+   * The channel whose verified ingress store holds this umbrella's 44223
+   * metadata. With it an execution's card can read facts the catalog record
+   * does not fold (its `credentialSource`); without it those rows read
+   * "not reported" rather than guessing.
+   */
+  channelId?: string;
   /**
    * What each seat needs to say which machine runs it (SV-24). Absent, a
    * seat names its provider by key and never claims this computer.
@@ -174,6 +191,7 @@ export function CodingSessionExecutionRail({
         {selectedExecution ? (
           <ExecutionDetail
             actorNames={actorNames}
+            channelId={channelId}
             canSteer={canSteer}
             machine={machine}
             execution={selectedExecution}
@@ -284,6 +302,7 @@ function Overview({
 function ExecutionDetail({
   actorNames,
   canSteer,
+  channelId,
   machine,
   execution,
   panelId,
@@ -291,6 +310,7 @@ function ExecutionDetail({
 }: {
   actorNames?: CodingSessionActorNameResolver;
   canSteer: boolean;
+  channelId?: string;
   machine?: CodingSessionExecutionMachineContext;
   execution: CodingSessionExecution;
   panelId: string;
@@ -298,6 +318,8 @@ function ExecutionDetail({
 }) {
   const record = execution.activeGeneration;
   const latest = latestActivity(record.transcript);
+  const runtime = codingSessionRuntimeName(record);
+  const credentials = codingSessionCredentialSource(channelId, execution);
   return (
     <section
       aria-label={`${executionName(execution, actorNames)} execution`}
@@ -324,7 +346,16 @@ function ExecutionDetail({
       </div>
       <dl className="mt-4 grid gap-3 border-t border-border/60 pt-4 text-xs">
         <ExecutionFact label="Generation" value={record.label} />
-        <ExecutionFact label="Runtime" value={runtimeLabel(execution)} />
+        <ExecutionFact label="Runtime" value={runtime.label} />
+        {runtime.driver ? (
+          <ExecutionFact label="Driver" value={runtime.driver} />
+        ) : null}
+        <ExecutionFact
+          label="Credentials"
+          testId="coding-session-execution-credentials"
+          title={credentials.title}
+          value={credentials.label}
+        />
         {record.model ? (
           <ExecutionFact
             label="Model"
@@ -477,12 +508,53 @@ function footerWordRank(word: string): number {
   return rank === -1 ? FOOTER_WORD_ORDER.length : rank;
 }
 
-function ExecutionFact({ label, value }: { label: string; value: string }) {
+function ExecutionFact({
+  label,
+  testId,
+  title,
+  value,
+}: {
+  label: string;
+  testId?: string;
+  title?: string;
+  value: string;
+}) {
   return (
-    <div>
+    <div data-testid={testId} title={title}>
       <dt className="text-2xs text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 wrap-break-word">{value}</dd>
     </div>
+  );
+}
+
+/**
+ * Which credentials this execution's runtime was given, read from the
+ * channel's already-verified ingress store the way `CodingSessionPeopleBody`
+ * reads provider labels: `peek` never creates a store or a subscription, so
+ * this adds no relay traffic, and a cold store yields "not reported" rather
+ * than a guess. Computed on each render — one map lookup and one scan of
+ * the channel's metadata entries — so a new 44223 is read the moment the
+ * catalog re-renders the card for it.
+ */
+function codingSessionCredentialSource(
+  channelId: string | undefined,
+  execution: CodingSessionExecution,
+) {
+  const target = execution.activeGeneration.commandTarget;
+  if (!channelId || target === null) {
+    return describeCodingSessionCredentialSource([], null);
+  }
+  const store = peekCodingSessionIngressStore(
+    `${buildCodingSessionIngressAuthorityIdentity(
+      OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+    )}|${channelId}`,
+  );
+  return describeCodingSessionCredentialSource(
+    store === null ? [] : store.snapshot([channelId]).metadata,
+    {
+      signerPubkey: execution.signerPubkey,
+      targetKey: buildCodingSessionTargetKey(target),
+    },
   );
 }
 
@@ -507,16 +579,13 @@ function executionName(
       model: null,
     }).primary;
   }
-  return formatCodingSessionRuntimeLabel(
-    record.runtime ?? record.provider ?? "Execution",
-  );
+  const runtime = codingSessionRuntimeName(record);
+  return runtime.unreported ? "Execution" : runtime.label;
 }
 
+/** The runtime's name, or "Runtime not reported" — never "unknown". */
 function runtimeLabel(execution: CodingSessionExecution): string {
-  const record = execution.activeGeneration;
-  return formatCodingSessionRuntimeLabel(
-    record.runtime ?? record.provider ?? "Unknown runtime",
-  );
+  return codingSessionRuntimeName(execution.activeGeneration).label;
 }
 
 /** Runtime and model for a seated execution, or null when it leads with them. */

@@ -87,6 +87,9 @@ impl WorkAuthority {
             session_ref: String::new(),
             genesis_ref: String::new(),
             founder_pubkey: self.founder_pubkey.clone(),
+            // This projection carries no team record, so the default lead
+            // name decides `may_lead` here; see `RoleVocabulary::foundation`.
+            vocabulary: crate::role_vocabulary::RoleVocabulary::foundation().clone(),
             active_seats: self
                 .active_seats
                 .iter()

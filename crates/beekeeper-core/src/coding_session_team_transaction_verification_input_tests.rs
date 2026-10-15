@@ -254,6 +254,7 @@ fn an_already_published_verifier_assignment_without_an_input_still_reads_and_fol
     assert!(body.base_sha.is_none());
 
     let context = CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: CHANNEL.into(),
         session_ref: SESSION.into(),
         genesis_ref: id("ab"),

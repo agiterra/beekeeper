@@ -43,6 +43,7 @@ fn a_live_owner_signed_delegation_admits_the_lead() {
             capability,
             &ProjectActionGrantLookup::Decided(vec![standing(Some("lead"), &owner)]),
             &granters(&[&owner]),
+            RoleVocabulary::foundation(),
         );
         assert_eq!(
             decision,
@@ -63,6 +64,7 @@ fn approving_a_host_step_is_never_delegated() {
         ProjectActionCapability::ApproveHostStep,
         &ProjectActionGrantLookup::Decided(vec![standing(Some("lead"), &owner)]),
         &granters(&[&owner]),
+        RoleVocabulary::foundation(),
     );
     assert_eq!(
         decision,
@@ -76,6 +78,7 @@ fn no_delegation_means_no_admission() {
         ProjectActionCapability::PublishDefinition,
         &ProjectActionGrantLookup::Decided(Vec::new()),
         &granters(&[]),
+        RoleVocabulary::foundation(),
     );
     assert_eq!(
         decision,
@@ -90,6 +93,7 @@ fn a_granter_who_no_longer_writes_the_project_leaves_no_capability() {
         ProjectActionCapability::PublishDefinition,
         &ProjectActionGrantLookup::Decided(vec![standing(Some("lead"), &former_owner)]),
         &granters(&[]),
+        RoleVocabulary::foundation(),
     );
     assert_eq!(
         decision,
@@ -105,6 +109,7 @@ fn a_delegation_held_by_a_non_lead_seat_does_not_apply() {
             ProjectActionCapability::TriggerManualRun,
             &ProjectActionGrantLookup::Decided(vec![standing(seat, &owner)]),
             &granters(&[&owner]),
+            RoleVocabulary::foundation(),
         );
         assert_eq!(
             decision,
@@ -120,6 +125,7 @@ fn a_chain_that_could_not_be_read_whole_decides_nothing() {
         ProjectActionCapability::PublishDefinition,
         &ProjectActionGrantLookup::Undecidable,
         &granters(&[&hex("11")]),
+        RoleVocabulary::foundation(),
     );
     assert_eq!(
         decision,
@@ -143,4 +149,46 @@ fn every_refusal_names_the_missing_fact() {
             "{refusal:?} is a clause, not a sentence"
         );
     }
+}
+
+/// The seat a delegation's holder must occupy is the project's own lead
+/// role: under `lead: captain` a `captain` seat is admitted and the
+/// foundation's `lead` is not. The default vocabulary is unchanged.
+#[test]
+fn the_delegated_seat_is_the_projects_lead_role() {
+    let owner = hex("11");
+    let captain =
+        RoleVocabulary::from_team(Some("captain"), Some(&["qa".to_owned()])).expect("a vocabulary");
+    assert_eq!(
+        decide_project_action_delegation(
+            ProjectActionCapability::PublishDefinition,
+            &ProjectActionGrantLookup::Decided(vec![standing(Some("captain"), &owner)]),
+            &granters(&[&owner]),
+            &captain,
+        ),
+        ProjectActionDelegation::Admitted {
+            grant_event_id: hex("0a"),
+            granted_by: owner.clone(),
+        }
+    );
+    assert_eq!(
+        decide_project_action_delegation(
+            ProjectActionCapability::PublishDefinition,
+            &ProjectActionGrantLookup::Decided(vec![standing(Some("lead"), &owner)]),
+            &granters(&[&owner]),
+            &captain,
+        ),
+        ProjectActionDelegation::Refused(ProjectActionDelegationRefusal::HolderIsNotTheLead),
+        "the foundation's name is not this project's lead"
+    );
+    assert_eq!(
+        decide_project_action_delegation(
+            ProjectActionCapability::PublishDefinition,
+            &ProjectActionGrantLookup::Decided(vec![standing(Some("captain"), &owner)]),
+            &granters(&[&owner]),
+            RoleVocabulary::foundation(),
+        ),
+        ProjectActionDelegation::Refused(ProjectActionDelegationRefusal::HolderIsNotTheLead),
+        "under the default vocabulary a captain seat holds nothing"
+    );
 }

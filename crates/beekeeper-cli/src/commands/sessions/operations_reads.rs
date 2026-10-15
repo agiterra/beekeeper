@@ -19,7 +19,6 @@ use beekeeper_sdk::coding_session_team_transaction::parse_coding_session_team_tr
 use nostr::Event;
 use serde_json::{json, Value};
 
-use super::operations_authority::fetch_projected_authority;
 use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
@@ -147,8 +146,18 @@ pub(crate) async fn fetch_session_authority(
             "--session-ref does not match the referenced genesis".into(),
         ));
     }
-    let authority =
-        fetch_projected_authority(client, channel, genesis, &event.pubkey.to_hex()).await?;
+    // The project's own role names, from the agents clone beside this
+    // command's directory when there is one; the default otherwise, applied
+    // silently (nothing prints which vocabulary was used).
+    let vocabulary = super::seat_authority::cwd_role_vocabulary()?;
+    let authority = super::operations_authority::fetch_projected_authority_with(
+        client,
+        channel,
+        genesis,
+        &event.pubkey.to_hex(),
+        &vocabulary,
+    )
+    .await?;
     let claim = authority.claim.clone();
     let claim_since = authority.claim_since.and_then(|at| i64::try_from(at).ok());
     let grant_accepted_at = authority.grant_accepted_at.clone();
@@ -191,6 +200,7 @@ pub(crate) async fn fetch_session_authority(
             genesis_ref: genesis.to_owned(),
             founder_pubkey: event.pubkey.to_hex(),
             active_seats: authority.seats,
+            vocabulary,
             active_grants: authority.grants,
             // Not a claim about the session: this reader does not read kind
             // 44245 at all. `super::operations_verifier_gate` folds the policy

@@ -188,6 +188,12 @@ type MockManagedAgentRuntimeSeed = {
   relayUrl: string;
   lifecycle?: MockManagedAgentRuntimeRow["lifecycle"];
   runtimeAvailable?: boolean | null;
+  /** NIP-CSL § Provider presence, for a `host_managed` row: the heartbeat
+   * the backend read (`live`/`expired`/`none`), or null for "did not report". */
+  providerPresence?: MockManagedAgentRuntimeRow["providerPresence"];
+  /** Whether a live heartbeat names this pair's execution (`live`) or not
+   * (`absent`); null when there is no live heartbeat to read it from. */
+  execution?: MockManagedAgentRuntimeRow["execution"];
 };
 
 type MockRelayAgentSeed = {
@@ -1264,6 +1270,8 @@ type MockManagedAgent = RawManagedAgent & {
 // pair-scoped lifecycle commands.
 type MockManagedAgentRuntimeRow = {
   runtimeAvailable?: boolean | null;
+  providerPresence?: "live" | "expired" | "none" | null;
+  execution?: "live" | "absent" | null;
   pubkey: string;
   relayUrl: string;
   localSetup: boolean;
@@ -2777,6 +2785,8 @@ function resetMockManagedAgents(config?: E2eConfig) {
       localSetup: true,
       lifecycle: seed.lifecycle ?? "ready",
       runtimeAvailable: seed.runtimeAvailable,
+      providerPresence: seed.providerPresence,
+      execution: seed.execution,
       pid: seed.lifecycle === "stopped" ? null : 43000,
       error: null,
       logPath: null,

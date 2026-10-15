@@ -3,84 +3,102 @@ use crate::{client::BeekeeperClient, error::CliError, validate::read_or_stdin, R
 use clap::Args;
 use std::path::PathBuf;
 use uuid::Uuid;
-/// Commission one attributed ordinary participant on an existing headless host.
+/// Create an agent on this machine's host and start it in a channel.
 #[derive(Args, Debug)]
 pub struct CreateArgs {
-    /// Stable operation UUID; reuse unchanged when retrying a lost reply.
+    /// A UUID you mint for this request (`uuidgen`). Reuse the same one to
+    /// retry safely after a lost reply.
     #[arg(long)]
     pub operation_id: Uuid,
-    /// Conversation channel whose owner authorizes enrollment.
+    /// Channel UUID the agent joins (from `bee channels list`). You must be
+    /// its owner.
     #[arg(long)]
     pub channel: Uuid,
-    /// Public participant name.
+    /// The agent's name as channel members see it.
     #[arg(long)]
     pub display_name: String,
-    /// Executable instructions, or '-' to read stdin.
+    /// Instructions the agent runs with, or '-' to read them from stdin.
     #[arg(long)]
     pub system_prompt: String,
-    /// Explicit commissioned service home.
+    /// Host state directory, if not BEEKEEPER_HOST_HOME or the OS home: the
+    /// same value given to `bee host commission --home`.
     #[arg(long)]
     pub home: Option<PathBuf>,
-    /// Existing checkout for this responsibility; never transmitted publicly.
+    /// Directory on this machine the agent works in (an existing checkout).
+    /// Stays local; never published.
     #[arg(long)]
     pub cwd: PathBuf,
-    /// Authorized project coordinate; private coordinates remain executor-local.
+    /// Project coordinate to work under; the project must already be trusted
+    /// on this host (`bee host trust-project`).
     #[arg(long)]
     pub project: Option<String>,
-    /// Advertised model choice; defaults to the commissioned runtime's choice.
+    /// Model to advertise. Defaults to the runtime's model from `bee host
+    /// commission --model`.
     #[arg(long)]
     pub model: Option<String>,
-    /// Commissioned runtime instance alias; required if more than one exists.
+    /// Which commissioned runtime runs it: `<runtime>-primary`, as minted by
+    /// `bee host commission --runtime <runtime>`. Required only when the host
+    /// has more than one.
     #[arg(long)]
     pub provider_instance: Option<String>,
-    /// Add another accepted responsibility for an existing host-custodied identity.
+    /// Add this channel to an existing agent whose key this host holds,
+    /// instead of creating a new identity.
     #[arg(long)]
     pub agent_pubkey: Option<String>,
-    /// Maximum seconds to wait for the provider's signed create receipt.
+    /// Seconds to wait for the host's signed receipt before giving up.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=300))]
     pub wait_secs: u64,
-    /// Configure custody and identity without admitting execution.
+    /// Create the identity and its files, but do not start it; `bee agents
+    /// start` later with the same flags.
     #[arg(long)]
     pub no_start: bool,
-    /// Explicit responsibility replay lower bound.
+    /// Unix time; the agent reads no channel history older than this when it
+    /// first joins.
     #[arg(long)]
     pub replay_floor_unix: Option<u64>,
-    /// Complete safe public definition JSON; supported optional fields may be cleared.
+    /// Full public definition as a JSON file, instead of the flags above.
+    /// Optional fields absent from the file are cleared.
     #[arg(long)]
     pub definition_file: Option<PathBuf>,
-    /// Owner-only executor-private settings JSON; never sent publicly.
+    /// Settings private to this host as an owner-only (chmod 600) JSON file.
+    /// Never sent to the relay.
     #[arg(long)]
     pub private_config_file: Option<PathBuf>,
 }
 
-/// Publish a new public configuration revision as its authorized owner.
+/// Publish a new revision of an agent's public definition.
 #[derive(Args, Debug)]
 pub struct UpdateArgs {
-    /// Stable operation UUID; reuse unchanged when retrying.
+    /// A UUID you mint for this request (`uuidgen`). Reuse it to retry.
     #[arg(long)]
     pub operation_id: Uuid,
-    /// Managed identity's lowercase hexadecimal public key.
+    /// The agent's public key (64-char lowercase hex), from `bee agents
+    /// create` output or `bee agents status`.
     #[arg(long)]
     pub agent_pubkey: String,
-    /// Exact kind30177 head event ID observed before editing.
+    /// Event ID of the definition revision you are editing (kind 30177),
+    /// from `bee agents status`. Refused if someone published a newer one.
     #[arg(long)]
     pub expected_revision: String,
-    /// Optional new public name.
+    /// New name, if changing it.
     #[arg(long)]
     pub display_name: Option<String>,
-    /// Optional new instructions, or '-' to read stdin.
+    /// New instructions, if changing them; '-' reads stdin.
     #[arg(long)]
     pub system_prompt: Option<String>,
-    /// Optional new model choice.
+    /// New model, if changing it.
     #[arg(long)]
     pub model: Option<String>,
-    /// Requester's journal home; no host files or socket are required for update.
+    /// Where to journal this request. No host files or socket are needed to
+    /// update: it is a relay write.
     #[arg(long)]
     pub home: Option<PathBuf>,
-    /// Complete safe public definition JSON; supported optional fields may be cleared.
+    /// Full public definition as a JSON file, instead of the flags above.
+    /// Optional fields absent from the file are cleared.
     #[arg(long)]
     pub definition_file: Option<PathBuf>,
-    /// Owner-only local executor-private configuration JSON.
+    /// Settings private to the running host as an owner-only (chmod 600)
+    /// JSON file. Never sent to the relay.
     #[arg(long)]
     pub private_config_file: Option<PathBuf>,
 }
@@ -167,47 +185,53 @@ fn read_json<T: serde::de::DeserializeOwned>(
     private: bool,
 ) -> Result<Option<T>, CliError> {
     let Some(path) = path else { return Ok(None) };
+    let flag = if private {
+        "--private-config-file"
+    } else {
+        "--definition-file"
+    };
+    let shown = path.display();
     let metadata = std::fs::symlink_metadata(path)
-        .map_err(|_| CliError::Usage("configuration file unavailable".into()))?;
+        .map_err(|_| CliError::Usage(format!("{flag} {shown}: no such file")))?;
     if !metadata.file_type().is_file() || metadata.len() > 1024 * 1024 {
-        return Err(CliError::Usage(
-            "configuration must be a bounded regular JSON file".into(),
-        ));
+        return Err(CliError::Usage(format!(
+            "{flag} {shown} must be a regular JSON file under 1 MiB (not a symlink or directory)"
+        )));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if private && metadata.permissions().mode() & 0o077 != 0 {
-            return Err(CliError::Usage(
-                "private configuration file must be owner-only".into(),
-            ));
+            return Err(CliError::Usage(format!(
+                "{flag} {shown} is readable by others; run `chmod 600 {shown}`"
+            )));
         }
     }
-    #[cfg(not(unix))]
-    let _ = private;
     serde_json::from_slice(
         &std::fs::read(path)
-            .map_err(|_| CliError::Usage("configuration file unreadable".into()))?,
+            .map_err(|_| CliError::Usage(format!("{flag} {shown}: cannot be read")))?,
     )
     .map(Some)
-    .map_err(|_| CliError::Usage("configuration JSON malformed".into()))
+    .map_err(|error| CliError::Usage(format!("{flag} {shown} is not valid JSON: {error}")))
 }
-/// Actor-wide signed lifecycle request with a caller-local immutable journal.
+/// Which agent, and how long to wait for the host's signed receipt.
 #[derive(Args, Debug)]
 pub struct LifecycleArgs {
-    /// Stable operation identity; retry unchanged.
+    /// A UUID you mint for this request (`uuidgen`). Reuse it to retry.
     #[arg(long)]
     pub operation_id: Uuid,
-    /// Managed actor public key.
+    /// The agent's public key (64-char lowercase hex), from `bee agents
+    /// create` output.
     #[arg(long)]
     pub agent_pubkey: String,
-    /// Known actor channel; discovery supplements these hints.
+    /// A channel the agent is in (repeatable). Optional: a hint that speeds
+    /// up finding where it runs.
     #[arg(long)]
     pub channel: Vec<Uuid>,
-    /// Caller-local journal home, not executor access.
+    /// Where to journal this request; no host files or socket are needed.
     #[arg(long)]
     pub home: Option<PathBuf>,
-    /// Signed receipt observation bound.
+    /// Seconds to wait for the host's signed receipt before giving up.
     #[arg(long, default_value_t=60, value_parser=clap::value_parser!(u64).range(1..=300))]
     pub wait_secs: u64,
 }
@@ -221,16 +245,18 @@ impl LifecycleArgs {
         }
     }
 }
-/// Owner deletion bound to the exact public definition; missing terminal proof stays pending.
+/// Retire an agent for good, bound to the definition revision you last saw.
 #[derive(Args, Debug)]
 pub struct DeleteArgs {
-    /// Actor-wide lifecycle scope.
+    /// Which agent, and how long to wait.
     #[command(flatten)]
     pub lifecycle: LifecycleArgs,
-    /// Exact current owner30177 event ID.
+    /// Event ID of the agent's current definition (kind 30177), from `bee
+    /// agents status`. Refused if someone published a newer one.
     #[arg(long)]
     pub expected_revision: String,
-    /// Info/deploy-only remote provider cannot acknowledge termination.
+    /// The agent runs on a remote host that only reports and cannot confirm a
+    /// stop. Without this, delete waits for every host's signed stop receipt.
     #[arg(long)]
     pub remote_deployment: bool,
 }
@@ -273,25 +299,30 @@ pub async fn delete(args: &DeleteArgs, client: &BeekeeperClient) -> Result<(), C
     Ok(())
 }
 
-/// Stop and successor admission retain two distinct stable operation identities.
+/// Stop an agent, wait for it to confirm, then start it again.
 #[derive(Args, Debug)]
 pub struct RestartArgs {
-    /// Successor definition/context; requires --agent-pubkey.
+    /// The definition to start again with; --agent-pubkey is required.
     #[command(flatten)]
     pub create: CreateArgs,
-    /// Stable UUID for actor-wide stop, distinct from successor --operation-id.
+    /// A second UUID you mint for the stop half; must differ from
+    /// --operation-id, which names the start half.
     #[arg(long)]
     pub stop_operation_id: Uuid,
 }
 pub async fn restart(args: &RestartArgs, client: &BeekeeperClient) -> Result<(), CliError> {
-    let actor = args
-        .create
-        .agent_pubkey
-        .clone()
-        .ok_or_else(|| CliError::Usage("restart requires --agent-pubkey".into()))?;
+    let actor = args.create.agent_pubkey.clone().ok_or_else(|| {
+        CliError::Usage(
+            "restart requires --agent-pubkey <hex> naming the agent to restart (from `bee \
+                 agents create` output)"
+                .into(),
+        )
+    })?;
     if args.stop_operation_id == args.create.operation_id {
         return Err(CliError::Usage(
-            "stop and successor operations must differ".into(),
+            "--stop-operation-id and --operation-id must be two different UUIDs (mint one with \
+             `uuidgen` for each)"
+                .into(),
         ));
     }
     let stop = beekeeper_agent_management::LifecycleRequest {
@@ -313,42 +344,48 @@ pub async fn restart(args: &RestartArgs, client: &BeekeeperClient) -> Result<(),
     Ok(())
 }
 
-/// Public owner start with no executor filesystem/socket.
+/// Start an agent on another machine's host, over the relay only.
 #[derive(Args, Debug)]
 pub struct RemoteStartArgs {
-    /// Stable caller operation UUID.
+    /// A UUID you mint for this request (`uuidgen`). Reuse it to retry.
     #[arg(long)]
     pub operation_id: Uuid,
-    /// Existing owner-attested actor.
+    /// The agent's public key (64-char lowercase hex).
     #[arg(long)]
     pub agent_pubkey: String,
-    /// Exact current public definition revision.
+    /// Event ID of the agent's current definition (kind 30177), from `bee
+    /// agents status`.
     #[arg(long)]
     pub expected_revision: String,
-    /// Enrolled private or public transport channel.
+    /// Channel UUID the agent is in.
     #[arg(long)]
     pub channel: Uuid,
-    /// Existing owner-attested worker public key.
+    /// Public key of the host (provider) that should run it, as printed by
+    /// `bee host commission` on that machine (`provider_pubkey`).
     #[arg(long)]
     pub provider_authority: String,
-    /// Commissioned runtime alias.
+    /// Which of that host's commissioned runtimes runs it:
+    /// `<runtime>-primary`.
     #[arg(long)]
     pub provider_instance: String,
-    /// Existing authorized project association.
+    /// Project coordinate already trusted on that host.
     #[arg(long)]
     pub project: Option<String>,
-    /// Caller journal home; no executor filesystem is needed.
+    /// Where to journal this request; no host files or socket are needed.
     #[arg(long)]
     pub home: Option<PathBuf>,
+    /// Seconds to wait for the host's signed receipt before giving up.
     #[arg(long, default_value_t=60, value_parser=clap::value_parser!(u64).range(1..=300))]
     pub wait_secs: u64,
 }
+/// Stop an agent on another machine's host, then start it again there.
 #[derive(Args, Debug)]
 pub struct RemoteRestartArgs {
-    /// Relay-only successor request.
+    /// The start half.
     #[command(flatten)]
     pub start: RemoteStartArgs,
-    /// Distinct actor-wide stop operation.
+    /// A second UUID you mint for the stop half; must differ from
+    /// --operation-id.
     #[arg(long)]
     pub stop_operation_id: Uuid,
 }
@@ -404,24 +441,32 @@ pub async fn restart_remote(
 
 #[derive(clap::Subcommand)]
 pub enum AgentsCmd {
-    /// Commission an identity and its attributed headless work context.
+    /// Create an agent on this machine's host and start it in a channel
+    #[command(
+        after_help = "Needs a commissioned, running host on this machine: `bee host commission`, \
+then `bee host install` (or `beekeeper-host run`), then `bee host status`.\n\n\
+Example:\n  \
+bee agents create --operation-id \"$(uuidgen)\" --channel <UUID> \\\n      \
+--display-name helper --system-prompt - --cwd /srv/work/repo \\\n      \
+--provider-instance acme-primary < prompt.md"
+    )]
     Create(CreateArgs),
-    /// Publish an authorized revision of an existing managed identity.
+    /// Publish a new revision of an agent's definition (name, instructions, model)
     #[command(visible_alias = "configure")]
     Update(UpdateArgs),
-    /// Observe exact signed responsibilities and current runtime lease evidence.
+    /// Show an agent's signed definition and whether a host is running it right now
     Status(LifecycleArgs),
-    /// Start through shared host custody; already adopted execution is reused.
+    /// Start an agent created with --no-start or stopped; reuses it if already running
     Start(CreateArgs),
-    /// Start an enrolled actor using relay-only shared management.
+    /// Start an agent on another machine's host, over the relay only (no local host)
     StartRemote(RemoteStartArgs),
-    /// Stop all observed responsibilities, retaining custody until confirmed.
+    /// Stop an agent everywhere it runs; its identity and files stay until `delete`
     Stop(LifecycleArgs),
-    /// Await actor-wide terminal stop, then admit a new responsibility.
+    /// Stop an agent, wait for it to confirm, then start it again with a new definition
     Restart(RestartArgs),
-    /// Stop all responsibilities then start using relay-only shared management.
+    /// Stop an agent on another machine's host, then start it again there
     RestartRemote(RemoteRestartArgs),
-    /// Retire and tombstone only with truthful actor-wide terminal proof.
+    /// Retire an agent for good; refused until every host confirms it has stopped
     Delete(DeleteArgs),
     /// Open a prefilled create-agent form in the owner's Beekeeper Desktop
     DraftCreate {

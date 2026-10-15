@@ -103,6 +103,12 @@ type CodingSessionLifecycleReceiptEnvelope =
       status: "resumed" | "stopped";
       session: CodingSessionCommandTarget;
       error: null;
+      /**
+       * On `stopped` only: the provider had `checkpointOnStop` on and the
+       * pre-stop checkpoint ran out of its budget, so the stop went ahead
+       * without one (NIP-CSL § Checkpoint before stop). Never on `resumed`.
+       */
+      checkpointSkipped?: "timeout";
     }
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
@@ -469,12 +475,18 @@ function parseReceiptEnvelope(
   value: Record<string, unknown>,
 ): Readonly<CodingSessionLifecycleReceiptEnvelope> | null {
   if (typeof value.status !== "string") return null;
+  // The one optional key: `checkpointSkipped` on `stopped`, checked by value
+  // below. Its presence on any other status is an unexpected key.
+  const carriesCheckpointSkipped =
+    value.status === "stopped" && Object.hasOwn(value, "checkpointSkipped");
   const expectedKeys =
     value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]
       : value.status === "turn_interrupted"
         ? [...RECEIPT_ENVELOPE_KEYS, "quiescence"]
-        : RECEIPT_ENVELOPE_KEYS;
+        : carriesCheckpointSkipped
+          ? [...RECEIPT_ENVELOPE_KEYS, "checkpointSkipped"]
+          : RECEIPT_ENVELOPE_KEYS;
   if (
     !hasExactKeys(value, expectedKeys) ||
     value.schema !== CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA ||
@@ -521,12 +533,18 @@ function parseReceiptEnvelope(
   if (value.status === "resumed" || value.status === "stopped") {
     const session = decodeTarget(value.session);
     if (!session || value.error !== null) return null;
+    if (carriesCheckpointSkipped && value.checkpointSkipped !== "timeout") {
+      return null;
+    }
     return Object.freeze({
       schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
       commandId: value.commandId,
       status: value.status,
       session,
       error: null,
+      ...(carriesCheckpointSkipped
+        ? { checkpointSkipped: "timeout" as const }
+        : {}),
     });
   }
   if (value.status === "resumed_without_context") {

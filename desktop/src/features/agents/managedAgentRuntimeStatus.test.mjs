@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   agentCommunityAvailability,
+  agentCommunityBadgeVariant,
   agentCommunityStatusDetail,
   canonicalRelayUrl,
   findManagedAgentRuntime,
@@ -51,6 +52,144 @@ test("host ownership discloses missing relay availability without offering local
   });
   assert.equal(agentCommunityAvailability(adopted), "Unavailable");
   assert.match(agentCommunityStatusDetail(adopted), /Managed by the host/);
+  assert.match(agentCommunityStatusDetail(adopted), /unconfirmed/);
+  assert.equal(agentCommunityBadgeVariant(adopted), "secondary");
+});
+
+/**
+ * The four host-managed states a person must tell apart at a glance, each
+ * from a different wire fact: a signed lease, a live heartbeat naming this
+ * execution, a live heartbeat that does not, and a heartbeat nobody has
+ * heard. Start/Stop follows the same split, and the detail never claims a
+ * number the status row does not carry.
+ */
+const hostManaged = (overrides = {}) =>
+  runtime({
+    localSetup: false,
+    lifecycle: "host_managed",
+    pid: null,
+    runtimeAvailable: false,
+    ...overrides,
+  });
+
+test("a signed execution lease reads as working and offers Stop", () => {
+  const working = hostManaged({
+    runtimeAvailable: true,
+    providerPresence: "live",
+    execution: "live",
+  });
+  assert.equal(agentCommunityAvailability(working), "Here");
+  assert.equal(agentCommunityBadgeVariant(working), "default");
+  assert.match(
+    agentCommunityStatusDetail(working),
+    /Working.*signed relay lease/,
+  );
+  assert.equal(managedAgentPairAction(working), "stop");
+});
+
+test("a live heartbeat with an idle word reads as idle-but-here, and Stop stays", () => {
+  const idle = hostManaged({ providerPresence: "live", execution: "idle" });
+  assert.equal(agentCommunityAvailability(idle), "Idle");
+  assert.equal(agentCommunityBadgeVariant(idle), "success");
+  assert.match(agentCommunityStatusDetail(idle), /Here and idle/);
+  assert.match(agentCommunityStatusDetail(idle), /heartbeat is live/);
+  assert.equal(managedAgentPairAction(idle), "stop");
+});
+
+test("a signed stopped execution under a live heartbeat reads Stopped, never Idle, and offers Start", () => {
+  const stopped = hostManaged({
+    providerPresence: "live",
+    execution: "stopped",
+  });
+  assert.equal(agentCommunityAvailability(stopped), "Stopped");
+  assert.equal(agentCommunityBadgeVariant(stopped), "secondary");
+  assert.match(
+    agentCommunityStatusDetail(stopped),
+    /provider is live; this agent's execution is signed stopped/,
+  );
+  assert.doesNotMatch(agentCommunityStatusDetail(stopped), /idle/i);
+  assert.equal(managedAgentPairAction(stopped), "start");
+});
+
+test("a live heartbeat with no execution word is disclosed as not reported, with no Stop on offer", () => {
+  for (const execution of [null, undefined]) {
+    const unreported = hostManaged({ providerPresence: "live", execution });
+    assert.equal(
+      agentCommunityAvailability(unreported),
+      "Execution not reported",
+    );
+    assert.equal(agentCommunityBadgeVariant(unreported), "secondary");
+    assert.match(
+      agentCommunityStatusDetail(unreported),
+      /reported its presence but no execution state/,
+    );
+    assert.doesNotMatch(agentCommunityStatusDetail(unreported), /idle/i);
+    assert.equal(managedAgentPairAction(unreported), "start");
+  }
+});
+
+test("a live heartbeat that does not name this execution reads as not running, never idle", () => {
+  const absent = hostManaged({ providerPresence: "live", execution: "absent" });
+  assert.equal(agentCommunityAvailability(absent), "Not running");
+  assert.equal(agentCommunityBadgeVariant(absent), "secondary");
+  assert.match(agentCommunityStatusDetail(absent), /host is up/);
+  assert.match(agentCommunityStatusDetail(absent), /Start creates one/);
+  assert.equal(managedAgentPairAction(absent), "start");
+});
+
+test("an expired or never-seen heartbeat reads as not heard from, never unreachable, without inventing a last-seen clock", () => {
+  for (const providerPresence of ["expired", "none"]) {
+    const lost = hostManaged({ providerPresence, execution: "disconnected" });
+    assert.equal(agentCommunityAvailability(lost), "Provider not heard from");
+    assert.equal(agentCommunityBadgeVariant(lost), "warning");
+    const detail = agentCommunityStatusDetail(lost);
+    assert.match(detail, /Provider not heard from/);
+    // No heartbeat within TTL is not a reachability test, so the word
+    // "unreachable" never appears; and Start's safety is stated, not assumed.
+    assert.doesNotMatch(detail, /unreachable/i);
+    assert.match(detail, /does not create a second execution/);
+    assert.doesNotMatch(detail, /\d+\s*s(ec)?\b/);
+    assert.doesNotMatch(detail, /last seen/i);
+    assert.equal(managedAgentPairAction(lost), "start");
+  }
+  assert.match(
+    agentCommunityStatusDetail(hostManaged({ providerPresence: "expired" })),
+    /heartbeat expired/,
+  );
+  assert.match(
+    agentCommunityStatusDetail(hostManaged({ providerPresence: "none" })),
+    /no presence heartbeat has been seen/,
+  );
+});
+
+test("a backend that reported no presence stays unconfirmed, not unreachable", () => {
+  const silent = hostManaged({ providerPresence: null, execution: null });
+  assert.equal(agentCommunityAvailability(silent), "Unavailable");
+  assert.match(
+    agentCommunityStatusDetail(silent),
+    /did not report its presence/,
+  );
+  assert.equal(managedAgentPairAction(silent), "start");
+});
+
+test("badge variants for local runtimes: failed is the only red", () => {
+  assert.equal(agentCommunityBadgeVariant(runtime()), "default");
+  assert.equal(
+    agentCommunityBadgeVariant(runtime({ lifecycle: "waking" })),
+    "info",
+  );
+  assert.equal(
+    agentCommunityBadgeVariant(runtime({ lifecycle: "stopped" })),
+    "secondary",
+  );
+  assert.equal(
+    agentCommunityBadgeVariant(runtime({ lifecycle: "failed" })),
+    "destructive",
+  );
+  assert.equal(
+    agentCommunityBadgeVariant(runtime({ localSetup: false })),
+    "secondary",
+  );
 });
 
 test("unavailable detail distinguishes stopped and failed", () => {
@@ -178,18 +317,23 @@ test("host ownership reads idle, not disconnected, while the provider's presence
     pid: null,
     runtimeAvailable: false,
   });
-  // Live presence with no execution lease: the provider is here and idle.
+  // Live presence with an idle word and no lease: here and idle.
+  const idle = { ...host, providerPresence: "live", execution: "idle" };
+  assert.equal(agentCommunityAvailability(idle), "Idle");
+  assert.match(
+    agentCommunityStatusDetail(idle),
+    /Here and idle: the host's presence heartbeat is live/,
+  );
+  assert.equal(managedAgentPairAction(idle), "stop");
+  // Live presence with no execution word at all is not idle: the backend
+  // said nothing about the execution, and the pill says exactly that.
   assert.equal(
     agentCommunityAvailability({ ...host, providerPresence: "live" }),
-    "Here",
-  );
-  assert.match(
-    agentCommunityStatusDetail({ ...host, providerPresence: "live" }),
-    /Idle: the provider's presence heartbeat is live/,
+    "Execution not reported",
   );
   assert.equal(
     managedAgentPairAction({ ...host, providerPresence: "live" }),
-    "stop",
+    "start",
   );
   // A live lease still wins over presence for the detail text.
   assert.match(
@@ -203,10 +347,10 @@ test("host ownership reads idle, not disconnected, while the provider's presence
   // A live heartbeat that does not name this pair's execution is "absent":
   // not Here, not idle, no Stop on offer — Start is the only honest action.
   const absent = { ...host, providerPresence: "live", execution: "absent" };
-  assert.equal(agentCommunityAvailability(absent), "Unavailable");
+  assert.equal(agentCommunityAvailability(absent), "Not running");
   assert.match(
     agentCommunityStatusDetail(absent),
-    /Absent: the provider is running but reports no execution/,
+    /Not running: the host is up but reports no execution/,
   );
   assert.equal(managedAgentPairAction(absent), "start");
   // The lease still wins over an absent word (the lease is signed per
@@ -215,27 +359,43 @@ test("host ownership reads idle, not disconnected, while the provider's presence
     agentCommunityAvailability({ ...absent, runtimeAvailable: true }),
     "Here",
   );
-  // The idle word, or no word at all, keeps the idle reading.
-  for (const execution of ["idle", null, undefined]) {
+  // Only the idle word (or a live word ahead of lease verification) keeps
+  // the idle reading; stopped and no-word each have their own.
+  for (const execution of ["idle", "live"]) {
     assert.equal(
       agentCommunityAvailability({
         ...host,
         providerPresence: "live",
         execution,
       }),
-      "Here",
+      "Idle",
     );
   }
-  // Expired or absent presence is the only thing that reads as disconnected.
   assert.equal(
-    agentCommunityAvailability({ ...host, providerPresence: "expired" }),
-    "Unavailable",
+    agentCommunityAvailability({
+      ...host,
+      providerPresence: "live",
+      execution: "stopped",
+    }),
+    "Stopped",
   );
+  // Expired or absent presence is the only thing that reads as not heard from.
+  for (const providerPresence of ["expired", "none"]) {
+    assert.equal(
+      agentCommunityAvailability({ ...host, providerPresence }),
+      "Provider not heard from",
+    );
+    assert.equal(
+      managedAgentPairAction({ ...host, providerPresence }),
+      "start",
+    );
+  }
   assert.match(
     agentCommunityStatusDetail({ ...host, providerPresence: "expired" }),
-    /Disconnected: the provider's last presence heartbeat has expired/,
+    /Provider not heard from: its last presence heartbeat expired/,
   );
-  for (const providerPresence of ["none", null, undefined]) {
+  // No presence report at all is unconfirmed, which is not disconnected.
+  for (const providerPresence of [null, undefined]) {
     assert.equal(
       agentCommunityAvailability({ ...host, providerPresence }),
       "Unavailable",

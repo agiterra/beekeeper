@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""acme-acp — a stub ACP v2 agent for a runtime Beekeeper has never heard of.
+
+Standard-library Python only, JSON-RPC 2.0 over newline-delimited stdio. It
+is the adapter `just headless-acme-check` commissions as `--runtime acme
+--driver <this file>` and the one `docs/runtime-descriptor.md` § Conformance
+vector describes; the file name is the driver slug (`acme-acp`) minted into
+every session target.
+
+What it does, honestly:
+
+- `initialize`: answers protocol version 2 and advertises exactly what it
+  has — no `loadSession`, no session resume, no image prompts, no
+  `_meta.steering.supported`. A client that asks for `session/load`,
+  `session/resume` or `_session/steering` gets JSON-RPC -32601 (method not
+  found); nothing is faked.
+- `session/new`: opens one session and returns its id.
+- `session/prompt`: streams one `agent_message_chunk` and ends the turn with
+  `stopReason: "end_turn"`. The chunk proves the descriptor's
+  `credentialEnv` reached this process **without printing the value**: it
+  carries the first 16 hex characters of `sha256(ACME_TOKEN)`, or the word
+  `unset` when the variable is absent, plus which prompt number this was.
+- `session/cancel` (a notification): acknowledged by ending the in-flight
+  turn with `stopReason: "cancelled"` if one is open; no reply otherwise.
+- `session/set_model`, `authenticate` and anything else: -32601.
+
+Every reply is one line of JSON on stdout; stderr carries a short log. Exit
+0 on EOF.
+"""
+
+import hashlib
+import json
+import os
+import sys
+
+PROTOCOL_VERSION = 2
+AGENT_NAME = "acme-acp"
+AGENT_VERSION = "0.1.0"
+
+
+def log(message: str) -> None:
+    sys.stderr.write(f"acme-acp: {message}\n")
+    sys.stderr.flush()
+
+
+def emit(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+def reply(request_id, result) -> None:
+    emit({"jsonrpc": "2.0", "id": request_id, "result": result})
+
+
+def refuse(request_id, code: int, message: str) -> None:
+    emit({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
+
+
+def notify(method: str, params: dict) -> None:
+    emit({"jsonrpc": "2.0", "method": method, "params": params})
+
+
+def credential_witness() -> str:
+    """The sha256 prefix of ACME_TOKEN — proof of custody, never the value."""
+    token = os.environ.get("ACME_TOKEN")
+    if token is None:
+        return "unset"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def main() -> int:
+    sessions = {}
+    prompts = 0
+    session_counter = 0
+    for raw in sys.stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            message = json.loads(raw)
+        except json.JSONDecodeError:
+            log("ignoring a line that is not JSON")
+            continue
+        method = message.get("method")
+        request_id = message.get("id")
+        params = message.get("params") or {}
+        if method is None:
+            # A response to something this stub never asks for.
+            continue
+        if method == "initialize":
+            reply(
+                request_id,
+                {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "agentInfo": {"name": AGENT_NAME, "version": AGENT_VERSION},
+                    "agentCapabilities": {
+                        "loadSession": False,
+                        "promptCapabilities": {"image": False, "audio": False, "embeddedContext": False},
+                    },
+                    "authMethods": [],
+                },
+            )
+        elif method == "session/new":
+            session_counter += 1
+            session_id = f"acme-session-{session_counter}"
+            sessions[session_id] = {"open_prompt": None, "cwd": params.get("cwd")}
+            log(f"opened {session_id} in {params.get('cwd')!r}")
+            reply(request_id, {"sessionId": session_id})
+        elif method == "session/prompt":
+            session_id = params.get("sessionId")
+            session = sessions.get(session_id)
+            if session is None:
+                refuse(request_id, -32602, f"unknown session {session_id!r}")
+                continue
+            prompts += 1
+            session["open_prompt"] = request_id
+            text = (
+                f"acme answered prompt {prompts}: ACME_TOKEN sha256 prefix "
+                f"{credential_witness()}"
+            )
+            notify(
+                "session/update",
+                {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": text},
+                    },
+                },
+            )
+            session["open_prompt"] = None
+            reply(request_id, {"stopReason": "end_turn"})
+        elif method == "session/cancel":
+            session = sessions.get(params.get("sessionId"))
+            if session and session["open_prompt"] is not None:
+                reply(session["open_prompt"], {"stopReason": "cancelled"})
+                session["open_prompt"] = None
+        elif request_id is None:
+            # An unknown notification: nothing to answer, nothing to pretend.
+            log(f"ignoring notification {method}")
+        else:
+            refuse(request_id, -32601, f"{AGENT_NAME} does not implement {method}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

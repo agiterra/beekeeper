@@ -4,7 +4,11 @@ import {
   managedAgentsQueryKey,
   managedAgentHostStatusQueryKey,
 } from "@/features/agents/hooks";
-import { canonicalRelayUrl } from "@/features/agents/managedAgentRuntimeStatus";
+import {
+  canonicalRelayUrl,
+  findManagedAgentRuntime,
+} from "@/features/agents/managedAgentRuntimeStatus";
+import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
 import { useCommunitiesIfPresent } from "@/features/communities/useCommunities";
 import {
   loadActiveCommunityId,
@@ -16,6 +20,7 @@ import {
   type ManagedAgentHostStatus,
 } from "@/shared/api/tauriManagedAgents";
 import { Button } from "@/shared/ui/button";
+import { AgentCommunityStatusPill } from "./AgentCommunityStatusPill";
 
 export function HostManagementPanel({
   pubkey,
@@ -44,6 +49,19 @@ export function HostManagementPanel({
     pair !== null &&
     canonicalRelayUrl(query.data?.relayUrl ?? "") === pair
       ? query.data
+      : undefined;
+  // The pair's runtime row carries what the ownership read does not: the
+  // host's presence verdict and the folded execution word. With it the panel
+  // can say "idle", "host unreachable" or "not running" instead of the one
+  // sentence that covered all three; without it, that sentence stays. Read
+  // only once ownership is adopted — the one phase that shows the pill — so
+  // a legacy or unconfirmed panel dispatches nothing but the ownership read.
+  const runtimesQuery = useManagedAgentRuntimesQuery({
+    enabled: !managementPending && info?.ownershipPhase === "adopted",
+  });
+  const pairRuntime =
+    relay && runtimesQuery.data
+      ? findManagedAgentRuntime(runtimesQuery.data, pubkey, relay)
       : undefined;
   const [error, setError] = useState<string | null>(null);
   const [retryPending, setRetryPending] = useState(false);
@@ -148,11 +166,19 @@ export function HostManagementPanel({
         </p>
       ) : null}
       {info?.ownershipPhase === "adopted" ? (
-        <p className="text-sm text-muted-foreground">
-          {info.runtimeAvailable === true
-            ? "Runtime availability observed through relay work."
-            : "Runtime availability is unconfirmed."}
-        </p>
+        pairRuntime?.lifecycle === "host_managed" ? (
+          <AgentCommunityStatusPill
+            runtime={pairRuntime}
+            showDetail
+            testId="agent-host-availability"
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {info.runtimeAvailable === true
+              ? "Runtime availability observed through relay work."
+              : "Runtime availability is unconfirmed."}
+          </p>
+        )
       ) : null}
       <Button
         variant="ghost"

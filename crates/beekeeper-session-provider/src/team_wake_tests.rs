@@ -799,7 +799,7 @@ fn accepted_lead_resolves_across_provider_instances() {
     let context = package(vec![roster(&actor, "lead", remote.clone())]);
 
     assert_eq!(
-        resolve_lead_target(&context, &authority).expect("remote lead"),
+        resolve_lead_target(&context, &authority, &Default::default()).expect("remote lead"),
         remote
     );
 }
@@ -823,7 +823,8 @@ fn reporting_actor_and_remote_lead_resolve_to_distinct_exact_providers() {
         child
     );
     assert_eq!(
-        resolve_lead_target(&context, &authority).expect("remote lead provider"),
+        resolve_lead_target(&context, &authority, &Default::default())
+            .expect("remote lead provider"),
         lead
     );
 }
@@ -832,7 +833,7 @@ fn reporting_actor_and_remote_lead_resolve_to_distinct_exact_providers() {
 fn lead_resolution_fails_closed_for_zero_multiple_or_metadata_mismatch() {
     let actor = "22".repeat(32);
     let mut authority = CurrentAuthority::default();
-    assert!(resolve_lead_target(&package(Vec::new()), &authority).is_err());
+    assert!(resolve_lead_target(&package(Vec::new()), &authority, &Default::default()).is_err());
 
     authority
         .seats
@@ -844,6 +845,7 @@ fn lead_resolution_fails_closed_for_zero_multiple_or_metadata_mismatch() {
             provider_target("codex", "remote", 1),
         )]),
         &authority,
+        &Default::default(),
     )
     .is_err());
 
@@ -857,6 +859,7 @@ fn lead_resolution_fails_closed_for_zero_multiple_or_metadata_mismatch() {
             roster(&other, "lead", provider_target("claude", "b", 1)),
         ]),
         &authority,
+        &Default::default(),
     )
     .is_err());
 }
@@ -1077,7 +1080,12 @@ fn fold_context_never_promotes_a_seat_into_a_steering_grant() {
         ..CurrentAuthority::default()
     };
     let wake_scope = scope(Uuid::new_v4());
-    let context = fold_context(&wake_scope, &"44".repeat(32), &authority);
+    let context = fold_context(
+        &wake_scope,
+        &"44".repeat(32),
+        &authority,
+        &Default::default(),
+    );
     assert_eq!(context.active_seats.len(), 1);
     assert!(context.active_grants.is_empty());
 }
@@ -1092,7 +1100,12 @@ fn ready_or_ordinary_turn_without_canonical_assignment_never_requires_a_report()
     authority
         .seats
         .insert(actor.clone(), ("builder".into(), "33".repeat(32)));
-    let context = fold_context(&wake_scope, &founder.public_key().to_hex(), &authority);
+    let context = fold_context(
+        &wake_scope,
+        &founder.public_key().to_hex(),
+        &authority,
+        &Default::default(),
+    );
     let mut ready = package(vec![roster(&actor, "builder", child_target.clone())]);
     ready.inbox.push(CodingSessionContextInboxItem {
         event_id: "44".repeat(32),
@@ -1188,7 +1201,12 @@ fn only_exact_assignment_pointer_for_actor_and_command_requires_report() {
         stage_at: None,
         stage_code: None,
     });
-    let context = fold_context(&wake_scope, &founder.public_key().to_hex(), &authority);
+    let context = fold_context(
+        &wake_scope,
+        &founder.public_key().to_hex(),
+        &authority,
+        &Default::default(),
+    );
     assert_eq!(
         turn_requires_report(
             &context_package,
@@ -1414,7 +1432,12 @@ fn a_foreign_umbrellas_pubkey_produces_no_wake_at_all() {
         ..CurrentAuthority::default()
     };
     let wake_scope = scope(Uuid::new_v4());
-    let context = fold_context(&wake_scope, &founder.public_key().to_hex(), &authority);
+    let context = fold_context(
+        &wake_scope,
+        &founder.public_key().to_hex(),
+        &authority,
+        &Default::default(),
+    );
 
     // The founder and this umbrella's own seated lead are not foreign.
     assert!(!wake_author_is_foreign(
@@ -1493,4 +1516,62 @@ fn every_wake_source_names_the_key_that_signed_it() {
         terminal_at_ms: 2,
     };
     assert_eq!(terminal.author_pubkey(), Some("dd".repeat(32).as_str()));
+}
+
+/// Team wake routing follows the project's own lead role: under
+/// `lead: captain` the `captain` seat is the wake's target and the lead
+/// actor, and a seat holding the foundation's `lead` is neither.
+#[test]
+fn wake_routing_follows_the_projects_lead_role() {
+    let captain_vocabulary = beekeeper_core::role_vocabulary::RoleVocabulary::from_team(
+        Some("captain"),
+        Some(&["qa".to_owned()]),
+    )
+    .expect("a vocabulary");
+    let actor = "22".repeat(32);
+    let remote = provider_target("codex-acp", "remote-codex", 7);
+    let mut authority = CurrentAuthority::default();
+    authority
+        .seats
+        .insert(actor.clone(), ("captain".into(), "33".repeat(32)));
+    let context = package(vec![roster(&actor, "captain", remote.clone())]);
+
+    assert_eq!(
+        resolve_lead_target(&context, &authority, &captain_vocabulary).expect("the captain"),
+        remote
+    );
+    assert_eq!(
+        lead_actor(&authority, &captain_vocabulary).as_deref(),
+        Some(actor.as_str())
+    );
+    assert!(
+        resolve_lead_target(&context, &authority, &Default::default()).is_err(),
+        "under the default vocabulary a captain seat is not the lead"
+    );
+    assert_eq!(lead_actor(&authority, &Default::default()), None);
+
+    let mut foundation_named = CurrentAuthority::default();
+    foundation_named
+        .seats
+        .insert(actor.clone(), ("lead".into(), "33".repeat(32)));
+    assert!(
+        resolve_lead_target(
+            &package(vec![roster(&actor, "lead", remote)]),
+            &foundation_named,
+            &captain_vocabulary
+        )
+        .is_err(),
+        "the foundation's `lead` is not this project's lead"
+    );
+    let folded = fold_context(
+        &scope(Uuid::new_v4()),
+        &"44".repeat(32),
+        &authority,
+        &captain_vocabulary,
+    );
+    assert!(
+        folded.may_lead(&actor),
+        "the captain seat may lead in the fold"
+    );
+    assert_eq!(folded.vocabulary, captain_vocabulary);
 }

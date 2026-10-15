@@ -44,6 +44,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use beekeeper_core::coding_session_project_action_grant::ProjectActionCapability;
+use beekeeper_core::role_vocabulary::RoleVocabulary;
 use beekeeper_db::coding_session_project_action_grant::{
     ProjectActionGrantLookup, ProjectActionGrantStanding,
 };
@@ -51,9 +52,6 @@ use uuid::Uuid;
 
 use crate::handlers::pack_source::project_write_admitted;
 use crate::state::AppState;
-
-/// The role a delegation's holder must still occupy for it to apply.
-pub(crate) const DELEGATED_SEAT_ROLE: &str = "lead";
 
 /// Whether a delegation admits this act, and if not, which fact was missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,11 +118,13 @@ impl ProjectActionDelegationRefusal {
 ///
 /// `standings` are the live delegations of the requested project held by the
 /// requested key, as folded from whole chains; `writing_granters` is the
-/// subset of their signers that are admitted to write the project **now**.
+/// subset of their signers that are admitted to write the project **now**;
+/// `vocabulary.lead()` is the seat the holder must still occupy.
 pub(crate) fn decide_project_action_delegation(
     capability: ProjectActionCapability,
     lookup: &ProjectActionGrantLookup,
     writing_granters: &BTreeSet<String>,
+    vocabulary: &RoleVocabulary,
 ) -> ProjectActionDelegation {
     if !capability.is_delegable() {
         return ProjectActionDelegation::Refused(
@@ -142,7 +142,7 @@ pub(crate) fn decide_project_action_delegation(
     }
     let mut seen_lead = false;
     for standing in standings {
-        if standing.seat_role.as_deref() != Some(DELEGATED_SEAT_ROLE) {
+        if standing.seat_role.as_deref() != Some(vocabulary.lead()) {
             continue;
         }
         seen_lead = true;
@@ -164,7 +164,8 @@ pub(crate) fn decide_project_action_delegation(
 ///
 /// `channel_id` is the channel the action is filed in — the project's
 /// coding-session channel, which is also where its team sessions' authority
-/// chains live, so one channel-scoped read covers both.
+/// chains live, so one channel-scoped read covers both. `vocabulary` names
+/// the project's lead role, the seat a delegation's holder must still hold.
 pub(crate) async fn project_action_delegation_admitted(
     state: &Arc<AppState>,
     community: beekeeper_core::CommunityId,
@@ -172,6 +173,7 @@ pub(crate) async fn project_action_delegation_admitted(
     project: &str,
     caller: &[u8],
     capability: ProjectActionCapability,
+    vocabulary: &RoleVocabulary,
 ) -> ProjectActionDelegation {
     if !capability.is_delegable() {
         return ProjectActionDelegation::Refused(
@@ -192,7 +194,7 @@ pub(crate) async fn project_action_delegation_admitted(
     let mut writing_granters = BTreeSet::new();
     if let ProjectActionGrantLookup::Decided(standings) = &lookup {
         for standing in standings {
-            if standing.seat_role.as_deref() != Some(DELEGATED_SEAT_ROLE)
+            if standing.seat_role.as_deref() != Some(vocabulary.lead())
                 || writing_granters.contains(&standing.grant.granted_by)
             {
                 continue;
@@ -215,7 +217,7 @@ pub(crate) async fn project_action_delegation_admitted(
             }
         }
     }
-    decide_project_action_delegation(capability, &lookup, &writing_granters)
+    decide_project_action_delegation(capability, &lookup, &writing_granters, vocabulary)
 }
 
 #[cfg(test)]

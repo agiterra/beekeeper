@@ -188,6 +188,7 @@ fn context(state_dir: &Path) -> BriefContext<'static> {
         // No worktree: (e) then reports "no grant", which is what a host that
         // cut no sibling clone can actually witness.
         cwd: None,
+        vocabulary: Default::default(),
         state_dir: state_dir.to_path_buf(),
         session_id: "77777777-8888-9999-aaaa-bbbbbbbbbbbb".to_owned(),
         runtime: RuntimeFacts {
@@ -497,11 +498,13 @@ fn the_reviewed_reports_assignment_is_read_from_the_report_itself() {
         .sign_with_keys(&nostr::Keys::generate())
         .expect("the record signs");
     let included = std::iter::once(report.id.to_hex()).collect();
+    let default = beekeeper_core::role_vocabulary::RoleVocabulary::default();
     let reviewed = super::report_under_review(
         std::slice::from_ref(&report),
         &included,
         Some(&head),
         "verifier",
+        &default,
     );
     assert_eq!(
         reviewed,
@@ -509,8 +512,37 @@ fn the_reviewed_reports_assignment_is_read_from_the_report_itself() {
         "the verdict names the builder's assignment, from the report"
     );
     assert_eq!(
-        super::report_under_review(&[report], &included, Some(&head), "builder"),
+        super::report_under_review(
+            std::slice::from_ref(&report),
+            &included,
+            Some(&head),
+            "builder",
+            &default
+        ),
         None,
         "only a verifier rules on a report"
+    );
+    // Under a project whose judging role is `qa`, `qa` resolves the report
+    // and the foundation's `verifier` does not.
+    let qa = beekeeper_core::role_vocabulary::RoleVocabulary::from_team(
+        Some("captain"),
+        Some(&["qa".to_owned()]),
+    )
+    .expect("a vocabulary");
+    assert!(
+        super::report_under_review(
+            std::slice::from_ref(&report),
+            &included,
+            Some(&head),
+            "qa",
+            &qa
+        )
+        .is_some(),
+        "qa is this project's judging role"
+    );
+    assert_eq!(
+        super::report_under_review(&[report], &included, Some(&head), "verifier", &qa),
+        None,
+        "verifier is not a role of this project"
     );
 }

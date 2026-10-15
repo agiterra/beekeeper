@@ -130,6 +130,7 @@ fn candidate(
         },
     );
     VerdictAdmissionCandidate {
+        vocabulary: Default::default(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
         founder_pubkey: watched.founder.public_key().to_hex(),
@@ -515,6 +516,7 @@ fn b_a_first_red_row_read_newest_first_does_not_outrank_the_later_green_rows() {
         },
     );
     let candidate = VerdictAdmissionCandidate {
+        vocabulary: Default::default(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
         founder_pubkey: watched.founder.public_key().to_hex(),

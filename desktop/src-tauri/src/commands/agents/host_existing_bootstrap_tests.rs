@@ -61,6 +61,7 @@ fn fixture() -> (tempfile::TempDir, Context, Enrollment, HostConfig) {
         turn_idle_timeout_secs: None,
         turn_budget: None,
         checkpoint_on_stop: false,
+        capabilities: Vec::new(),
         provider_command: None,
         written_at: "2026-10-12T00:00:00Z".into(),
     };

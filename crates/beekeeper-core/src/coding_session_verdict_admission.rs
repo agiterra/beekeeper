@@ -188,6 +188,7 @@ use crate::coding_session_team_transaction::{
     CodingSessionTeamRefutationDecision, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionPayload, CodingSessionTeamVerdict,
 };
+use crate::role_vocabulary::RoleVocabulary;
 
 /// Newest genesis events one verdict-gated ref update may search.
 ///
@@ -323,6 +324,10 @@ pub struct VerdictAdmissionCandidate {
     /// replaces is what a flood against the per-mission read is made of. A
     /// caller that cannot count them says `0` rather than guessing.
     pub excluded_unauthorized_policies: u32,
+    /// The project's role vocabulary: which seat is the judging seat whose
+    /// `not-refuted` clears arm (C). The same vocabulary the candidate's fold
+    /// context carried, so the two cannot name different judges.
+    pub vocabulary: RoleVocabulary,
 }
 
 /// Arm (B)'s status on one commit, carried inside an arm-(C) refusal.
@@ -407,6 +412,7 @@ pub fn verdict_admission_fold_context(
     genesis_ref: impl Into<String>,
     founder_pubkey: impl Into<String>,
     active_seats: Vec<CodingSessionTeamActiveSeat>,
+    vocabulary: RoleVocabulary,
 ) -> CodingSessionTeamFoldContext {
     CodingSessionTeamFoldContext {
         channel_ref: channel_ref.into(),
@@ -414,6 +420,7 @@ pub fn verdict_admission_fold_context(
         genesis_ref: genesis_ref.into(),
         founder_pubkey: founder_pubkey.into(),
         active_seats,
+        vocabulary,
         active_grants: Vec::new(),
         // `CodingSessionTeamFoldContext::verifier_required` says a caller
         // that has not read the policy must pass `false`: the fold then
@@ -843,16 +850,18 @@ fn is_not_refuted_of(record: &VerdictAdmissionRecord, report_ref: &str) -> bool 
     )
 }
 
-/// Whether `pubkey` holds an active `verifier` seat of this mission.
+/// Whether `pubkey` holds this mission's active judging seat — the
+/// vocabulary's first verification role, `verifier` by default.
 ///
 /// The role string is compared exactly, lowercase, as the authority
 /// projection stores it. A seat holding `verifier-2` or `Verifier ` is not
 /// this seat: a role is a closed token in the hire, not a description.
 fn holds_verifier_seat(candidate: &VerdictAdmissionCandidate, pubkey: &str) -> bool {
+    let judge = candidate.vocabulary.verdict_role();
     candidate
         .active_seats
         .iter()
-        .any(|seat| seat.role == "verifier" && eq_hex(&seat.actor_pubkey, pubkey))
+        .any(|seat| seat.role == judge && eq_hex(&seat.actor_pubkey, pubkey))
 }
 
 /// Whether `pubkey` holds any active seat of this mission.

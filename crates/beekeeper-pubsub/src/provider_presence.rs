@@ -9,6 +9,14 @@
 //! [`PROVIDER_PRESENCE_TTL_CAP_SECS`], measured from Redis acceptance time:
 //! the relay never keeps a heartbeat visible longer than the provider said it
 //! would count as live.
+//!
+//! **Instance cap (ledger 406 F4).** The relay admits 24224 from any channel
+//! member, and readers verify the provider key and `instanceId` themselves,
+//! so a stray heartbeat cannot make a session read `live`; what it could do
+//! is fill the register. Each (channel, pubkey) may hold at most
+//! [`PROVIDER_PRESENCE_INSTANCE_CAP`] live instance keys: a ninth distinct
+//! `instanceId` is refused until one expires, while a heartbeat for an
+//! instance already registered is never counted against the cap.
 
 use beekeeper_core::tenant::TenantContext;
 use deadpool_redis::Pool;
@@ -26,6 +34,9 @@ use crate::topic::REDIS_KEY_PREFIX;
 /// otherwise keep a dead instance readable for an hour; ten minutes is the
 /// relay's ceiling on how long absence can hide.
 pub const PROVIDER_PRESENCE_TTL_CAP_SECS: u64 = 600;
+
+/// Most live presence instances one pubkey may register in one channel.
+pub const PROVIDER_PRESENCE_INSTANCE_CAP: u64 = 8;
 
 const APPLY_SCRIPT: &str = r#"
 local current = redis.call('GET', KEYS[1])
@@ -47,6 +58,13 @@ local redis_time = redis.call('TIME')
 local accepted_at = tonumber(redis_time[1])
 local ttl = tonumber(ARGV[3])
 local expires_at = accepted_at + ttl
+if not current then
+  redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', accepted_at)
+  local live = redis.call('ZCARD', KEYS[3])
+  if live >= tonumber(ARGV[5]) then
+    return {'capped', tostring(live)}
+  end
+end
 local incoming = cjson.decode(ARGV[4])
 incoming.acceptedAt = accepted_at
 incoming.expiresAt = expires_at
@@ -54,6 +72,8 @@ local encoded = cjson.encode(incoming)
 redis.call('SET', KEYS[1], encoded, 'EX', ttl)
 redis.call('ZADD', KEYS[2], expires_at, KEYS[1])
 redis.call('EXPIRE', KEYS[2], ttl * 2)
+redis.call('ZADD', KEYS[3], expires_at, ARGV[6])
+redis.call('EXPIRE', KEYS[3], ttl * 2)
 return {'applied', encoded}
 "#;
 
@@ -108,6 +128,14 @@ pub enum PresenceApplyOutcome {
     Conflict(ProviderPresenceRecord),
     /// Lower sequence than the retained heartbeat.
     Stale(ProviderPresenceRecord),
+    /// A new `instanceId` for a (channel, pubkey) that already holds
+    /// [`PROVIDER_PRESENCE_INSTANCE_CAP`] live instances; nothing stored.
+    Capped {
+        /// Live instance keys the pubkey holds in the channel right now.
+        live_instances: u64,
+        /// The cap that refused it.
+        cap: u64,
+    },
 }
 
 /// The TTL the relay retains a heartbeat for: its own `ttl_secs`, capped.
@@ -132,6 +160,19 @@ pub fn provider_presence_key(
     )
 }
 
+/// Community/channel/provider scoped set of live instance ids, scored by
+/// expiry, that enforces [`PROVIDER_PRESENCE_INSTANCE_CAP`].
+pub fn provider_presence_instances_key(
+    ctx: &TenantContext,
+    channel_id: Uuid,
+    provider_pubkey: &str,
+) -> String {
+    format!(
+        "{REDIS_KEY_PREFIX}:{}:provider-presence-instances:{channel_id}:{provider_pubkey}",
+        ctx.community()
+    )
+}
+
 /// Community/channel scoped expiry-index key.
 pub fn provider_presence_index_key(ctx: &TenantContext, channel_id: Uuid) -> String {
     format!(
@@ -140,7 +181,8 @@ pub fn provider_presence_index_key(ctx: &TenantContext, channel_id: Uuid) -> Str
     )
 }
 
-/// Atomically apply one heartbeat using Redis `TIME` and monotonic `seq` rules.
+/// Atomically apply one heartbeat using Redis `TIME`, monotonic `seq` rules
+/// and the per-(channel, pubkey) instance cap.
 // The signed event, relay scope, provider identity and the heartbeat's own
 // claims stay explicit at this trust boundary, as they do for leases.
 #[allow(clippy::too_many_arguments)]
@@ -167,7 +209,7 @@ pub async fn apply_provider_presence(
     };
     let pending_json = serde_json::to_string(&pending)?;
     let mut conn = pool.get().await?;
-    let (status, record_json): (String, String) = Script::new(APPLY_SCRIPT)
+    let (status, detail): (String, String) = Script::new(APPLY_SCRIPT)
         .key(provider_presence_key(
             ctx,
             channel_id,
@@ -175,13 +217,32 @@ pub async fn apply_provider_presence(
             instance_id,
         ))
         .key(provider_presence_index_key(ctx, channel_id))
+        .key(provider_presence_instances_key(
+            ctx,
+            channel_id,
+            provider_pubkey,
+        ))
         .arg(seq)
         .arg(event.id.to_hex())
         .arg(retained_ttl_secs(ttl_secs).max(1))
         .arg(pending_json)
+        .arg(PROVIDER_PRESENCE_INSTANCE_CAP)
+        .arg(instance_id)
         .invoke_async(&mut *conn)
         .await?;
-    let record: ProviderPresenceRecord = serde_json::from_str(&record_json)?;
+    if status == "capped" {
+        let live_instances = detail.parse::<u64>().map_err(|_| {
+            PubSubError::Redis(redis::RedisError::from((
+                redis::ErrorKind::UnexpectedReturnType,
+                "provider presence cap count is not a number",
+            )))
+        })?;
+        return Ok(PresenceApplyOutcome::Capped {
+            live_instances,
+            cap: PROVIDER_PRESENCE_INSTANCE_CAP,
+        });
+    }
+    let record: ProviderPresenceRecord = serde_json::from_str(&detail)?;
     match status.as_str() {
         "applied" => Ok(PresenceApplyOutcome::Applied(record)),
         "duplicate" => Ok(PresenceApplyOutcome::Duplicate(record)),
@@ -263,6 +324,19 @@ mod tests {
             provider_presence_key(&ctx(1), channel, "aa", "secondary")
         );
         assert!(provider_presence_index_key(&ctx(1), channel).contains(&channel.to_string()));
+        assert_ne!(
+            provider_presence_instances_key(&ctx(1), channel, "aa"),
+            provider_presence_instances_key(&ctx(1), channel, "bb")
+        );
+        assert_ne!(
+            provider_presence_instances_key(&ctx(1), channel, "aa"),
+            provider_presence_instances_key(&ctx(1), Uuid::new_v4(), "aa")
+        );
+    }
+
+    #[test]
+    fn the_instance_cap_is_eight() {
+        assert_eq!(PROVIDER_PRESENCE_INSTANCE_CAP, 8);
     }
 
     #[test]
@@ -340,5 +414,121 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    /// F4: a ninth distinct instance for one (channel, pubkey) is refused
+    /// without touching the register; refreshing a registered instance never
+    /// counts against the cap; another pubkey and another channel have their
+    /// own cap; an expired instance frees its slot.
+    #[tokio::test]
+    #[ignore = "requires Redis"]
+    async fn a_pubkey_holds_at_most_eight_live_instances_per_channel() {
+        let pool = crate::test_util::make_test_pool();
+        let context = ctx(Uuid::new_v4().as_u128());
+        let channel = Uuid::new_v4();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+        let beat = |keys: &Keys, content: &str| {
+            EventBuilder::new(Kind::Custom(24_224), content)
+                .tags([])
+                .sign_with_keys(keys)
+                .unwrap()
+        };
+        let apply = |channel: Uuid,
+                     pubkey: String,
+                     instance: String,
+                     content: String,
+                     seq: u64,
+                     ttl: u64| {
+            let pool = pool.clone();
+            let context = context.clone();
+            let event = beat(&keys, &content);
+            async move {
+                apply_provider_presence(
+                    &pool, &context, channel, &pubkey, &instance, &event, seq, ttl,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        for n in 1..=PROVIDER_PRESENCE_INSTANCE_CAP {
+            assert!(
+                matches!(
+                    apply(
+                        channel,
+                        pubkey.clone(),
+                        format!("i{n}"),
+                        format!("b{n}"),
+                        1,
+                        90
+                    )
+                    .await,
+                    PresenceApplyOutcome::Applied(_)
+                ),
+                "instance {n} fits"
+            );
+        }
+        assert_eq!(
+            apply(channel, pubkey.clone(), "i9".into(), "b9".into(), 1, 90).await,
+            PresenceApplyOutcome::Capped {
+                live_instances: 8,
+                cap: PROVIDER_PRESENCE_INSTANCE_CAP
+            }
+        );
+        let snapshot = provider_presence_snapshot(&pool, &context, channel)
+            .await
+            .unwrap();
+        assert_eq!(snapshot.len(), 8, "the refused heartbeat stored nothing");
+        assert!(matches!(
+            apply(
+                channel,
+                pubkey.clone(),
+                "i1".into(),
+                "b1-again".into(),
+                2,
+                90
+            )
+            .await,
+            PresenceApplyOutcome::Applied(_)
+        ));
+        let other_key = Keys::generate().public_key().to_hex();
+        assert!(matches!(
+            apply(channel, other_key, "i9".into(), "other".into(), 1, 90).await,
+            PresenceApplyOutcome::Applied(_)
+        ));
+        assert!(matches!(
+            apply(
+                Uuid::new_v4(),
+                pubkey.clone(),
+                "i9".into(),
+                "elsewhere".into(),
+                1,
+                90
+            )
+            .await,
+            PresenceApplyOutcome::Applied(_)
+        ));
+        // A slot frees when its instance expires.
+        let short = Uuid::new_v4();
+        for n in 1..=PROVIDER_PRESENCE_INSTANCE_CAP {
+            apply(
+                short,
+                pubkey.clone(),
+                format!("s{n}"),
+                format!("s{n}"),
+                1,
+                1,
+            )
+            .await;
+        }
+        assert!(matches!(
+            apply(short, pubkey.clone(), "s9".into(), "s9".into(), 1, 1).await,
+            PresenceApplyOutcome::Capped { .. }
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+        assert!(matches!(
+            apply(short, pubkey.clone(), "s9".into(), "s9-later".into(), 2, 1).await,
+            PresenceApplyOutcome::Applied(_)
+        ));
     }
 }

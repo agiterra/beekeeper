@@ -36,6 +36,7 @@ fn signed(body: CodingSessionTeamTransactionBody, keys: &Keys) -> Event {
 
 fn context(founder: &Keys, actor: &Keys) -> CodingSessionTeamFoldContext {
     CodingSessionTeamFoldContext {
+        vocabulary: Default::default(),
         channel_ref: CHANNEL.into(),
         session_ref: SESSION.into(),
         genesis_ref: GENESIS.into(),
