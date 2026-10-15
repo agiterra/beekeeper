@@ -80,6 +80,27 @@ Relays MUST NOT be required to verify an `auth` tag.
 
 ## Client Behavior
 
+### Judging time conditions on a live connection
+
+The relay evaluates `created_at<` and `created_at>` only when it authenticates
+the agent (NIP-42 AUTH, judged at the AUTH event's `created_at`, within the
+relay's ±60 s tolerance). An agent that authenticated before its attestation
+expired keeps its connection, so a consumer that acts on that agent's events
+(for example a hosted agent's owner-only author gate deciding whether a
+sibling's message starts a turn) is the only post-expiry enforcement and must
+re-evaluate the same clauses per event. It judges them at the event's own
+`created_at`, bounded to no more than 600 s before the consumer observed the
+event: `created_at` is author-chosen, so without the bound an expired key could
+revive itself by backdating. 600 s is a provider policy, chosen inside the
+relay's ±900 s ingest drift window and equal to the NIP-98 freshness window;
+an event the relay accepted at `now − 800` is therefore judged at `now − 600`.
+Ordinary delivery delays inside the bound keep the event's own time, and a
+future-dated event is judged at its own (later) time. A consumer that answers
+inputs must refuse an attestation that is not in force visibly (a signed
+refusal), never drop it silently, so expiry cannot be mistaken for the agent
+being down.
+
+
 Clients MUST validate the event according to the core Nostr event rules, including that `id` and `sig` are valid for `event.pubkey`, before treating an `auth` tag as verified provenance.
 A valid `auth` tag on an otherwise invalid event does not establish provenance.
 Clients that process an `auth` tag SHOULD verify the owner signature and the conditions against the event.

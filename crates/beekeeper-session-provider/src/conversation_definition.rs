@@ -114,7 +114,7 @@ impl Provider {
                 "definition transport unavailable",
             )
         })?;
-        Ok(beekeeper_acp::ordinary_author_allowed(
+        match beekeeper_acp::ordinary_author_decision(
             beekeeper_acp::OrdinaryAuthorPolicy {
                 respond_to: definition.respond_to,
                 allowlist: &definition.respond_to_allowlist,
@@ -126,7 +126,21 @@ impl Provider {
             channel,
             rest,
         )
-        .await)
+        .await
+        {
+            beekeeper_acp::AuthorDecision::Allowed => Ok(true),
+            beekeeper_acp::AuthorDecision::Denied => Ok(false),
+            // A sibling whose owner attestation has expired is answered, not
+            // dropped: "not allowed" must never read as "not running".
+            beekeeper_acp::AuthorDecision::AttestationNotInForce => {
+                Err(crate::execution_scope::refuse(
+                    crate::payload::OWNER_ATTESTATION_EXPIRED,
+                    format!(
+                        "author {author}'s owner attestation is not in force at this input's time; no turn was admitted"
+                    ),
+                ))
+            }
+        }
     }
 
     pub(crate) async fn conversation_capability(

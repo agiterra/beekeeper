@@ -181,14 +181,42 @@ struct OwnerCache {
     pubkey: Option<String>,
     /// author_hex → verified attestation conditions (`None` = not a sibling)
     siblings: std::sync::Mutex<HashMap<String, Option<String>>>,
+    /// author_hex → when a cached attestation that failed its time check was
+    /// last refetched; one refetch per [`SIBLING_REFETCH_COOLDOWN_SECS`].
+    refetched_at: std::sync::Mutex<HashMap<String, u64>>,
 }
+
+/// A cached sibling attestation that is not in force is refetched at most this
+/// often per author, so an expired sibling on a long-lived connection costs one
+/// profile query per cooldown, not one per message.
+pub const SIBLING_REFETCH_COOLDOWN_SECS: u64 = 60;
 
 impl OwnerCache {
     fn new(initial: Option<String>) -> Self {
         Self {
             pubkey: initial,
             siblings: std::sync::Mutex::new(HashMap::new()),
+            refetched_at: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record a refetch for `author` now; `false` when one happened within the
+    /// cooldown, in which case the cached result stands.
+    fn refetch_due(&self, author: &str, now: u64) -> bool {
+        let Ok(mut map) = self.refetched_at.lock() else {
+            return true;
+        };
+        if map
+            .get(author)
+            .is_some_and(|last| now.saturating_sub(*last) < SIBLING_REFETCH_COOLDOWN_SECS)
+        {
+            return false;
+        }
+        if map.len() >= 256 {
+            map.clear();
+        }
+        map.insert(author.to_string(), now);
+        true
     }
 
     /// Return the cached owner pubkey.
@@ -225,7 +253,11 @@ impl OwnerCache {
 /// claiming to be older than this is judged no earlier than
 /// `observed - MAX_AUTHORIZATION_BACKDATE_SECS`: an expired attestation cannot
 /// be revived by backdating, while ordinary delivery and replay delays within
-/// the window keep the input's own time.
+/// the window keep the input's own time. A future-dated input is judged at its
+/// own (later) time. This is provider policy, not a relay rule: it sits inside
+/// the relay's ±900 s ingest drift window and equals the NIP-98 freshness
+/// window, so an event the relay accepted at `now − 800` is judged at
+/// `now − 600` (NIP-OA § Client Behavior).
 pub const MAX_AUTHORIZATION_BACKDATE_SECS: u64 = 600;
 
 /// The time at which an input's author authorization is judged.
@@ -242,35 +274,56 @@ pub fn authorization_time(created_at: u64, observed_at: u64) -> u64 {
 /// same evaluator relay admission uses at authentication time). `None` checks
 /// the attestation without a time decision, for re-checks of an event that was
 /// already admitted at its own time.
-async fn is_owner_or_sibling(
+/// Outcome of the owner-or-sibling check for one input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorDecision {
+    /// The owner, or a sibling whose attestation is in force for this input.
+    Allowed,
+    /// Not the owner and no verified same-owner attestation.
+    Denied,
+    /// A verified same-owner attestation exists but its time conditions do not
+    /// hold at this input's authorization time (expired, or not yet in force).
+    /// Callers that answer inputs must refuse this visibly, never drop it.
+    AttestationNotInForce,
+}
+
+async fn owner_or_sibling_decision(
     author: &str,
     owner_cache: &OwnerCache,
     rest_client: &relay::RestClient,
     authored_at: Option<u64>,
-) -> bool {
+) -> AuthorDecision {
     let my_owner = match owner_cache.get() {
         Some(o) => o,
-        None => return false, // no owner configured — fail closed
+        None => return AuthorDecision::Denied, // no owner configured — fail closed
     };
 
     // Direct owner check.
     if author == my_owner {
-        return true;
+        return AuthorDecision::Allowed;
     }
 
-    let in_force = |conditions: &Option<String>| match (conditions, authored_at) {
-        (None, _) => false,
-        (Some(_), None) => true,
+    let decide = |conditions: &Option<String>| match (conditions, authored_at) {
+        (None, _) => AuthorDecision::Denied,
+        (Some(_), None) => AuthorDecision::Allowed,
         (Some(conditions), Some(at)) => {
-            beekeeper_sdk::nip_oa::auth_tag_time_conditions_hold(conditions, at).is_ok()
+            if beekeeper_sdk::nip_oa::auth_tag_time_conditions_hold(conditions, at).is_ok() {
+                AuthorDecision::Allowed
+            } else {
+                AuthorDecision::AttestationNotInForce
+            }
         }
     };
     let cached = owner_cache.is_known_sibling(author);
     if let Some(conditions) = &cached {
         // A cached attestation that is not in force may since have been
-        // renewed (a new kind:0); look once more before refusing.
-        if conditions.is_none() || in_force(conditions) {
-            return in_force(conditions);
+        // renewed (a new kind:0); look once more before refusing, at most once
+        // per cooldown so an expired sibling cannot drive a query per message.
+        let decision = decide(conditions);
+        if decision != AuthorDecision::AttestationNotInForce
+            || !owner_cache.refetch_due(author, nostr::Timestamp::now().as_secs())
+        {
+            return decision;
         }
     }
     let proof = check_sibling_via_profile(author, my_owner, rest_client).await;
@@ -279,11 +332,21 @@ async fn is_owner_or_sibling(
     if proof.is_some() || cached.is_none() {
         owner_cache.cache_sibling_proof(author.to_string(), proof.clone());
     }
-    let allowed = in_force(&proof);
-    if !allowed && proof.is_some() {
+    if proof.is_none() {
+        if let Some(Some(conditions)) = &cached {
+            tracing::warn!(
+                author,
+                %conditions,
+                "sibling attestation not in force and its profile could not be refetched; refusing on the cached attestation"
+            );
+            return AuthorDecision::AttestationNotInForce;
+        }
+    }
+    let decision = decide(&proof);
+    if decision == AuthorDecision::AttestationNotInForce {
         tracing::debug!(author, "sibling attestation not in force for this event");
     }
-    allowed
+    decision
 }
 
 /// Inbound author gate decision: does this author's event fire a turn?
@@ -312,21 +375,46 @@ async fn author_allowed(
     rest_client: &relay::RestClient,
     authored_at: Option<u64>,
 ) -> bool {
+    author_decision(
+        respond_to,
+        allowlist,
+        author,
+        is_dm,
+        owner_cache,
+        rest_client,
+        authored_at,
+    )
+    .await
+        == AuthorDecision::Allowed
+}
+
+async fn author_decision(
+    respond_to: &RespondTo,
+    allowlist: &HashSet<String>,
+    author: &str,
+    is_dm: bool,
+    owner_cache: &OwnerCache,
+    rest_client: &relay::RestClient,
+    authored_at: Option<u64>,
+) -> AuthorDecision {
     if is_dm {
         return match respond_to {
-            RespondTo::Nobody => false,
-            _ => is_owner_or_sibling(author, owner_cache, rest_client, authored_at).await,
+            RespondTo::Nobody => AuthorDecision::Denied,
+            _ => owner_or_sibling_decision(author, owner_cache, rest_client, authored_at).await,
         };
     }
     match respond_to {
-        RespondTo::Anyone => true,
-        RespondTo::Nobody => false,
+        RespondTo::Anyone => AuthorDecision::Allowed,
+        RespondTo::Nobody => AuthorDecision::Denied,
         RespondTo::OwnerOnly => {
-            is_owner_or_sibling(author, owner_cache, rest_client, authored_at).await
+            owner_or_sibling_decision(author, owner_cache, rest_client, authored_at).await
         }
         RespondTo::Allowlist => {
-            allowlist.contains(author)
-                || is_owner_or_sibling(author, owner_cache, rest_client, authored_at).await
+            if allowlist.contains(author) {
+                AuthorDecision::Allowed
+            } else {
+                owner_or_sibling_decision(author, owner_cache, rest_client, authored_at).await
+            }
         }
     }
 }
@@ -357,6 +445,16 @@ pub async fn ordinary_author_allowed(
     channel_id: Uuid,
     rest_client: &relay::RestClient,
 ) -> bool {
+    ordinary_author_decision(policy, channel_id, rest_client).await == AuthorDecision::Allowed
+}
+
+/// [`ordinary_author_allowed`], but distinguishing a sibling whose attestation
+/// is not in force from a plain stranger, so the caller can refuse visibly.
+pub async fn ordinary_author_decision(
+    policy: OrdinaryAuthorPolicy<'_>,
+    channel_id: Uuid,
+    rest_client: &relay::RestClient,
+) -> AuthorDecision {
     let respond_to = if policy.enforced_owner_only {
         RespondTo::OwnerOnly
     } else {
@@ -375,7 +473,7 @@ pub async fn ordinary_author_allowed(
         let channel_info = pool::ChannelInfoResolver::new(HashMap::new(), rest_client.clone());
         is_dm_channel(channel_id, &channel_info).await
     };
-    author_allowed(
+    author_decision(
         &respond_to,
         &policy.allowlist.iter().cloned().collect(),
         policy.author,
