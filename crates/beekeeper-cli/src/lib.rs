@@ -6854,6 +6854,7 @@ mod tests {
             vec![
                 "archive",
                 "archived",
+                "attest",
                 "create",
                 "delete",
                 "draft-create",
@@ -7227,7 +7228,7 @@ mod tests {
             // C1: `publish` and `status` (spec § 5.1), plus the offline
             // `example` (ledger 206 A).
             ("actions", 3),
-            ("agents", 14),
+            ("agents", 15),
             ("canvas", 2),
             ("channels", 16),
             // C5 (SV-34): list, open, screenshot, close, watch.
