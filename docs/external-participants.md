@@ -13,8 +13,9 @@ session metadata or receipts.
 - **Its own key.** The participant generates and keeps its own key; Beekeeper
   never holds it.
 - **Owner attestation.** The owner attests that key with NIP-OA, signing with
-  their own key from bee's existing custody. The owner key is never passed as
-  an argument:
+  their own key from `BEEKEEPER_PRIVATE_KEY`. `attest` refuses a key given with
+  the global `--private-key` flag, so the owner secret never reaches the
+  command line:
 
   ```sh
   bee agents attest <PUBKEY> --expires-at <unix> --output auth-tag.json
