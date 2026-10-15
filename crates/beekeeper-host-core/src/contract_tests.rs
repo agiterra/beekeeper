@@ -179,6 +179,8 @@ fn sample_runtimes() -> Vec<beekeeper_core::coding_session_runtime::RuntimeDescr
             capabilities: None,
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
         },
         RuntimeDescriptor {
             steer_idle_guard: None,
@@ -195,6 +197,8 @@ fn sample_runtimes() -> Vec<beekeeper_core::coding_session_runtime::RuntimeDescr
             capabilities: None,
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
         },
     ]
 }
@@ -766,6 +770,8 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
                 capabilities: None,
                 credential_env: Vec::new(),
                 credential_source: None,
+                execution: None,
+                context: None,
             },
             RuntimeDescriptor {
                 steer_idle_guard: None,
@@ -782,6 +788,8 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
                 capabilities: None,
                 credential_env: Vec::new(),
                 credential_source: None,
+                execution: None,
+                context: None,
             },
         ],
         augmented_path: None,

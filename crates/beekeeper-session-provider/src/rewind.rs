@@ -543,6 +543,20 @@ impl Provider {
         if let Some(busy) = self.rewind_busy(&plan) {
             return self.refuse_rewind(&plan, busy);
         }
+        // A rewind cuts the conversation at a checkpoint. A runtime that keeps
+        // its own conversation (descriptor `context: "runtime"`) holds memory
+        // Beekeeper cannot cut, so the new generation would still remember
+        // what the rewind dropped. Refused before anything is touched.
+        if self.runtime_keeps_context(&plan.target.session_id) {
+            return self.refuse_rewind(
+                &plan,
+                refusal(
+                    NOT_RESTORABLE,
+                    "this runtime keeps its own conversation, which Beekeeper cannot cut, so a \
+                     rewind would leave it remembering what it dropped; nothing was changed",
+                ),
+            );
+        }
         let Some(record) = self.state.session(&plan.target.session_id).cloned() else {
             return Ok(());
         };

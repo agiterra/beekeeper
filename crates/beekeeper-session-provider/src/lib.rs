@@ -5156,6 +5156,27 @@ impl Provider {
         } else {
             None
         };
+        // The conversation path sends every channel mention as a steer — the
+        // sender never chose the class. With no turn running or waiting in
+        // this execution there is nothing to steer and nothing to wait behind:
+        // the words start a turn now, exactly as a boundary turn would, and a
+        // degrade receipt would be narrated into the channel as "queued for
+        // the next turn boundary … cannot apply this request as a native
+        // steer" about an ordinary message to an idle participant. So for a
+        // conversation request the degrade is published only while a turn is
+        // genuinely in flight. An explicit `steer` from an operator keeps its
+        // receipt either way: that sender asked for the class. The frame still
+        // names the boundary delivery below.
+        let steer_boundary = steer_degrade.is_some();
+        let steer_degrade = match steer_degrade {
+            Some(_)
+                if !self.turn_in_flight(&session_id)
+                    && self.is_conversation_request(&command_id, &target)? =>
+            {
+                None
+            }
+            other => other,
+        };
         // The frame is captured with the class the sender *asked* for, because
         // that is all `decide_turn` knows. It is the only place the
         // **recipient** reads the class — the `turn_degraded` receipt answers
@@ -5163,7 +5184,7 @@ impl Provider {
         // has to name the delivery that actually happens. Telling the
         // receiving agent "Delivery: steer" about a turn that was queued to
         // the next boundary is the silent downgrade under a different name.
-        if steer_degrade.is_some() {
+        if steer_boundary {
             if let SessionCommand::Turn {
                 framing: Some(framing),
                 ..
@@ -5348,6 +5369,19 @@ impl Provider {
         Ok(disposition)
     }
 
+    /// Whether this execution has a turn running, or one accepted into its
+    /// mailbox and not yet started. Custody counts as well as the fold, for
+    /// the reason the interrupt answer gives.
+    fn turn_in_flight(&self, session_id: &str) -> bool {
+        self.state
+            .session(session_id)
+            .is_some_and(|record| record.open_turn.is_some())
+            || self
+                .in_flight
+                .values()
+                .any(|turn| turn.session_id == session_id)
+    }
+
     /// Whether a native mid-turn steer can be delivered to `session_id`.
     ///
     /// Three facts, all required: the process behind this generation
@@ -5360,7 +5394,11 @@ impl Provider {
     /// for the log, not the receipt — the receipt payload is a function of
     /// the command alone, so a redelivery answered by a process that learned
     /// different capabilities publishes the same bytes under the same
-    /// semantic key. This is also what `metadata_for` publishes as
+    /// semantic key. *Whether* a degrade receipt is published at all is not:
+    /// for a conversation request it depends on whether a turn is in flight
+    /// when the command is delivered ([`Self::turn_in_flight`]), so a
+    /// redelivery may publish one the first delivery did not, or the
+    /// reverse — never two different payloads under one key. This is also what `metadata_for` publishes as
     /// `threadSteer`: a control an operator can press is a control that
     /// works.
     fn native_steer_deliverable(&self, session_id: &str) -> bool {
@@ -9594,6 +9632,7 @@ impl Provider {
                     tool_calls,
                     identity,
                     self.credential_source_label(&session_id),
+                    self.runtime_executes_remotely(&session_id),
                 );
                 let terminal_at_ms = now_ms();
                 let terminal = self.enqueue_transcript_with_id(
@@ -10940,6 +10979,26 @@ async fn resolve_genesis_founder(
 /// first; the raw error travels alongside as `detail`.
 pub const CLAUDE_LOGIN_EXPIRED: &str = "Claude's login has expired on this computer. Run `claude auth login` in a terminal, then send the next turn.";
 
+/// The sentence a turn carries when the operator cancelled it and the
+/// adapter answered with an error rather than confirming the stop. The
+/// adapter's own words travel as `detail`.
+pub const CANCEL_NOT_CONFIRMED_SENTENCE: &str = "The cancel was not confirmed: the runtime \
+     answered it with an error, so the work may still be running. Check the runtime before \
+     sending the next turn.";
+
+/// [`CANCEL_NOT_CONFIRMED_SENTENCE`] for a stop the provider's shutdown asked
+/// for, on a runtime whose work runs in the adapter (`execution` local): the
+/// adapter was stopped with the execution, so nothing is left running.
+pub const SHUTDOWN_STOP_NOT_CONFIRMED_LOCAL: &str = "The provider stopped this execution and \
+     the runtime answered the stop with an error; the runtime's adapter was then stopped with \
+     the execution.";
+
+/// The same for a runtime whose work runs in a process Beekeeper does not
+/// launch (`execution: "remote"`): stopping the adapter does not stop it.
+pub const SHUTDOWN_STOP_NOT_CONFIRMED_REMOTE: &str = "The provider stopped this execution and \
+     the runtime answered the stop with an error: work it runs outside Beekeeper may still be \
+     running there. Check the runtime.";
+
 /// The operator sentence for a failed turn whose cause is recognized, or
 /// `None` when the raw message is the best available sentence.
 ///
@@ -11115,7 +11174,15 @@ fn turn_result(
     tool_calls: u64,
     identity: ModelIdentity<'_>,
 ) -> (serde_json::Value, SessionStatus) {
-    turn_result_with_credentials(outcome, duration_ms, usage, tool_calls, identity, None)
+    turn_result_with_credentials(
+        outcome,
+        duration_ms,
+        usage,
+        tool_calls,
+        identity,
+        None,
+        false,
+    )
 }
 
 /// [`turn_result`] told where the runtime's credentials came from, so a
@@ -11128,6 +11195,7 @@ fn turn_result_with_credentials(
     tool_calls: u64,
     identity: ModelIdentity<'_>,
     credential_source: Option<&str>,
+    executes_remotely: bool,
 ) -> (serde_json::Value, SessionStatus) {
     let cost = match usage {
         Some(usage) => turn_cost(usage, identity),
@@ -11181,14 +11249,30 @@ fn turn_result_with_credentials(
         TurnOutcome::Failed {
             message,
             agent_gone,
+            cause,
         } => {
             // A recognized cause gets the operator sentence as `result` and
             // the raw provider text as `detail`; an unrecognized one keeps
             // the raw text as `result` and carries no `detail`, so a reader
-            // can tell a classified failure from a verbatim one.
-            let sentence = turn_failure_sentence(message).map(|ambient| {
-                credential_source::auth_failure_sentence(ambient, credential_source)
-            });
+            // can tell a classified failure from a verbatim one. A reason the
+            // adapter declared (`data.reason`) is recognized for any runtime
+            // and wins over phrase matching, which knows Claude's CLI only.
+            let sentence = match cause {
+                Some(session::TurnFailureCause::CancelNotConfirmed { shutdown }) => Some(
+                    match (shutdown, executes_remotely) {
+                        (false, _) => CANCEL_NOT_CONFIRMED_SENTENCE,
+                        (true, false) => SHUTDOWN_STOP_NOT_CONFIRMED_LOCAL,
+                        (true, true) => SHUTDOWN_STOP_NOT_CONFIRMED_REMOTE,
+                    }
+                    .to_owned(),
+                ),
+                Some(session::TurnFailureCause::Credential(reason)) => Some(
+                    credential_source::declared_auth_failure_sentence(reason, credential_source),
+                ),
+                None => turn_failure_sentence(message).map(|ambient| {
+                    credential_source::auth_failure_sentence(ambient, credential_source)
+                }),
+            };
             let mut item = payload::result_item(
                 payload::ResultSubtype::Error,
                 duration_ms,
@@ -11198,8 +11282,25 @@ fn turn_result_with_credentials(
             );
             if let (Some(_), Some(object)) = (sentence.as_ref(), item.as_object_mut()) {
                 object.insert("detail".into(), serde_json::json!(message));
-                // Every recognized failure today is an authentication one.
-                credential_source::stamp_auth_failure(&mut item, credential_source);
+                match cause {
+                    Some(session::TurnFailureCause::CancelNotConfirmed { .. }) => {
+                        if let Some(object) = item.as_object_mut() {
+                            object.insert(
+                                "errorCode".into(),
+                                serde_json::json!(payload::CANCEL_NOT_CONFIRMED),
+                            );
+                        }
+                    }
+                    Some(session::TurnFailureCause::Credential(reason)) => {
+                        credential_source::stamp_declared_auth_failure(
+                            &mut item,
+                            reason,
+                            credential_source,
+                        )
+                    }
+                    // A recognized phrase is an authentication failure.
+                    None => credential_source::stamp_auth_failure(&mut item, credential_source),
+                }
             }
             (
                 item,
@@ -11629,6 +11730,7 @@ mod tests {
             &session::TurnOutcome::Failed {
                 message: raw.to_string(),
                 agent_gone: false,
+                cause: None,
             },
             2_500,
             None,
@@ -11674,6 +11776,7 @@ mod tests {
             &session::TurnOutcome::Failed {
                 message: raw.to_string(),
                 agent_gone: true,
+                cause: None,
             },
             10,
             None,
@@ -12113,6 +12216,8 @@ mod tests {
 
     #[path = "conversation_tests.rs"]
     mod conversation_tests;
+    #[path = "runtime_context_tests.rs"]
+    mod runtime_context_tests;
 
     pub(crate) struct CollectingSink {
         events: Mutex<Vec<Event>>,
@@ -12903,6 +13008,8 @@ mod tests {
             capabilities: None,
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
         }
     }
 
@@ -17903,6 +18010,8 @@ mod tests {
                 capabilities: None,
                 credential_env: Vec::new(),
                 credential_source: None,
+                execution: None,
+                context: None,
             },
         ];
         let mut provider = Provider::new(config_of_runtimes(

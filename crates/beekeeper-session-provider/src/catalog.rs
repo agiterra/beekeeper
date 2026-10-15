@@ -300,6 +300,8 @@ mod tests {
             capabilities: None,
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
         }
     }
 
@@ -402,6 +404,8 @@ mod tests {
             capabilities: None,
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
         };
         // Deliberately out of order: the catalog sorts by instance ref.
         let catalog = build(

@@ -2070,6 +2070,8 @@ mod tests {
             capabilities: None,
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
         }
     }
 

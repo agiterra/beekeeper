@@ -657,7 +657,45 @@ pub enum TurnOutcome {
         message: String,
         /// Whether the agent process is gone, so the session cannot continue.
         agent_gone: bool,
+        /// Why the turn failed, when Beekeeper knows a cause that changes
+        /// what the operator is told; `None` publishes the message as is.
+        cause: Option<TurnFailureCause>,
     },
+}
+
+/// A failure cause that has its own operator sentence and `errorCode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnFailureCause {
+    /// The adapter declared a credential failure (`data.reason`, one of
+    /// [`beekeeper_acp::acp::CREDENTIAL_FAILURE_REASONS`]):
+    /// `MODEL_AUTH_FAILED`.
+    Credential(&'static str),
+    /// The turn was being stopped — by the operator's cancel, or because the
+    /// provider was shutting the execution down (`shutdown`) — and the
+    /// adapter answered the stopped prompt with an error instead of
+    /// `stopReason: cancelled`: the runtime did not confirm the work stopped.
+    /// `CANCEL_NOT_CONFIRMED`.
+    CancelNotConfirmed {
+        /// The provider's shutdown, not an operator, asked for the stop.
+        shutdown: bool,
+    },
+}
+
+/// Upper bound on adapter-authored text carried into a failed turn's result.
+const MAX_ADAPTER_TEXT_BYTES: usize = 1024;
+
+/// `text`, trimmed and cut to [`MAX_ADAPTER_TEXT_BYTES`] on a character
+/// boundary, with an ellipsis when anything was cut.
+fn bounded_adapter_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.len() <= MAX_ADAPTER_TEXT_BYTES {
+        return trimmed.to_owned();
+    }
+    let mut end = MAX_ADAPTER_TEXT_BYTES;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &trimmed[..end])
 }
 
 /// Why a session actor stopped.
@@ -2846,7 +2884,9 @@ fn log_agent_stderr(client: &AcpClient, session_id: &str, what: &str) {
 pub fn classify_startup_error(error: &AcpError, what: &str) -> CreateFailure {
     let message = error.to_string();
     let looks_like_auth = match error {
-        AcpError::AgentError { message, .. } => mentions_auth(message),
+        AcpError::AgentError { message, .. } => {
+            error.credential_failure_reason().is_some() || mentions_auth(message)
+        }
         _ => false,
     };
     CreateFailure {
@@ -2855,7 +2895,13 @@ pub fn classify_startup_error(error: &AcpError, what: &str) -> CreateFailure {
         } else {
             PROVIDER_UNAVAILABLE
         },
-        message: format!("could not {what}: {message}"),
+        // A declared reason is named in the message so a reader (the desktop
+        // remediation) can say which credential failure the runtime reported
+        // rather than guessing a vendor's sign-in.
+        message: match error.credential_failure_reason() {
+            Some(reason) => format!("could not {what}: the runtime reported `{reason}`: {message}"),
+            None => format!("could not {what}: {message}"),
+        },
     }
 }
 
@@ -3824,8 +3870,24 @@ impl SessionActor {
                         TurnOutcome::Failed {
                             message: "agent exited during cancellation".into(),
                             agent_gone: true,
+                            cause: None,
                         },
                         Some("agent exited during cancellation".to_owned()),
+                    ),
+                    // The adapter answered the cancelled prompt with an error
+                    // of its own: it did not confirm the work stopped (a
+                    // runtime whose work runs elsewhere may say it is still
+                    // pending there). Reporting that as Cancelled would tell
+                    // the operator the work ended while it may continue.
+                    Err(AcpError::AgentError { message, .. }) => (
+                        TurnOutcome::Failed {
+                            message: bounded_adapter_text(&message),
+                            agent_gone: false,
+                            cause: Some(TurnFailureCause::CancelNotConfirmed {
+                                shutdown: requested_shutdown,
+                            }),
+                        },
+                        None,
                     ),
                     // The agent ignored the cancel but the operator's intent
                     // stands: report it cancelled, and let the drained process
@@ -4022,6 +4084,7 @@ impl SessionActor {
                     TurnOutcome::Failed {
                         message: note,
                         agent_gone: matches!(error, AcpError::AgentExited),
+                        cause: None,
                     },
                     None,
                 )
@@ -4037,6 +4100,9 @@ impl SessionActor {
         turn_id: &str,
     ) -> (TurnOutcome, Option<String>) {
         let message = error.to_string();
+        let cause = error
+            .credential_failure_reason()
+            .map(TurnFailureCause::Credential);
         // Publish what the wire did before publishing what Beekeeper decided about
         // it. A reader who was never near the machine gets the same facts the
         // local log has, and gets them in the order that explains the verdict.
@@ -4048,6 +4114,7 @@ impl SessionActor {
                 TurnOutcome::Failed {
                     message: message.clone(),
                     agent_gone: true,
+                    cause: None,
                 },
                 Some(message),
             ),
@@ -4075,6 +4142,7 @@ impl SessionActor {
                     TurnOutcome::Failed {
                         message,
                         agent_gone: false,
+                        cause: None,
                     },
                     None,
                 )
@@ -4083,6 +4151,7 @@ impl SessionActor {
                 TurnOutcome::Failed {
                     message,
                     agent_gone: false,
+                    cause,
                 },
                 None,
             ),
@@ -6182,6 +6251,143 @@ done
         manager.shutdown("s1");
     }
 
+    /// Holds every prompt open; answers `session/cancel` by failing the held
+    /// prompt with an error saying the work could not be stopped — the shape
+    /// a runtime whose work runs in its own server sends.
+    const CANCEL_REFUSING_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id" ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"cancel could not be applied; the prompt is still pending in thread T-1"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
+    /// Start one turn on `script`, interrupt it, and return how it ended.
+    async fn interrupted_outcome(script_name: &str, script: &str) -> TurnOutcome {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), script_name, script);
+        let (tx, mut rx) = mpsc::channel(32);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        let handle = manager.handle("s1").expect("handle");
+        handle
+            .deliver(SessionCommand::Turn {
+                command_id: "work".into(),
+                text: "go".into(),
+                attachments: Vec::new(),
+                operator_pubkey: None,
+                framing: None,
+            })
+            .expect("turn");
+        assert!(matches!(
+            next_lifecycle_event(&mut rx).await,
+            SessionEvent::TurnStarted { .. }
+        ));
+        handle
+            .deliver(SessionCommand::Interrupt {
+                command_id: "stop".into(),
+            })
+            .expect("interrupt");
+        let SessionEvent::TurnFinished { outcome, .. } = next_lifecycle_event(&mut rx).await else {
+            panic!("the interrupted turn must finish");
+        };
+        manager.shutdown("s1");
+        outcome
+    }
+
+    /// R7: an adapter that answers the cancel with an error did not confirm
+    /// the stop. The turn is failed with its words, never Cancelled.
+    #[tokio::test]
+    async fn a_cancel_the_adapter_refuses_is_not_reported_cancelled() {
+        let outcome = interrupted_outcome("cancel-refusing-agent", CANCEL_REFUSING_AGENT).await;
+        match outcome {
+            TurnOutcome::Failed {
+                message,
+                agent_gone,
+                cause,
+            } => {
+                assert_eq!(
+                    cause,
+                    Some(TurnFailureCause::CancelNotConfirmed { shutdown: false })
+                );
+                assert!(!agent_gone);
+                assert!(message.contains("still pending in thread T-1"), "{message}");
+            }
+            other => panic!("expected a failed turn, got {other:?}"),
+        }
+    }
+
+    /// S2: the same refusal during the provider's shutdown is marked as a
+    /// shutdown stop, so the result names no operator cancel.
+    #[tokio::test]
+    async fn a_shutdown_stop_the_adapter_refuses_is_marked_as_shutdown() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "cancel-refusing-agent", CANCEL_REFUSING_AGENT);
+        let (tx, mut rx) = mpsc::channel(32);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "work".into(),
+                text: "go".into(),
+                attachments: Vec::new(),
+                operator_pubkey: None,
+                framing: None,
+            })
+            .expect("turn");
+        assert!(matches!(
+            next_lifecycle_event(&mut rx).await,
+            SessionEvent::TurnStarted { .. }
+        ));
+        manager.shutdown("s1");
+        let SessionEvent::TurnFinished { outcome, .. } = next_lifecycle_event(&mut rx).await else {
+            panic!("the stopped turn must finish");
+        };
+        assert!(
+            matches!(
+                outcome,
+                TurnOutcome::Failed {
+                    cause: Some(TurnFailureCause::CancelNotConfirmed { shutdown: true }),
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
+    }
+
+    /// The confirmed cancel is unchanged.
+    #[tokio::test]
+    async fn a_cancel_the_adapter_confirms_is_still_cancelled() {
+        let outcome = interrupted_outcome("stalling-agent", STALLING_AGENT).await;
+        assert!(matches!(outcome, TurnOutcome::Cancelled), "{outcome:?}");
+    }
+
+    #[test]
+    fn adapter_text_is_bounded_on_a_character_boundary() {
+        let long = "é".repeat(MAX_ADAPTER_TEXT_BYTES);
+        let bounded = bounded_adapter_text(&long);
+        assert!(bounded.len() <= MAX_ADAPTER_TEXT_BYTES + '…'.len_utf8());
+        assert!(bounded.ends_with('…'));
+        assert_eq!(bounded_adapter_text("  short  "), "short");
+    }
+
     #[tokio::test]
     async fn a_ci_turn_keeps_its_admission_guard_behind_a_busy_turn() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -7715,15 +7921,32 @@ pwd -P > '{}'
             &AcpError::AgentError {
                 code: -32000,
                 message: "Authentication required".into(),
+                reason: None,
             },
             "open an agent session",
         );
         assert_eq!(auth.code, PROVIDER_AUTH_REQUIRED);
 
+        let declared = classify_startup_error(
+            &AcpError::AgentError {
+                code: -32000,
+                message: "upstream refused the token".into(),
+                reason: Some("credential_expired".into()),
+            },
+            "open an agent session",
+        );
+        assert_eq!(declared.code, PROVIDER_AUTH_REQUIRED);
+        assert!(
+            declared.message.contains("`credential_expired`"),
+            "{}",
+            declared.message
+        );
+
         let broken = classify_startup_error(
             &AcpError::AgentError {
                 code: -32000,
                 message: "disk full".into(),
+                reason: None,
             },
             "open an agent session",
         );

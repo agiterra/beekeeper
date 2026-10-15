@@ -614,15 +614,11 @@ impl Provider {
             payload::status_item(SESSION_RESTORED_NATIVE),
             Priority::High,
         )?;
-        self.enqueue_transcript(
-            record.channel_id,
-            &target,
-            None,
-            crate::execution_scope::boundary_status_item(&execution_state),
-            Priority::High,
-        )?;
-        // What the provider's isolation settings withheld, when any did.
-        for item in crate::session_isolation::isolation_status_items(&execution_state) {
+        // What the provider's isolation settings withheld, when any did; for
+        // a runtime that executes remotely, that the boundary is the
+        // adapter's only; and for one that keeps its own context, that this
+        // execution may remember more than Beekeeper gave it.
+        for item in self.open_disclosure_for(&target.session_id, &execution_state, None) {
             self.enqueue_transcript(record.channel_id, &target, None, item, Priority::High)?;
         }
         self.publish_metadata(record.channel_id, &target, SessionStatus::Idle)?;

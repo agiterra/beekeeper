@@ -725,6 +725,11 @@ export const CODING_SESSION_CONTINUITY_STATUSES: ReadonlyMap<string, string> =
       "Loaded — the provider replayed its native session history",
     ],
     ["session_restarted_without_context", "Restarted without prior context"],
+    [
+      // Descriptor `context: "runtime"`: never called fresh.
+      "session_runtime_context",
+      "Runtime-held context — this runtime keeps its own conversation across sessions, so it may carry earlier context Beekeeper did not provide and cannot see",
+    ],
   ]);
 
 /**
@@ -790,6 +795,8 @@ export const CODING_SESSION_CONTINUITY_REASONS: ReadonlyMap<string, string> =
 const REASON_CARRYING_CONTINUITY_STATUSES: ReadonlySet<string> = new Set([
   "session_fresh",
   "session_restarted_without_context",
+  // Carries the reason of the fresh/restarted row it stands in for.
+  "session_runtime_context",
 ]);
 
 /**

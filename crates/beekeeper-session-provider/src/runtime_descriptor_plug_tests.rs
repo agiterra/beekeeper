@@ -20,10 +20,11 @@ use std::time::Duration;
 
 use beekeeper_core::coding_session_command::CodingSessionTarget;
 use beekeeper_core::coding_session_payload::Capabilities;
-use beekeeper_core::coding_session_runtime::RuntimeDescriptor;
+use beekeeper_core::coding_session_runtime::{RuntimeContext, RuntimeDescriptor, RuntimeExecution};
 use beekeeper_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_TRANSCRIPT,
 };
 use nostr::{Event, EventBuilder, Kind, Tag};
 use uuid::Uuid;
@@ -116,6 +117,8 @@ fn acme_descriptor(agent_script: String, credential_env: Vec<String>) -> Runtime
         title_model: Some(None),
         credential_env,
         credential_source: Some(ACME_SOURCE.into()),
+        execution: None,
+        context: None,
     }
 }
 
@@ -130,6 +133,15 @@ struct Rig {
 /// `ACME_TOKEN` for it, and the real driver-to-profile mapping (not the
 /// fixtures' test double) so the launch path is the one production takes.
 fn rig(credential_env: Vec<String>) -> Rig {
+    rig_with(credential_env, ACME_ACP, |_| {})
+}
+
+/// [`rig`] with another stub script and a last word on the descriptor.
+fn rig_with(
+    credential_env: Vec<String>,
+    agent: &str,
+    adjust: impl FnOnce(&mut RuntimeDescriptor),
+) -> Rig {
     let dir = tempfile::tempdir().expect("tempdir");
     let cwd = dir.path().join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
@@ -160,9 +172,11 @@ fn rig(credential_env: Vec<String>) -> Rig {
     let script = fake_agent(
         dir.path(),
         ACME_DRIVER,
-        &ACME_ACP.replace("ACME_ENV_LOG", &env_log.display().to_string()),
+        &agent.replace("ACME_ENV_LOG", &env_log.display().to_string()),
     );
-    config.runtimes = vec![acme_descriptor(script, credential_env)];
+    let mut descriptor = acme_descriptor(script, credential_env);
+    adjust(&mut descriptor);
+    config.runtimes = vec![descriptor];
     config.runtime_profile_override = None;
     let provider = Provider::new(config).expect("provider");
     Rig {
@@ -349,4 +363,141 @@ async fn an_unknown_runtime_that_names_no_credential_variables_is_refused_by_nam
     assert!(message.contains("--credential-env"), "{message}");
     assert_eq!(provider.state().sessions().count(), 0);
     assert!(!env_log.exists(), "no adapter may have been started");
+}
+
+/// The stub adapter, except that every prompt fails with the runtime-neutral
+/// credential signal: a JSON-RPC error whose `data.reason` is
+/// `credential_expired`, in words no Claude phrase matches.
+const ACME_ACP_EXPIRED: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":false}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acme-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"acme: token rejected by upstream","data":{"reason":"credential_expired"}}}\n' "$id" ;;
+  esac
+done
+"#;
+
+/// Create one acme session and run one turn; return everything published.
+async fn create_and_turn(rig: &mut Rig) -> (CollectingSink, TurnOutcome) {
+    let channel_id = rig.channel_id;
+    let provider = &mut rig.provider;
+    provider
+        .handle_command_event(
+            channel_id,
+            &create_event(provider, channel_id, "acme-create"),
+        )
+        .await
+        .expect("handle create");
+    let target = provider
+        .state()
+        .sessions()
+        .next()
+        .expect("session record")
+        .target("instance-1");
+    provider
+        .handle_command_event(channel_id, &turn_event(channel_id, "acme-turn", &target))
+        .await
+        .expect("handle turn");
+    let outcome = pump_until_turn_finished(provider).await;
+    let sink = CollectingSink::default();
+    provider.flush(&sink).await.expect("flush");
+    (sink, outcome)
+}
+
+fn transcript_items(sink: &CollectingSink) -> Vec<serde_json::Value> {
+    sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT)
+        .into_iter()
+        .map(|envelope| envelope["item"].clone())
+        .collect()
+}
+
+/// R1: a plugged runtime's expired credential, declared with `data.reason`,
+/// is `MODEL_AUTH_FAILED` naming the descriptor's `credentialSource` — the
+/// same outcome the Claude phrase path produces — not raw adapter text.
+#[tokio::test]
+async fn a_declared_credential_expiry_from_a_plugged_adapter_is_model_auth_failed() {
+    let mut rig = rig_with(vec!["ACME_TOKEN".into()], ACME_ACP_EXPIRED, |_| {});
+    let (sink, outcome) = create_and_turn(&mut rig).await;
+    assert!(
+        matches!(
+            outcome,
+            TurnOutcome::Failed {
+                cause: Some(crate::session::TurnFailureCause::Credential(
+                    "credential_expired"
+                )),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    let result = transcript_items(&sink)
+        .into_iter()
+        .find(|item| item["kind"] == "result")
+        .expect("a result item");
+    assert_eq!(result["errorCode"], "MODEL_AUTH_FAILED", "{result}");
+    assert_eq!(result["credentialSource"], ACME_SOURCE, "{result}");
+    assert_eq!(result["credentialReason"], "credential_expired", "{result}");
+    let sentence = result["result"].as_str().expect("sentence");
+    assert!(sentence.contains(ACME_SOURCE), "{sentence}");
+    assert!(
+        result["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("token rejected by upstream")),
+        "{result}"
+    );
+}
+
+/// R6: the boundary disclosure for each `execution` value. Local claims the
+/// boundary enforced around the work (on macOS); remote names it as the
+/// adapter's only and never says `execution_boundary_enforced`.
+#[tokio::test]
+async fn the_boundary_disclosure_follows_the_declared_execution() {
+    for remote in [false, true] {
+        let mut rig = rig_with(vec!["ACME_TOKEN".into()], ACME_ACP, |descriptor| {
+            descriptor.execution = remote.then_some(RuntimeExecution::Remote);
+        });
+        let (sink, _) = create_and_turn(&mut rig).await;
+        let statuses: Vec<String> = transcript_items(&sink)
+            .iter()
+            .filter(|item| item["kind"] == "status")
+            .filter_map(|item| item["status"].as_str().map(str::to_owned))
+            .filter(|status| status.starts_with("execution_boundary_"))
+            .collect();
+        let expected = match (cfg!(target_os = "macos"), remote) {
+            (false, _) => crate::execution_scope::STATUS_BOUNDARY_NOT_ENFORCED,
+            (true, false) => crate::execution_scope::STATUS_BOUNDARY_ENFORCED,
+            (true, true) => crate::execution_scope::STATUS_BOUNDARY_ADAPTER_ONLY,
+        };
+        assert_eq!(statuses, vec![expected.to_owned()], "remote={remote}");
+    }
+}
+
+/// R8: a runtime that keeps its own conversation (`context: "runtime"`) is
+/// never published as a fresh conversation; the transcript says it may carry
+/// earlier context. Absent keeps the Beekeeper-owned disclosure.
+#[tokio::test]
+async fn a_runtime_that_keeps_its_own_context_is_never_called_fresh() {
+    for keeps in [false, true] {
+        let mut rig = rig_with(vec!["ACME_TOKEN".into()], ACME_ACP, |descriptor| {
+            descriptor.context = keeps.then_some(RuntimeContext::Runtime);
+        });
+        let (sink, _) = create_and_turn(&mut rig).await;
+        let statuses: Vec<String> = transcript_items(&sink)
+            .iter()
+            .filter(|item| item["kind"] == "status")
+            .filter_map(|item| item["status"].as_str().map(str::to_owned))
+            .collect();
+        let has = |status: &str| statuses.iter().any(|s| s == status);
+        assert_eq!(
+            has(crate::execution_scope::STATUS_RUNTIME_CONTEXT),
+            keeps,
+            "keeps={keeps}: {statuses:?}"
+        );
+        assert_eq!(has("session_fresh"), !keeps, "keeps={keeps}: {statuses:?}");
+    }
 }

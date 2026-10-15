@@ -96,6 +96,47 @@ pub struct RuntimeDescriptor {
     /// Omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_source: Option<String>,
+    /// Where this runtime's work executes. Absent means
+    /// [`RuntimeExecution::Local`]: the work runs in the adapter's own process
+    /// tree, inside whatever boundary the host put around it.
+    /// [`RuntimeExecution::Remote`] declares that the adapter delegates the
+    /// work to a process Beekeeper does not launch (a runtime's own server),
+    /// so a boundary around the adapter does not surround the work and the
+    /// transcript must not say it does. A declared fact about the installed
+    /// adapter, set by whoever commissions it. Omitted when absent, so an
+    /// older sidecar still parses the list under `deny_unknown_fields`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<RuntimeExecution>,
+    /// Who owns the conversation context. Absent means
+    /// [`RuntimeContext::Beekeeper`]: every new session starts the runtime in
+    /// a fresh conversation, and only what Beekeeper hands it (a verified
+    /// brief, a native resume) carries over. [`RuntimeContext::Runtime`]
+    /// declares that the runtime keeps its own conversation across Beekeeper
+    /// sessions (an adapter pinned to one thread of its own server), so a new
+    /// session may carry context Beekeeper did not provide and cannot see,
+    /// and the transcript must not call it fresh. Omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<RuntimeContext>,
+}
+
+/// Who owns a runtime's conversation context across Beekeeper sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeContext {
+    /// Beekeeper: a new session is a new conversation. The default.
+    Beekeeper,
+    /// The runtime keeps its own conversation, which may outlive a session.
+    Runtime,
+}
+
+/// Where a runtime's work executes relative to the adapter Beekeeper starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeExecution {
+    /// In the adapter's own process tree. The default.
+    Local,
+    /// In a process the adapter talks to and Beekeeper does not launch.
+    Remote,
 }
 
 /// The environment variables the `claude` runtime word accepts from the
@@ -179,6 +220,18 @@ impl RuntimeDescriptor {
         }
         default_credential_env(&self.runtime)
             .map(|names| names.iter().map(|name| (*name).to_owned()).collect())
+    }
+
+    /// Whether this runtime's work executes outside the adapter Beekeeper
+    /// launches ([`RuntimeExecution::Remote`]).
+    pub fn executes_remotely(&self) -> bool {
+        self.execution == Some(RuntimeExecution::Remote)
+    }
+
+    /// Whether the runtime keeps its own conversation context across
+    /// Beekeeper sessions ([`RuntimeContext::Runtime`]).
+    pub fn keeps_own_context(&self) -> bool {
+        self.context == Some(RuntimeContext::Runtime)
     }
 
     /// The model the auto-title one-shot uses, or `None` when titling is
@@ -354,6 +407,71 @@ mod tests {
         let object = serialized.as_object().expect("object");
         assert!(!object.contains_key("credentialEnv"));
         assert!(!object.contains_key("credentialSource"));
+    }
+
+    /// `execution`: absent is local and is never written back; `remote` and
+    /// `local` round-trip; anything else is refused.
+    #[test]
+    fn execution_defaults_to_local_and_round_trips_remote() {
+        let parse = |entry: serde_json::Value| {
+            parse_runtime_descriptors(&serde_json::json!([entry]).to_string())
+        };
+        let absent = parse(minimal("a-primary")).expect("parse");
+        assert_eq!(absent[0].execution, None);
+        assert!(!absent[0].executes_remotely());
+        let serialized = serde_json::to_value(&absent[0]).expect("serialize");
+        assert!(!serialized
+            .as_object()
+            .expect("object")
+            .contains_key("execution"));
+
+        let mut remote = minimal("t3-primary");
+        remote["execution"] = serde_json::json!("remote");
+        let parsed = parse(remote).expect("parse");
+        assert_eq!(parsed[0].execution, Some(RuntimeExecution::Remote));
+        assert!(parsed[0].executes_remotely());
+        assert_eq!(
+            serde_json::to_value(&parsed[0]).expect("ser")["execution"],
+            "remote"
+        );
+
+        let mut local = minimal("l-primary");
+        local["execution"] = serde_json::json!("local");
+        assert!(!parse(local).expect("parse")[0].executes_remotely());
+
+        let mut bogus = minimal("b-primary");
+        bogus["execution"] = serde_json::json!("elsewhere");
+        assert!(parse(bogus).is_err());
+    }
+
+    /// `context`: absent is Beekeeper-owned and never written back; `runtime`
+    /// round-trips; anything else is refused.
+    #[test]
+    fn context_defaults_to_beekeeper_and_round_trips_runtime() {
+        let parse = |entry: serde_json::Value| {
+            parse_runtime_descriptors(&serde_json::json!([entry]).to_string())
+        };
+        let absent = parse(minimal("a-primary")).expect("parse");
+        assert!(!absent[0].keeps_own_context());
+        let serialized = serde_json::to_value(&absent[0]).expect("serialize");
+        assert!(!serialized
+            .as_object()
+            .expect("object")
+            .contains_key("context"));
+        let mut runtime = minimal("t3-primary");
+        runtime["context"] = serde_json::json!("runtime");
+        let parsed = parse(runtime).expect("parse");
+        assert!(parsed[0].keeps_own_context());
+        assert_eq!(
+            serde_json::to_value(&parsed[0]).expect("ser")["context"],
+            "runtime"
+        );
+        let mut beekeeper = minimal("b-primary");
+        beekeeper["context"] = serde_json::json!("beekeeper");
+        assert!(!parse(beekeeper).expect("parse")[0].keeps_own_context());
+        let mut bogus = minimal("x-primary");
+        bogus["context"] = serde_json::json!("shared");
+        assert!(parse(bogus).is_err());
     }
 
     /// The plug: any runtime word, with the variables it reads named on the

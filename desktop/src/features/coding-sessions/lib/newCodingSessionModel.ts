@@ -601,6 +601,12 @@ export function codingSessionResumedWithoutContextMessage(error?: {
   message?: string;
 }): string {
   const reason = error?.message?.trim();
+  // A runtime that keeps its own conversation does not "start fresh"; the
+  // provider's message (session_resume.rs RUNTIME_CONTEXT_RESUME_MESSAGE)
+  // says what is true, so it stands alone.
+  if (reason?.includes("keeps its own conversation")) {
+    return `${RESUMED_WITHOUT_CONTEXT_HEADING}. ${reason}.`;
+  }
   return `${RESUMED_WITHOUT_CONTEXT_HEADING}. ${RESUMED_WITHOUT_CONTEXT_BODY}${
     reason ? ` ${reason}` : ""
   }`;
@@ -788,7 +794,7 @@ export function newCodingSessionFailureMessage(
     return "The provider could not resolve a working directory for this session. Choose one below and try again.";
   }
   if (error.code === "PROVIDER_AUTH_REQUIRED") {
-    return codingSessionAuthRemediation(authRuntime).message;
+    return codingSessionAuthRemediation(authRuntime, error.message).message;
   }
   if (error.code === "SESSION_LIMIT") {
     // Read as an account limit — "there can only be 4 concurrent Claude
@@ -870,7 +876,22 @@ export type CodingSessionAuthRemediation = {
  */
 export function codingSessionAuthRemediation(
   runtime?: { runtime: string; label?: string } | null,
+  failureMessage?: string,
 ): CodingSessionAuthRemediation {
+  // A runtime-neutral credential failure the adapter declared (`data.reason`,
+  // named by the provider in the receipt message): no vendor sign-in, and no
+  // claude fallback when the runtime is unknown.
+  const reason = codingSessionDeclaredCredentialReason(failureMessage);
+  if (reason !== null) {
+    const name =
+      runtime?.label?.trim() ||
+      (runtime ? formatCodingSessionRuntimeLabel(runtime.runtime) : "");
+    return {
+      title: `${name || "Runtime"} credential refused`,
+      message: `${name || "The runtime"} reported \`${reason}\`: the credential it was given was refused. Renew it where this runtime is configured (for a credentials file, supply a fresh one and run \`bee host restart\`), then try again.`,
+      command: null,
+    };
+  }
   const tokens = new Set(
     (runtime?.runtime ?? "claude")
       .toLowerCase()
@@ -902,6 +923,15 @@ export function codingSessionAuthRemediation(
     message: `${label} is not signed in on this computer. Complete its sign-in, then try again.`,
     command: null,
   };
+}
+
+/** The declared credential reason a provider message names, or null. */
+export function codingSessionDeclaredCredentialReason(
+  message?: string,
+): string | null {
+  return (
+    message?.match(/`(credential_(?:expired|invalid|missing))`/)?.[1] ?? null
+  );
 }
 
 /** Whether a failed receipt is asking for a working directory specifically. */

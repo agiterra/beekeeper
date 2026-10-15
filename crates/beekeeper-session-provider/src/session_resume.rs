@@ -632,14 +632,25 @@ impl Provider {
         // the agent can see, and naming a failure there would imply a loss that
         // did not happen. `session_rehydrated` lost nothing either.
         // A rewind answers with its own receipt and opening row (SV-29).
+        // A runtime that keeps its own conversation still holds it however
+        // this open went: Beekeeper restored nothing, but "restarted without
+        // prior context" would be untrue. Its receipt keeps
+        // `resumed_without_context` (Beekeeper did not recover context) with
+        // a message saying the runtime may hold its own, and the opening row
+        // is withheld in favour of `session_runtime_context`, which carries
+        // the withheld row's reason. (A rewind of such a runtime is refused
+        // before it gets here: Beekeeper cannot cut the runtime's memory.)
+        let runtime_context = self.runtime_keeps_context(&target.session_id);
+        let mut context_reason = None;
         let (receipt, opening_item) = if let Some(open) = rewind {
-            crate::rewind::rewound_answer(
+            let (receipt, item) = crate::rewind::rewound_answer(
                 &plan.command_id,
                 &target,
                 open,
                 &startup.continuity,
                 unavailable_reason,
-            )
+            );
+            (receipt, Some(item))
         } else {
             let (receipt, status, reason) = match startup.continuity {
                 SessionContinuity::Resumed => (
@@ -672,19 +683,32 @@ impl Provider {
                     unavailable_reason,
                 ),
             };
-            (receipt, payload::status_item_with_reason(status, reason))
+            if runtime_context && status == "session_restarted_without_context" {
+                context_reason = reason;
+                (
+                    LifecycleReceipt::resumed_without_context(
+                        &plan.command_id,
+                        &target,
+                        RUNTIME_CONTEXT_RESUME_MESSAGE,
+                    ),
+                    None,
+                )
+            } else {
+                (
+                    receipt,
+                    Some(payload::status_item_with_reason(status, reason)),
+                )
+            }
         };
         self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
-        self.enqueue_transcript(plan.channel_id, &target, None, opening_item, Priority::High)?;
-        self.enqueue_transcript(
-            plan.channel_id,
-            &target,
-            None,
-            execution_scope::boundary_status_item(&execution_state),
-            Priority::High,
-        )?;
-        // What the provider's isolation settings withheld, when any did.
-        for item in crate::session_isolation::isolation_status_items(&execution_state) {
+        if let Some(opening_item) = opening_item {
+            self.enqueue_transcript(plan.channel_id, &target, None, opening_item, Priority::High)?;
+        }
+        // What the provider's isolation settings withheld, when any did; for
+        // a runtime that executes remotely, that the boundary is the
+        // adapter's only; and for one that keeps its own context, that this
+        // execution may remember more than Beekeeper gave it.
+        for item in self.open_disclosure_for(&target.session_id, &execution_state, context_reason) {
             self.enqueue_transcript(plan.channel_id, &target, None, item, Priority::High)?;
         }
         self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
@@ -704,3 +728,10 @@ impl Provider {
         Ok(())
     }
 }
+
+/// The `resumed_without_context` message for a runtime that keeps its own
+/// conversation: what Beekeeper did not do, and what the runtime may still
+/// hold.
+const RUNTIME_CONTEXT_RESUME_MESSAGE: &str = "Beekeeper restored no prior context for this \
+     generation, but this runtime keeps its own conversation across sessions and may still hold \
+     it";

@@ -246,6 +246,7 @@ impl SessionActor {
                             self.max_turn_duration.as_secs()
                         ),
                         agent_gone: false,
+                        cause: None,
                     });
                 }
             }
@@ -260,6 +261,7 @@ impl SessionActor {
                     TurnOutcome::Failed {
                         message: message.clone(),
                         agent_gone: true,
+                        cause: None,
                     },
                     Some(ExitReason::AgentGone(message)),
                 )

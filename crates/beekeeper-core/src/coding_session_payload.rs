@@ -339,6 +339,12 @@ pub const TURN_INTERRUPTED_BY_RESTART: &str = "TURN_INTERRUPTED_BY_RESTART";
 /// authenticate. The item or receipt carrying it also names
 /// `credentialSource` so the operator knows which custody to refresh.
 pub const MODEL_AUTH_FAILED: &str = "MODEL_AUTH_FAILED";
+/// `errorCode` on a turn's `result` item (44225) when the operator cancelled
+/// the turn and the adapter answered the cancelled prompt with an error
+/// instead of `stopReason: "cancelled"`: the runtime did not confirm the work
+/// stopped, so the turn is reported failed, never cancelled. The adapter's
+/// own words travel as `detail`.
+pub const CANCEL_NOT_CONFIRMED: &str = "CANCEL_NOT_CONFIRMED";
 /// `credentialSource` value when the runtime used the machine's own login
 /// rather than a credentials file the host was given.
 pub const CREDENTIAL_SOURCE_AMBIENT_LOGIN: &str = "ambient-login";

@@ -712,7 +712,21 @@ impl Provider {
             CodingSessionDelivery::Boundary,
         );
 
-        if let Some((status, reason)) = create_disclosure(&startup.continuity, unavailable_reason) {
+        // A runtime that keeps its own conversation is never "fresh": it may
+        // carry context from earlier sessions. Its `session_runtime_context`
+        // row (below) says so instead.
+        // The withheld row's reason travels on that row instead.
+        let runtime_context = self.runtime_keeps_context(&target.session_id);
+        let mut context_reason = None;
+        if let Some((status, reason)) = create_disclosure(&startup.continuity, unavailable_reason)
+            .filter(|(status, reason)| {
+                let withheld = runtime_context && *status == "session_fresh";
+                if withheld {
+                    context_reason = *reason;
+                }
+                !withheld
+            })
+        {
             self.enqueue_transcript(
                 plan.channel_id,
                 &target,
@@ -723,15 +737,11 @@ impl Provider {
         }
         // What this execution runs inside, disclosed on every open: enforced
         // with its backend, or not enforced with the reason.
-        self.enqueue_transcript(
-            plan.channel_id,
-            &target,
-            None,
-            execution_scope::boundary_status_item(&execution_state),
-            Priority::High,
-        )?;
-        // What the provider's isolation settings withheld, when any did.
-        for item in crate::session_isolation::isolation_status_items(&execution_state) {
+        // What the provider's isolation settings withheld, when any did; for
+        // a runtime that executes remotely, that the boundary is the
+        // adapter's only; and for one that keeps its own context, that this
+        // execution may remember more than Beekeeper gave it.
+        for item in self.open_disclosure_for(&target.session_id, &execution_state, context_reason) {
             self.enqueue_transcript(plan.channel_id, &target, None, item, Priority::High)?;
         }
 

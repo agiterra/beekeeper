@@ -301,6 +301,8 @@ mod tests {
             title_model: Some(None),
             credential_env: vec!["ACME_TOKEN".into()],
             credential_source: Some("acme-vault".into()),
+            execution: None,
+            context: None,
         }];
         std::fs::write(&path, serde_json::to_vec_pretty(&config).expect("encode")).expect("write");
         let loaded = HostConfig::load(&path)

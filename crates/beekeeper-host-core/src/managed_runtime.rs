@@ -27,5 +27,7 @@ pub fn descriptor() -> RuntimeDescriptor {
         credential_source: None,
         steer_idle_guard: None,
         title_model: Some(None),
+        execution: None,
+        context: None,
     }
 }

@@ -28,6 +28,11 @@ const codingSessionContinuityStatuses = <String, String>{
       'Resumed — reconnected to the provider\u2019s native session',
   'session_loaded': 'Loaded — the provider replayed its native session history',
   'session_restarted_without_context': 'Restarted without prior context',
+  // Descriptor `context: "runtime"`: never called fresh.
+  'session_runtime_context':
+      'Runtime-held context — this runtime keeps its own conversation across '
+      'sessions, so it may carry earlier context Beekeeper did not provide and '
+      'cannot see',
 };
 
 /// The title continuity rows carry, distinct from the generic `Status`.
@@ -43,6 +48,11 @@ const codingSessionBoundaryStatuses = <String, String>{
       'Enforced — this agent and everything it runs can reach only this project\'s files',
   'execution_boundary_not_enforced':
       'Not enforced — only instructions keep this agent to this project\'s files',
+  // Descriptor `execution: "remote"`: the work runs outside the boundary.
+  'execution_boundary_adapter_only':
+      'Adapter only — the boundary surrounds this runtime\'s adapter, but the '
+      'runtime does its work in a process Beekeeper does not launch, which is '
+      'not isolated from other projects\' files',
 };
 
 const codingSessionBoundaryTitle = 'Project boundary';

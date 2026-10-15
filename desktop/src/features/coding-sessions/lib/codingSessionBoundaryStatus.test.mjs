@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CODING_SESSION_BOUNDARY_ADAPTER_ONLY,
   CODING_SESSION_BOUNDARY_STATUSES,
   CODING_SESSION_BOUNDARY_TITLE,
   CODING_SESSION_FULL_ACCESS_BOUNDARY_TEXT,
@@ -315,4 +316,45 @@ test("an unrecognised current report after full access is never muted", () => {
   const chip = codingSessionSandboxChip(report, null);
   assert.equal(chip.tone, "warning");
   assert.equal(chip.label, "Sandbox unreported · was full access");
+});
+
+test("a remote runtime's adapter-only boundary never reads as sandboxed", () => {
+  // crates/beekeeper-session-provider/src/execution_scope.rs
+  // STATUS_BOUNDARY_ADAPTER_ONLY, for a descriptor with execution: "remote".
+  assert.equal(
+    CODING_SESSION_BOUNDARY_ADAPTER_ONLY,
+    "execution_boundary_adapter_only",
+  );
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "status",
+      status: CODING_SESSION_BOUNDARY_ADAPTER_ONLY,
+      reason: "macos-seatbelt",
+    },
+    IDENTITY,
+  );
+  assert.equal(item.title, CODING_SESSION_BOUNDARY_TITLE);
+  assert.ok(item.text.startsWith("Adapter only — "), item.text);
+  assert.ok(item.text.endsWith("(macOS Seatbelt)"), item.text);
+  assert.ok(
+    !item.text.includes(CODING_SESSION_BOUNDARY_STATUSES.get(ENFORCED)),
+  );
+  assert.equal(
+    codingSessionSandboxStateFromBoundaryText(item.text),
+    "not-sandboxed",
+  );
+  const report = codingSessionSandboxFromTranscript([
+    lifecycle("b", CODING_SESSION_BOUNDARY_TITLE, item.text),
+  ]);
+  assert.equal(report.state, "not-sandboxed");
+  const chip = codingSessionSandboxChip(report, null);
+  assert.equal(chip.label, "Not sandboxed");
+  assert.equal(chip.tone, "warning");
+  assert.match(chip.summary, /only this runtime's adapter/);
+  // An ordinary unenforced boundary keeps its own summary.
+  const plain = codingSessionSandboxChip(
+    { state: "not-sandboxed", boundaryText: "x", isolation: [] },
+    null,
+  );
+  assert.match(plain.summary, /did not enforce a boundary/);
 });

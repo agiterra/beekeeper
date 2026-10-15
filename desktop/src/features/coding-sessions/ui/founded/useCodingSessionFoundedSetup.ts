@@ -685,6 +685,10 @@ export function useCodingSessionFoundedSetup(input: {
     transaction: create.transaction,
     lifecycleState: create.lifecycle?.state ?? null,
     failureCode,
+    failureMessage:
+      create.lifecycle?.state === "failed"
+        ? create.lifecycle.error.message
+        : undefined,
     status,
     /** This computer's admission to the project, as the create found it. */
     hostAdmission: create.hostAdmission,

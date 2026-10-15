@@ -432,6 +432,7 @@ export function CodingSessionFoundedSetupCard({
 
       {isCodingSessionAuthFailure(setup.failureCode) ? (
         <ProviderLoginNeeded
+          failureMessage={setup.failureMessage}
           onLoginLaunched={({ runtime }) => setup.beginLoginWatch(runtime)}
           runtime={
             setup.selectedTarget

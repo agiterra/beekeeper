@@ -220,6 +220,10 @@ pub fn recorded_state(state: &BoundaryState) -> Option<RecordedBoundary> {
 pub const STATUS_BOUNDARY_ENFORCED: &str = "execution_boundary_enforced";
 /// Transcript status slug disclosing that no boundary is enforced.
 pub const STATUS_BOUNDARY_NOT_ENFORCED: &str = "execution_boundary_not_enforced";
+/// Transcript status slug disclosing a boundary enforced around the adapter
+/// only: the runtime's descriptor declares `execution: "remote"`, so its work
+/// runs in a process Beekeeper does not launch, outside that boundary.
+pub const STATUS_BOUNDARY_ADAPTER_ONLY: &str = "execution_boundary_adapter_only";
 
 /// The transcript status item disclosing what this generation runs inside.
 ///
@@ -239,6 +243,94 @@ pub fn boundary_status_item(state: &BoundaryState) -> serde_json::Value {
             "status": STATUS_BOUNDARY_NOT_ENFORCED,
             "reason": reason,
         }),
+    }
+}
+
+/// Every transcript item disclosing what this generation runs inside, for a
+/// runtime whose work executes locally (`remote == false`) or in a process
+/// Beekeeper does not launch (`remote == true`, descriptor
+/// `execution: "remote"`).
+///
+/// Local: the boundary item, then the isolation items beside an enforced
+/// boundary. Remote and enforced: one [`STATUS_BOUNDARY_ADAPTER_ONLY`] item
+/// naming the backend, and no isolation items — they describe the adapter's
+/// process tree, and read beside a remote runtime they would claim the work
+/// was confined. Not enforced is the same either way: nothing is claimed.
+#[must_use]
+pub fn boundary_disclosure_items(state: &BoundaryState, remote: bool) -> Vec<serde_json::Value> {
+    match state {
+        BoundaryState::Enforced { backend, .. } if remote => vec![serde_json::json!({
+            "kind": "status",
+            "status": STATUS_BOUNDARY_ADAPTER_ONLY,
+            "reason": backend,
+        })],
+        _ => std::iter::once(boundary_status_item(state))
+            .chain(crate::session_isolation::isolation_status_items(state))
+            .collect(),
+    }
+}
+
+/// Transcript status slug disclosing that the runtime keeps its own
+/// conversation across Beekeeper sessions (descriptor `context: "runtime"`):
+/// this execution may carry context Beekeeper did not provide and cannot see.
+pub const STATUS_RUNTIME_CONTEXT: &str = "session_runtime_context";
+
+/// The status item for [`STATUS_RUNTIME_CONTEXT`], carrying the reason
+/// Beekeeper could not provide verified context when the continuity row it
+/// replaces (`session_fresh`, `session_restarted_without_context`) had one.
+#[must_use]
+pub fn runtime_context_item(reason: Option<&str>) -> serde_json::Value {
+    let mut item = serde_json::json!({ "kind": "status", "status": STATUS_RUNTIME_CONTEXT });
+    if let (Some(object), Some(reason)) = (item.as_object_mut(), reason) {
+        object.insert("reason".into(), serde_json::json!(reason));
+    }
+    item
+}
+
+impl crate::Provider {
+    /// The descriptor of the runtime `session_id` runs under.
+    fn session_descriptor(
+        &self,
+        session_id: &str,
+    ) -> Option<&beekeeper_core::coding_session_runtime::RuntimeDescriptor> {
+        self.state
+            .session(session_id)
+            .and_then(|record| self.config.runtime(&record.provider_instance_ref))
+    }
+
+    /// Whether the runtime `session_id` runs under executes remotely.
+    pub(crate) fn runtime_executes_remotely(&self, session_id: &str) -> bool {
+        self.session_descriptor(session_id).is_some_and(
+            beekeeper_core::coding_session_runtime::RuntimeDescriptor::executes_remotely,
+        )
+    }
+
+    /// Whether the runtime `session_id` runs under keeps its own context.
+    pub(crate) fn runtime_keeps_context(&self, session_id: &str) -> bool {
+        self.session_descriptor(session_id).is_some_and(
+            beekeeper_core::coding_session_runtime::RuntimeDescriptor::keeps_own_context,
+        )
+    }
+
+    /// What every open of an execution discloses about where it runs and
+    /// what it may remember: [`STATUS_RUNTIME_CONTEXT`] first when the
+    /// runtime keeps its own context, then [`boundary_disclosure_items`] for
+    /// the runtime `session_id` runs under.
+    ///
+    /// `context_reason` is the reason carried by a continuity row this open
+    /// withheld because the runtime keeps its own context.
+    pub(crate) fn open_disclosure_for(
+        &self,
+        session_id: &str,
+        state: &BoundaryState,
+        context_reason: Option<&str>,
+    ) -> Vec<serde_json::Value> {
+        let remote = self.runtime_executes_remotely(session_id);
+        self.runtime_keeps_context(session_id)
+            .then(|| runtime_context_item(context_reason))
+            .into_iter()
+            .chain(boundary_disclosure_items(state, remote))
+            .collect()
     }
 }
 

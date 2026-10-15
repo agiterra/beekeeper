@@ -522,6 +522,9 @@ export function AddCodingSessionProviderForm({
 
       {isCodingSessionAuthFailure(failureCode) ? (
         <ProviderLoginNeeded
+          failureMessage={
+            lifecycle?.state === "failed" ? lifecycle.error.message : undefined
+          }
           onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
           runtime={failedRuntime}
         />

@@ -9836,6 +9836,7 @@ mod error_outcome_emission_tests {
             code: -32000,
             message: "API Error: OAuth access token has expired. Re-authenticate to continue."
                 .to_string(),
+            reason: None,
         };
         assert!(
             is_auth_error(&e),
@@ -9848,6 +9849,7 @@ mod error_outcome_emission_tests {
         let e = acp::AcpError::AgentError {
             code: -32000,
             message: "Internal error: API Error: 401 OAuth access token has expired.".to_string(),
+            reason: None,
         };
         assert!(
             is_auth_error(&e),
@@ -9860,6 +9862,7 @@ mod error_outcome_emission_tests {
         let e = acp::AcpError::AgentError {
             code: -32601,
             message: "Usage credits required for 1M context — turn on usage credits".to_string(),
+            reason: None,
         };
         assert!(
             !is_auth_error(&e),
@@ -9909,6 +9912,7 @@ mod error_outcome_emission_tests {
             code: -32000,
             message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
                 .to_string(),
+            reason: None,
         };
 
         let agent = dummy_agent(0).await;
@@ -9997,6 +10001,7 @@ mod error_outcome_emission_tests {
         let usage_error = acp::AcpError::AgentError {
             code: -32000,
             message: "Usage credits required for 1M context".to_string(),
+            reason: None,
         };
 
         let agent = dummy_agent(0).await;

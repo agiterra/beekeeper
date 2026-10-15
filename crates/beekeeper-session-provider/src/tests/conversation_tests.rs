@@ -1016,3 +1016,6 @@ async fn busy_ownership_terminal_answer_survives_later_watermark_and_outer_recov
 
 #[path = "conversation_policy_replay_tests.rs"]
 mod policy_replay;
+
+#[path = "conversation_steer_notice_tests.rs"]
+mod steer_notice;

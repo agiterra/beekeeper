@@ -34,6 +34,8 @@ not an extension point. How a descriptor is minted is
 | `titleModel` | no | absent | Model for the auto-title one-shot; `null` disables titling for this runtime. |
 | `credentialEnv` | no | `[]` | The environment variable **names** this runtime accepts from the credential file. Names only. |
 | `credentialSource` | no | absent | An opaque operator label for where the credential comes from (`"acme-vault"`). Echoed into session metadata and auth-failure receipts. A label, never a secret or a path. |
+| `execution` | no | absent (`"local"`) | `"remote"` declares that the adapter delegates the work to a process Beekeeper does not launch (a runtime's own server). The transcript then discloses the boundary as the adapter's only — see [Execution profile](#execution-profile). `bee host commission --execution remote`. |
+| `context` | no | absent (`"beekeeper"`) | `"runtime"` declares that the runtime keeps its own conversation across Beekeeper sessions (e.g. an adapter pinned to one thread of its server). A new session is then never published as `session_fresh`, nor a resume as `session_restarted_without_context`; every open publishes `session_runtime_context` ("may carry earlier context Beekeeper did not provide"), carrying the withheld row's `reason`. A resume Beekeeper could not restore context for still answers `resumed_without_context` / `CONTEXT_NOT_RECOVERED` (Beekeeper recovered nothing), with a message saying the runtime may still hold its own. A `session.rewind` is refused `NOT_RESTORABLE`: the runtime's memory is not Beekeeper's to cut. `bee host commission --context runtime`. |
 
 ### Credentials
 
@@ -71,6 +73,72 @@ inherited account variables are blanked and only the permitted names are
 injected (`runtime_credentials.rs`) — but nothing restricts what the
 adapter can read. See [`INTEGRATING.md` § What is not
 promised](INTEGRATING.md#what-is-not-promised).
+
+The boundary wraps the adapter's process tree and nothing else. A runtime
+whose adapter forwards the work to a server Beekeeper did not start declares
+`"execution": "remote"`; its sessions then publish
+`execution_boundary_adapter_only` (with the backend as `reason`) instead of
+`execution_boundary_enforced`, and none of the isolation rows (Git
+credentials withheld, egress proxy only), because those describe the adapter,
+not the work. The desktop shows it as **Not sandboxed**. Confine the remote
+process yourself; Beekeeper makes no claim about it.
+
+### What the boundary means for an adapter author
+
+- **Ship your own interpreter inside the install root.** On macOS the
+  boundary does not let the adapter read your home directory, so a Node (or
+  Python, Ruby…) installed under `$HOME` by mise, nvm, volta, asdf or pyenv is
+  unreadable to it and the adapter fails to start. Put the runtime the
+  adapter needs inside the directory you pass as `--runtime-install-root`
+  (and point the adapter's shebang or `--driver` at it), or install it
+  system-wide.
+- **Never log your environment.** The adapter's environment carries the
+  participant's private key (`BEEKEEPER_PRIVATE_KEY`) by design — it is how
+  the seat signs as itself — alongside whatever the credential file
+  injected. An adapter that prints `env`, dumps `process.env` into a crash
+  report, or forwards its environment to a remote server publishes that key.
+
+## Reporting a cancel that did not take
+
+When the operator cancels, Beekeeper sends `session/cancel` and waits for the
+held `session/prompt` to answer. Answer it `{"stopReason": "cancelled"}` only
+when the work has stopped. If it could not be stopped (it is still pending in
+your server), answer the prompt with a JSON-RPC error saying so: the turn is
+then published as failed with `errorCode: "CANCEL_NOT_CONFIRMED"` (also when the provider's own shutdown asked for the stop) and your
+message (1024 bytes at most, plus an ellipsis when cut) as `detail`, never as cancelled. An adapter that
+answers nothing within the drain grace is still reported cancelled.
+
+## Reporting a credential failure
+
+Beekeeper recognises the Claude CLI's own authentication messages, but it
+cannot know every runtime's wording. Any adapter can instead **declare** a
+credential failure on a failed `session/prompt` (or `session/new`) by
+answering with a JSON-RPC error whose `data.reason` is one of three strings:
+
+```json
+{"jsonrpc": "2.0", "id": 7,
+ "error": {"code": -32000,
+           "message": "the upstream rejected the token",
+           "data": {"reason": "credential_expired"}}}
+```
+
+| `data.reason` | Meaning |
+| --- | --- |
+| `credential_expired` | The credential was accepted once and has lapsed. |
+| `credential_invalid` | A credential was present and refused. |
+| `credential_missing` | The runtime found no credential to present. |
+
+Matched exactly; any other value, a non-string, or a `data` that is not an
+object is ignored and the failure is published as it was before. A declared
+reason fails the turn with the same outcome as the Claude path: the `result`
+item (44225) carries `errorCode: "MODEL_AUTH_FAILED"`, `credentialReason`
+(the declared string), `credentialSource` (the descriptor's label — omitted,
+and the sentence says the credential source is not reported, when the
+descriptor has none; never guessed as `ambient-login`), the remedy as
+`result`, and your `message` as `detail`. At `session/new` it makes the create
+fail `PROVIDER_AUTH_REQUIRED` instead of `PROVIDER_UNAVAILABLE`. Keep
+`message` free of secrets: it is published. Transcript items are shrunk to
+the 44225 size cap, so a long message is elided, not refused.
 
 ## Commissioning
 

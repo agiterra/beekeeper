@@ -1082,3 +1082,39 @@ test("directory repair requires a settled, readable terminal refusal, never a ti
       false,
     );
 });
+
+test("a declared credential failure gets runtime-neutral copy, never a Claude sign-in", () => {
+  const message =
+    "could not open an agent session: the runtime reported `credential_expired`: Agent reported error (code -32000): token rejected";
+  for (const authRuntime of [null, { runtime: "t3", label: "T3 Code" }]) {
+    const status = newCodingSessionStatusMessage({
+      isPublishing: false,
+      publishError: null,
+      lifecycle: {
+        state: "failed",
+        error: { code: "PROVIDER_AUTH_REQUIRED", message },
+      },
+      authRuntime,
+    });
+    assert.match(status.message, /`credential_expired`/);
+    assert.doesNotMatch(status.message, /Claude|not signed in/);
+    if (authRuntime) assert.match(status.message, /^T3 Code reported/);
+  }
+  const remediation = codingSessionAuthRemediation(null, message);
+  assert.equal(remediation.title, "Runtime credential refused");
+  assert.equal(remediation.command, null);
+  // Without a declared reason the existing copy is unchanged.
+  assert.match(
+    codingSessionAuthRemediation(null, "not logged in").message,
+    /Claude Code/,
+  );
+});
+
+test("a runtime that keeps its own context is never told it starts fresh", () => {
+  const message = codingSessionResumedWithoutContextMessage({
+    message:
+      "Beekeeper restored no prior context for this generation, but this runtime keeps its own conversation across sessions and may still hold it",
+  });
+  assert.match(message, /may still hold it/);
+  assert.doesNotMatch(message, /starts fresh/);
+});

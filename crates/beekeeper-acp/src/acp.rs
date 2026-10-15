@@ -649,7 +649,44 @@ pub enum AcpError {
     Protocol(String),
 
     #[error("Agent reported error (code {code}): {message}")]
-    AgentError { code: i64, message: String },
+    AgentError {
+        code: i64,
+        message: String,
+        /// The error object's `data.reason`, when the adapter sent a string
+        /// one: the runtime-neutral machine signal an adapter uses to say
+        /// *why* a request failed (see [`CREDENTIAL_FAILURE_REASONS`]).
+        reason: Option<String>,
+    },
+}
+
+/// The runtime-neutral `data.reason` values an ACP adapter sends on a failed
+/// `session/new` or `session/prompt` to say the runtime's credential was
+/// refused: expired, present but invalid, or absent. Any runtime can emit
+/// them; none depends on recognising a particular CLI's wording
+/// (`docs/runtime-descriptor.md` § Reporting a credential failure).
+pub const CREDENTIAL_FAILURE_REASONS: [&str; 3] = [
+    "credential_expired",
+    "credential_invalid",
+    "credential_missing",
+];
+
+impl AcpError {
+    /// The declared credential-failure reason this error carries, if any:
+    /// one of [`CREDENTIAL_FAILURE_REASONS`], matched exactly.
+    #[must_use]
+    pub fn credential_failure_reason(&self) -> Option<&'static str> {
+        let Self::AgentError {
+            reason: Some(reason),
+            ..
+        } = self
+        else {
+            return None;
+        };
+        CREDENTIAL_FAILURE_REASONS
+            .iter()
+            .copied()
+            .find(|known| *known == reason)
+    }
 }
 
 /// Build an [`AcpError::AgentError`] from a JSON-RPC error object,
@@ -662,7 +699,16 @@ fn agent_error_from_json(error: &serde_json::Value) -> AcpError {
         Some(m) => m.to_string(),
         None => error.to_string(),
     };
-    AcpError::AgentError { code, message }
+    let reason = error
+        .get("data")
+        .and_then(|data| data.get("reason"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    AcpError::AgentError {
+        code,
+        message,
+        reason,
+    }
 }
 
 fn build_initialize_params() -> serde_json::Value {
@@ -7804,7 +7850,7 @@ sleep 5
         // not be silently truncated to "unknown error" — the full JSON is preserved.
         let error = serde_json::json!({"code": -32000, "data": "quota exceeded"});
         match super::agent_error_from_json(&error) {
-            AcpError::AgentError { code, message } => {
+            AcpError::AgentError { code, message, .. } => {
                 assert_eq!(code, -32000);
                 assert!(
                     message.contains("quota exceeded"),
@@ -7816,10 +7862,37 @@ sleep 5
     }
 
     #[test]
+    fn agent_error_from_json_reads_a_declared_credential_failure_reason() {
+        for reason in super::CREDENTIAL_FAILURE_REASONS {
+            let error = serde_json::json!({
+                "code": -32000,
+                "message": "the T3 server refused the token",
+                "data": {"reason": reason},
+            });
+            let parsed = super::agent_error_from_json(&error);
+            assert_eq!(parsed.credential_failure_reason(), Some(reason));
+        }
+        // Anything else — another reason, a non-string, a string `data` — is
+        // not a declaration, whatever the message says.
+        for data in [
+            serde_json::json!({"reason": "rate_limited"}),
+            serde_json::json!({"reason": 7}),
+            serde_json::json!("credential_expired"),
+        ] {
+            let error =
+                serde_json::json!({"code": -32000, "message": "credential_expired", "data": data});
+            assert_eq!(
+                super::agent_error_from_json(&error).credential_failure_reason(),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn agent_error_from_json_uses_message_field_when_present() {
         let error = serde_json::json!({"code": -32001, "message": "auth denied"});
         match super::agent_error_from_json(&error) {
-            AcpError::AgentError { code, message } => {
+            AcpError::AgentError { code, message, .. } => {
                 assert_eq!(code, -32001);
                 assert_eq!(message, "auth denied");
             }
@@ -8544,7 +8617,7 @@ sleep 5
         let (_, resolution, result) = run_single_steer(&mut h, IdleGuard::AdapterDefault).await;
 
         assert!(
-            matches!(&result, Err(AcpError::AgentError { code: -32603, message }) if message.contains("turn exploded")),
+            matches!(&result, Err(AcpError::AgentError { code: -32603, message, .. }) if message.contains("turn exploded")),
             "prompt error must survive the drain, got {result:?}"
         );
         assert_eq!(

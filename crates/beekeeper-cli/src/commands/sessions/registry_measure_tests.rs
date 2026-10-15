@@ -46,6 +46,8 @@ fn descriptor() -> RuntimeDescriptor {
         capabilities: Some(Capabilities::v1_for_runtime("claude")),
         credential_env: Vec::new(),
         credential_source: None,
+        execution: None,
+        context: None,
     }
 }
 

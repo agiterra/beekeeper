@@ -2,7 +2,8 @@
 use std::path::{Path, PathBuf};
 
 use beekeeper_core::coding_session_runtime::{
-    credential_env_name_rejection, RuntimeDescriptor, MAX_CREDENTIAL_ENV,
+    credential_env_name_rejection, RuntimeContext, RuntimeDescriptor, RuntimeExecution,
+    MAX_CREDENTIAL_ENV,
 };
 use beekeeper_host_core::{atomic_write, config, layout, provision, record};
 use clap::Args;
@@ -54,8 +55,9 @@ pub struct CommissionArgs {
     pub driver: Option<PathBuf>,
     /// An argument passed to the driver after the command, in order
     /// (repeatable). For claude, codex or goose this replaces the built-in
-    /// arguments rather than adding to them.
-    #[arg(long = "driver-arg")]
+    /// arguments rather than adding to them. A value may begin with a hyphen
+    /// (`--driver-arg --acp`): it is the driver's flag, not this command's.
+    #[arg(long = "driver-arg", allow_hyphen_values = true)]
     pub driver_args: Vec<String>,
     /// Name of an environment variable the driver reads its credential from
     /// (repeatable; names only, never values). The provider sets it from
@@ -70,6 +72,20 @@ pub struct CommissionArgs {
     /// or a path.
     #[arg(long)]
     pub credential_source: Option<String>,
+    /// Where the runtime's work executes: `local` (the default: in the
+    /// driver's own process tree, inside the host's boundary) or `remote`
+    /// (the driver hands the work to a process this host does not launch,
+    /// such as the runtime's own server). With `remote`, sessions disclose
+    /// the boundary as covering the driver only, never the work.
+    #[arg(long, value_enum)]
+    pub execution: Option<ExecutionArg>,
+    /// Who owns the runtime's conversation context: `beekeeper` (the default:
+    /// every session starts a fresh conversation) or `runtime` (the runtime
+    /// keeps its own conversation across sessions, e.g. a driver pinned to
+    /// one thread). With `runtime`, sessions never call themselves fresh and
+    /// disclose that earlier context may be carried by the runtime.
+    #[arg(long, value_enum)]
+    pub context: Option<ContextArg>,
     /// Model identifier to ask the adapter for. Not checked here: the provider
     /// confirms the model is available when a session starts.
     #[arg(long, default_value = "default")]
@@ -98,6 +114,24 @@ pub struct CommissionArgs {
     /// checks the claim: it is your word as the commissioning operator.
     #[arg(long = "capability")]
     pub capabilities: Vec<String>,
+}
+
+/// `--context`: who owns the runtime's conversation context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ContextArg {
+    /// Beekeeper: each session is a fresh conversation (the default).
+    Beekeeper,
+    /// The runtime keeps its own conversation across sessions.
+    Runtime,
+}
+
+/// `--execution`: where the runtime's work executes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ExecutionArg {
+    /// In the driver's own process tree (the default).
+    Local,
+    /// In a process this host does not launch.
+    Remote,
 }
 
 pub async fn commission(
@@ -459,6 +493,14 @@ fn runtime_descriptor(
         title_model: Some(None),
         credential_env: args.credential_env.clone(),
         credential_source,
+        execution: match args.execution {
+            Some(ExecutionArg::Remote) => Some(RuntimeExecution::Remote),
+            Some(ExecutionArg::Local) | None => None,
+        },
+        context: match args.context {
+            Some(ContextArg::Runtime) => Some(RuntimeContext::Runtime),
+            Some(ContextArg::Beekeeper) | None => None,
+        },
     })
 }
 
@@ -544,12 +586,86 @@ mod tests {
             driver_args: Vec::new(),
             credential_env: Vec::new(),
             credential_source: None,
+            execution: None,
+            context: None,
             model: "default".into(),
             provider_command: None,
             credential_file: None,
             runtime_install_root: Vec::new(),
             capabilities: Vec::new(),
         }
+    }
+
+    #[derive(clap::Parser)]
+    struct CommissionCli {
+        #[command(flatten)]
+        args: CommissionArgs,
+    }
+
+    /// The documented example `--driver-arg --acp` must parse through clap:
+    /// a driver's own flag begins with a hyphen and is a value here.
+    #[test]
+    fn driver_arg_accepts_a_value_that_begins_with_a_hyphen() {
+        use clap::Parser;
+        let cli = CommissionCli::try_parse_from([
+            "commission",
+            "--runtime",
+            "acme",
+            "--driver",
+            "/opt/acme/bin/acme-acp",
+            "--driver-arg",
+            "--acp",
+            "--driver-arg",
+            "-q",
+            "--credential-env",
+            "ACME_TOKEN",
+        ])
+        .expect("hyphenated driver args parse");
+        assert_eq!(cli.args.driver_args, vec!["--acp", "-q"]);
+        assert_eq!(cli.args.credential_env, vec!["ACME_TOKEN"]);
+        assert_eq!(cli.args.runtime, "acme");
+        assert_eq!(cli.args.execution, None);
+    }
+
+    /// `--execution remote` reaches the descriptor; `local` and absence
+    /// both leave it absent (local is the default and is not written).
+    #[test]
+    fn execution_remote_is_written_to_the_descriptor() {
+        use clap::Parser;
+        let parse = |extra: &[&str]| {
+            let mut argv = vec![
+                "commission",
+                "--runtime",
+                "t3",
+                "--driver",
+                "/opt/t3/bin/t3-acp",
+            ];
+            argv.extend_from_slice(extra);
+            let cli = CommissionCli::try_parse_from(argv).expect("parse");
+            runtime_descriptor(&cli.args, Path::new("/opt/t3/bin/t3-acp")).expect("descriptor")
+        };
+        assert_eq!(
+            parse(&["--execution", "remote"]).execution,
+            Some(RuntimeExecution::Remote)
+        );
+        assert_eq!(parse(&["--execution", "local"]).execution, None);
+        assert_eq!(parse(&[]).execution, None);
+        assert_eq!(
+            parse(&["--context", "runtime"]).context,
+            Some(RuntimeContext::Runtime)
+        );
+        assert_eq!(parse(&["--context", "beekeeper"]).context, None);
+        assert_eq!(parse(&[]).context, None);
+        assert!(CommissionCli::try_parse_from([
+            "commission",
+            "--runtime",
+            "t3",
+            "--driver",
+            "/opt/t3/bin/t3-acp",
+            "--execution",
+            "elsewhere",
+        ])
+        .is_err());
     }
 
     fn acme_args() -> CommissionArgs {

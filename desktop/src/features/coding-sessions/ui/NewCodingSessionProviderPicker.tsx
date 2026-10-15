@@ -21,6 +21,7 @@ import {
 } from "../lib/codingSessionHireModel";
 import {
   codingSessionAuthRemediation,
+  codingSessionDeclaredCredentialReason,
   formatCodingSessionProviderLabel,
   isNewCodingSessionTargetReady,
   type NewCodingSessionTarget,
@@ -394,14 +395,20 @@ export function newCodingSessionSeatModelBlocksCreate(
 
 /** The remediation a failed receipt asks for: which runtime, and how to fix it. */
 export function ProviderLoginNeeded({
+  failureMessage,
   onLoginLaunched,
   runtime,
 }: {
+  /** The failed receipt's message; names a declared credential reason. */
+  failureMessage?: string;
   /** Forwarded to the Connect button under the remediation text. */
   onLoginLaunched?: (input: { runtime: string; headless: boolean }) => void;
   runtime?: { runtime: string; label?: string } | null;
 }) {
-  const remediation = codingSessionAuthRemediation(runtime);
+  const remediation = codingSessionAuthRemediation(runtime, failureMessage);
+  // A declared credential failure is not fixed by a vendor sign-in.
+  const declared =
+    codingSessionDeclaredCredentialReason(failureMessage) !== null;
   // The remediation copy falls back to claude with no runtime context; the
   // Connect button targets the same fallback so the two never disagree.
   const runtimeSlug = runtime?.runtime ?? "claude";
@@ -428,13 +435,17 @@ export function ProviderLoginNeeded({
           </>
         ) : null}
       </p>
-      <div className="mt-2">
-        <CodingSessionRuntimeConnect
-          label={runtime?.label ?? formatCodingSessionRuntimeLabel(runtimeSlug)}
-          onLoginLaunched={onLoginLaunched}
-          runtime={runtimeSlug}
-        />
-      </div>
+      {declared ? null : (
+        <div className="mt-2">
+          <CodingSessionRuntimeConnect
+            label={
+              runtime?.label ?? formatCodingSessionRuntimeLabel(runtimeSlug)
+            }
+            onLoginLaunched={onLoginLaunched}
+            runtime={runtimeSlug}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -438,6 +438,31 @@ void main() {
       expect(items.last.text, contains('(no-backend-for-platform)'));
     });
 
+    test('remote and runtime-context statuses never read as protected or '
+        'fresh', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          item: {
+            'kind': 'status',
+            'status': 'execution_boundary_adapter_only',
+            'reason': 'macos-seatbelt',
+          },
+        ),
+        _envelope(
+          eventSeq: 2,
+          item: {'kind': 'status', 'status': 'session_runtime_context'},
+        ),
+      ]);
+      final items = blocks.single.items;
+      expect(items.first.title, codingSessionBoundaryTitle);
+      expect(items.first.text, startsWith('Adapter only'));
+      expect(items.first.text, contains('(macos-seatbelt)'));
+      expect(items.last.title, codingSessionContinuityTitle);
+      expect(items.last.text, startsWith('Runtime-held context'));
+      expect(items.last.text, isNot(contains('fresh')));
+    });
+
     test('isolation statuses say what the provider withheld', () {
       final blocks = projectCodingSessionTranscript([
         _envelope(

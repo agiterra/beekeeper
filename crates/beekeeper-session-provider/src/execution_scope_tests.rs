@@ -1743,3 +1743,48 @@ done
         }
     }
 }
+
+/// A runtime declared `execution: "remote"` hands its work to a process
+/// Beekeeper does not launch. The disclosure must not say that work ran
+/// inside the boundary: it names the boundary as the adapter's only and
+/// drops the isolation rows, which describe the adapter's process tree.
+/// Local keeps the enforced row and its isolation rows; not enforced is
+/// the same either way.
+#[test]
+fn a_remote_runtime_discloses_the_boundary_as_the_adapters_only() {
+    let enforced = BoundaryState::Enforced {
+        backend: "macos-seatbelt",
+        policy_digest: "ab".repeat(32),
+        isolation: crate::session_isolation::SessionIsolation {
+            withhold_operator_git: true,
+            ..Default::default()
+        },
+    };
+    let local = boundary_disclosure_items(&enforced, false);
+    assert_eq!(local[0]["status"], STATUS_BOUNDARY_ENFORCED);
+    assert_eq!(local[0]["reason"], "macos-seatbelt");
+    assert!(
+        local.len() > 1,
+        "isolation rows travel with a local boundary: {local:?}"
+    );
+
+    let remote = boundary_disclosure_items(&enforced, true);
+    assert_eq!(remote.len(), 1, "{remote:?}");
+    assert_eq!(remote[0]["status"], STATUS_BOUNDARY_ADAPTER_ONLY);
+    assert_eq!(remote[0]["reason"], "macos-seatbelt");
+    assert!(remote
+        .iter()
+        .all(|item| item["status"] != STATUS_BOUNDARY_ENFORCED));
+
+    let none = BoundaryState::NotEnforced {
+        reason: "no-backend-for-platform",
+    };
+    assert_eq!(
+        boundary_disclosure_items(&none, true),
+        boundary_disclosure_items(&none, false)
+    );
+    assert_eq!(
+        boundary_disclosure_items(&none, true)[0]["status"],
+        STATUS_BOUNDARY_NOT_ENFORCED
+    );
+}

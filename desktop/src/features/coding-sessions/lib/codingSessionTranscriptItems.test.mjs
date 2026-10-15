@@ -563,3 +563,58 @@ test("a steered prompt carries the flag the renderer marks it with, and an ordin
   );
   assert.equal("steered" in explicit, false);
 });
+
+test("a cancel the runtime did not confirm renders as a failure, never Cancelled", () => {
+  // crates/beekeeper-session-provider: TurnFailureCause::CancelNotConfirmed.
+  const sentence =
+    "The cancel was not confirmed: the runtime answered it with an error, so the work may still be running. Check the runtime before sending the next turn.";
+  const raw =
+    "Agent reported error (code -32603): cancel could not be applied; the prompt is still pending in thread T-1";
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "result",
+      subtype: "error",
+      isError: true,
+      errorCode: "CANCEL_NOT_CONFIRMED",
+      result: sentence,
+      detail: raw,
+    },
+    IDENTITY,
+  );
+  assert.equal(item.title, "Turn result");
+  assert.equal(item.renderClass, "error");
+  assert.equal(item.outcome, "error");
+  assert.ok(item.text.startsWith(sentence), item.text);
+  assert.ok(item.text.includes("still pending in thread T-1"), item.text);
+  assert.ok(!/cancelled/i.test(item.text), item.text);
+});
+
+test("a runtime that keeps its own context is a continuity row, never fresh", () => {
+  // crates/beekeeper-session-provider/src/execution_scope.rs STATUS_RUNTIME_CONTEXT.
+  const item = buildBaseTranscriptItem(
+    { kind: "status", status: "session_runtime_context" },
+    IDENTITY,
+  );
+  assert.equal(item.title, "Session continuity");
+  assert.equal(
+    item.text,
+    CODING_SESSION_CONTINUITY_STATUSES.get("session_runtime_context"),
+  );
+  assert.ok(item.text.startsWith("Runtime-held context"), item.text);
+  assert.ok(!/fresh|no prior/i.test(item.text), item.text);
+});
+
+test("a runtime-context row carries the reason of the row it replaced", () => {
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "status",
+      status: "session_runtime_context",
+      reason: "context_sidecar_unavailable",
+    },
+    IDENTITY,
+  );
+  assert.equal(
+    item.text,
+    `${CODING_SESSION_CONTINUITY_STATUSES.get("session_runtime_context")} — ${CODING_SESSION_CONTINUITY_REASONS.get("context_sidecar_unavailable")}`,
+  );
+});

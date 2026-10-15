@@ -489,6 +489,8 @@ fn legacy_claude_descriptor(lookup: &impl Fn(&'static str) -> Option<String>) ->
         capabilities: None,
         credential_env: Vec::new(),
         credential_source: None,
+        execution: None,
+        context: None,
     }
 }
 

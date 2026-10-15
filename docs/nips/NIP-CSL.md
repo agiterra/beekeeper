@@ -1177,7 +1177,11 @@ Receipt (the sixth key is literal):
 
 When a turn fails because the runtime's credentials no longer authenticate
 (the Claude CLI's `Failed to authenticate`, `OAuth session expired`, `Not
-logged in`), the turn's error `result` item carries two extra keys:
+logged in`, or any adapter's JSON-RPC error with `data.reason` one of
+`credential_expired`, `credential_invalid`, `credential_missing` —
+[`runtime-descriptor.md` § Reporting a credential
+failure](../runtime-descriptor.md#reporting-a-credential-failure)), the
+turn's error `result` item carries two extra keys:
 
 - `errorCode: "MODEL_AUTH_FAILED"`;
 - `credentialSource`: the operator's label for the credentials file the
@@ -1193,6 +1197,13 @@ credentials file for it, and says to run `bee host restart`. The raw adapter
 text travels alongside as `detail` in both cases. The lifecycle receipt for
 a create whose initial turn failed this way keeps `INITIAL_TURN_FAILED` (a
 consumer branches on it); the code and source are on the transcript item.
+
+A failure the adapter *declared* with `data.reason` differs in three ways:
+the item also carries `credentialReason` (the declared string); the
+sentence is runtime-neutral, never the Claude remedy; and with no
+descriptor label `credentialSource` is **omitted** rather than
+`"ambient-login"` — nothing here knows how a plugged runtime authenticates,
+so the source is disclosed as not reported instead of guessed.
 
 The label is the runtime descriptor's `credentialSource`
 (`bee host commission --credential-source`, `docs/runtime-descriptor.md`),

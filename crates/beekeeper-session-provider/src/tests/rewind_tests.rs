@@ -438,6 +438,28 @@ async fn rewind_refusals_touch_nothing_and_carry_no_rewind_object() {
     );
 }
 
+/// B1: a runtime that keeps its own conversation cannot be rewound — its
+/// memory is not Beekeeper's to cut — and the refusal changes nothing.
+#[tokio::test]
+async fn a_runtime_that_keeps_its_own_context_refuses_a_rewind() {
+    let mut rig = rig().await;
+    rig.three_turns().await;
+    for runtime in &mut rig.provider.config.runtimes {
+        runtime.context = Some(beekeeper_core::coding_session_runtime::RuntimeContext::Runtime);
+    }
+    let turn_two = rig.turn_checkpoint(2).id.to_hex();
+    rig.rewind("rw-runtime", &turn_two, "keep").await;
+    let receipt = rig.receipt("rw-runtime");
+    assert_eq!(receipt["status"], "failed", "{receipt:#}");
+    assert_eq!(receipt["error"]["code"], NOT_RESTORABLE, "{receipt:#}");
+    assert!(receipt["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("keeps its own conversation")));
+    assert!(receipt.get("rewind").is_none());
+    assert_eq!(rig.generation(), 1);
+    rig.assert_after_turn_three();
+}
+
 #[tokio::test]
 async fn rewind_is_refused_while_this_or_a_sibling_turn_is_open() {
     let mut rig = rig().await;

@@ -18,10 +18,20 @@
  * choice and never as protection, whichever status carries it: an
  * `execution_boundary_enforced` naming it contradicts itself, and a row that
  * might be read as protected is the one outcome this copy must never produce.
+ *
+ * `execution_boundary_adapter_only` is published for a runtime whose
+ * descriptor declares `execution: "remote"`: the boundary surrounds the
+ * adapter Beekeeper started, but the runtime does its work in a process
+ * Beekeeper does not launch. The work is not inside the boundary, so the row
+ * says so and the sandbox state is `not-sandboxed`, never `sandboxed`.
  */
 
 /** The row title for both boundary statuses. */
 export const CODING_SESSION_BOUNDARY_TITLE = "Project boundary";
+
+/** The status for a boundary that covers a remote runtime's adapter only. */
+export const CODING_SESSION_BOUNDARY_ADAPTER_ONLY =
+  "execution_boundary_adapter_only";
 
 /** What each boundary status means for this session. */
 export const CODING_SESSION_BOUNDARY_STATUSES: ReadonlyMap<string, string> =
@@ -33,6 +43,10 @@ export const CODING_SESSION_BOUNDARY_STATUSES: ReadonlyMap<string, string> =
     [
       "execution_boundary_not_enforced",
       "Not enforced — this session is not isolated from other projects' files",
+    ],
+    [
+      CODING_SESSION_BOUNDARY_ADAPTER_ONLY,
+      "Adapter only — the boundary surrounds this runtime's adapter, but the runtime does its work in a process Beekeeper does not launch, which is not isolated from other projects' files",
     ],
   ]);
 
@@ -190,6 +204,12 @@ export function codingSessionSandboxStateFromBoundaryText(
   const notEnforced = CODING_SESSION_BOUNDARY_STATUSES.get(
     "execution_boundary_not_enforced",
   );
+  const adapterOnly = CODING_SESSION_BOUNDARY_STATUSES.get(
+    CODING_SESSION_BOUNDARY_ADAPTER_ONLY,
+  );
+  // The work ran outside the boundary: not sandboxed, whatever wrapped the
+  // adapter.
+  if (adapterOnly && text.startsWith(adapterOnly)) return "not-sandboxed";
   if (enforced && text.startsWith(enforced)) return "sandboxed";
   if (notEnforced && text.startsWith(notEnforced)) return "not-sandboxed";
   return "unreported";
@@ -350,11 +370,17 @@ export function codingSessionSandboxChip(
     };
   }
   if (report.state === "not-sandboxed") {
+    const adapterOnly = CODING_SESSION_BOUNDARY_STATUSES.get(
+      CODING_SESSION_BOUNDARY_ADAPTER_ONLY,
+    );
     return {
       label: "Not sandboxed",
       tone: "warning",
       summary:
-        "The host did not enforce a boundary: this session is not isolated from other projects' files.",
+        adapterOnly !== undefined &&
+        report.boundaryText?.startsWith(adapterOnly)
+          ? "The boundary covers only this runtime's adapter: its work runs in a process Beekeeper does not launch, not isolated from other projects' files."
+          : "The host did not enforce a boundary: this session is not isolated from other projects' files.",
     };
   }
   if (exposed) {
