@@ -196,6 +196,11 @@ fn cmd_attest(
     validate_hex64(target_pubkey)?;
     let target = PublicKey::from_hex(target_pubkey)
         .map_err(|e| CliError::Usage(format!("invalid target pubkey: {e}")))?;
+    if client.auth_tag().is_some() {
+        return Err(CliError::Usage(
+            "bee is signing as an attested agent (BEEKEEPER_AUTH_TAG is set); an owner attests with its own key".into(),
+        ));
+    }
     let owner = client.keys();
     if owner.public_key() == target {
         return Err(CliError::Usage(

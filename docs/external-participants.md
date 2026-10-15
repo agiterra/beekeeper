@@ -38,11 +38,18 @@ session metadata or receipts.
     `created_at`.
 
   An already admitted request is not re-judged against a later clock.
+- **Backdating bound.** `created_at` is chosen by the author, so a message
+  claiming to be more than ten minutes older than when the host observed it is
+  judged no earlier than that bound. Ordinary delays keep the message's own
+  time. A key whose attestation has expired therefore cannot revive it by
+  backdating. A connection that is already open is not cut when the attestation
+  expires; only new authentication is refused.
 - **Membership.** Removing the owner's relay membership ends NIP-AA access at
   the next connection. Open sockets are not cut.
 - **Archive.** `bee agents archive <PUBKEY>` archives the identity (NIP-IA).
 - **No early withdrawal.** A published attestation cannot otherwise be
-  withdrawn before it expires, so prefer an expiry.
+  withdrawn before it expires, so prefer an expiry. A renewed attestation (a new
+  kind 0) is picked up the next time the old one fails the time check.
 
 ## Discovery
 
