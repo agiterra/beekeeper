@@ -461,6 +461,7 @@ const SUPPORTED_KIND_TABLE: &[KindEntry] = {
         // Messaging
         kind_entry!(KIND_STREAM_MESSAGE),
         kind_entry!(KIND_STREAM_MESSAGE_V2),
+        kind_entry!(KIND_APPLICATION_EVENT),
         kind_entry!(KIND_STREAM_MESSAGE_EDIT),
         kind_entry!(KIND_STREAM_MESSAGE_PINNED),
         kind_entry!(KIND_STREAM_MESSAGE_BOOKMARKED),
