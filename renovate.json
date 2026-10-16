@@ -1,6 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "description": "A fix for a published vulnerability skips the release-age lag.",
+    "minimumReleaseAge": null,
+    "labels": ["security"]
+  },
   "prCreation": "immediate",
   "automerge": true,
   "rebaseWhen": "conflicted",
