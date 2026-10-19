@@ -816,6 +816,38 @@ pub async fn list_enabled_ref_updated_workflows(
     rows.into_iter().map(row_to_workflow_record).collect()
 }
 
+/// Every enabled `ci_result` definition bound to one project coordinate.
+///
+/// The candidate lookup for a kind:46008 CI result, which has no channel:
+/// the result names its project, and a `ci_result` workflow carries the
+/// same coordinate in `project_ref`.
+pub async fn list_enabled_ci_result_workflows(
+    pool: &PgPool,
+    community_id: CommunityId,
+    project_ref: &str,
+) -> Result<Vec<WorkflowRecord>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
+               project_ref, status::text AS status, enabled, created_at, updated_at
+        FROM workflows
+        WHERE community_id = $1
+          AND project_ref = $2
+          AND status = 'active'
+          AND enabled = TRUE
+          AND definition->'trigger'->>'on' = 'ci_result'
+        ORDER BY created_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(project_ref)
+    .bind(LIST_MAX_LIMIT)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_workflow_record).collect()
+}
+
 /// Update a workflow's name, definition, and definition_hash.
 ///
 /// NOTE: the relay's `WorkflowEngine` caches enabled workflows per

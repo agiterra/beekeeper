@@ -1571,4 +1571,58 @@ mod db_tests {
             .expect("outcomes");
         assert_eq!(pending[0].disposition, "pending");
     }
+
+    /// The 46008 candidate lookup: enabled, active `ci_result` workflows of
+    /// exactly this project, in this community.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn ci_result_candidates_are_scoped_to_project_trigger_and_enablement() {
+        let pool = setup_pool().await;
+        let community = make_community(&pool).await;
+        let other_community = make_community(&pool).await;
+        let project = format!("30621:{}:p-{}", "a".repeat(64), Uuid::new_v4().simple());
+        let ci = r#"{"name":"c","trigger":{"on":"ci_result","check":"ci","conclusion":["success"]},"steps":[]}"#;
+        let manual = r#"{"name":"m","trigger":{"on":"manual"},"steps":[]}"#;
+        let insert = |community: CommunityId, def: &'static str, project: Option<String>| {
+            let pool = pool.clone();
+            async move {
+                let id = Uuid::new_v4();
+                let owner = Keys::generate().public_key().to_bytes();
+                crate::user::ensure_user(&pool, community, &owner)
+                    .await
+                    .expect("owner");
+                crate::workflow::upsert_workflow(
+                    &pool,
+                    community,
+                    id,
+                    None,
+                    &owner,
+                    "w",
+                    def,
+                    &[1; 32],
+                    project.as_deref(),
+                )
+                .await
+                .expect("workflow");
+                id
+            }
+        };
+        let wanted = insert(community, ci, Some(project.clone())).await;
+        let disabled = insert(community, ci, Some(project.clone())).await;
+        crate::workflow::set_workflow_enabled(&pool, community, disabled, false)
+            .await
+            .expect("disable");
+        insert(community, manual, Some(project.clone())).await;
+        insert(community, ci, Some(format!("{project}-other"))).await;
+        insert(community, ci, None).await;
+        insert(other_community, ci, Some(project.clone())).await;
+        let found: Vec<Uuid> =
+            crate::workflow::list_enabled_ci_result_workflows(&pool, community, &project)
+                .await
+                .expect("lookup")
+                .into_iter()
+                .map(|w| w.id)
+                .collect();
+        assert_eq!(found, vec![wanted]);
+    }
 }
