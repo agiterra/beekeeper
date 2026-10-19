@@ -107,6 +107,24 @@ pub enum TriggerDef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repository: Option<String>,
     },
+    /// Fires on a relay-signed kind:50000 application event produced by a
+    /// webhook plugin (`beekeeper:source` provenance tag) whose type matches
+    /// `type` — an exact type, or a prefix ending in `.*` that matches one or
+    /// more further components. A member-signed 50000 never fires it: a type
+    /// name is not provenance.
+    ApplicationEvent {
+        /// Exact application type, or `prefix.*`.
+        #[serde(rename = "type")]
+        event_type: String,
+        /// Plugin installation UUID, or `any`. Required, with no default, so
+        /// that accepting events from every installation is an explicit act.
+        installation: String,
+        /// Optional evalexpr filter. Variables: `trigger_app_type`,
+        /// `trigger_installation`, and `trigger_data.<path>` for each scalar
+        /// in the event's `data` (depth <= 3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<String>,
+    },
     /// Fires when HTTP POST arrives at `/hooks/{id}`.
     Webhook,
     /// Never fires on its own: only a kind:46020 trigger (`bee workflows
@@ -818,6 +836,15 @@ impl WorkflowDef {
             }
         }
 
+        if let TriggerDef::ApplicationEvent {
+            event_type,
+            installation,
+            ..
+        } = &self.trigger
+        {
+            crate::application_trigger::validate_trigger(event_type, installation)?;
+        }
+
         if let TriggerDef::Schedule {
             cron,
             interval,
@@ -1057,6 +1084,45 @@ mod tests {
 
         let reparsed: WorkflowDef = serde_json::from_str(&json).expect("json round-trip");
         assert_eq!(reparsed.name, def.name);
+    }
+
+    #[test]
+    fn application_event_trigger_requires_an_explicit_installation() {
+        let with = |installation: &str| {
+            format!(
+                "name: PRs\ntrigger:\n  on: application_event\n  type: com.github.pull-request.*\n{installation}steps:\n  - id: s1\n    action: send_message\n    text: hi\n"
+            )
+        };
+        let (def, _) = parse_yaml(&with("  installation: any\n")).expect("explicit any");
+        match &def.trigger {
+            TriggerDef::ApplicationEvent {
+                event_type,
+                installation,
+                filter,
+            } => {
+                assert_eq!(event_type, "com.github.pull-request.*");
+                assert_eq!(installation, "any");
+                assert!(filter.is_none());
+            }
+            other => panic!("unexpected trigger: {other:?}"),
+        }
+        parse_yaml(&with(
+            "  installation: 5b0b1c7e-6a77-4d3c-9b1f-2a7e3c1d0f11\n",
+        ))
+        .expect("explicit installation uuid");
+        let missing = parse_yaml(&with("")).expect_err("installation has no default");
+        assert!(missing.to_string().contains("installation"), "{missing}");
+        parse_yaml(&with("  installation: everyone\n")).expect_err("not a uuid or any");
+    }
+
+    #[test]
+    fn application_event_trigger_validates_its_type() {
+        for bad in ["com.*", "com.github", "Com.Github.Push"] {
+            let yaml = format!(
+                "name: x\ntrigger:\n  on: application_event\n  type: '{bad}'\n  installation: any\nsteps:\n  - id: s1\n    action: send_message\n    text: hi\n"
+            );
+            parse_yaml(&yaml).expect_err(bad);
+        }
     }
 
     #[test]

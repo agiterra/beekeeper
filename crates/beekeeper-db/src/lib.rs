@@ -4285,6 +4285,137 @@ impl Db {
         workflow::list_enabled_channel_workflows(&self.pool, community_id, channel_id).await
     }
 
+    /// Every enabled `ci_result` definition bound to `project_ref`.
+    #[datastore_span(name = "list_enabled_ci_result_workflows", system = "postgresql")]
+    pub async fn list_enabled_ci_result_workflows(
+        &self,
+        community_id: CommunityId,
+        project_ref: &str,
+    ) -> Result<Vec<workflow::WorkflowRecord>> {
+        workflow::list_enabled_ci_result_workflows(&self.pool, community_id, project_ref).await
+    }
+
+    /// See [`workflow_dispatch::claim_dispatch_batch`].
+    pub async fn claim_dispatch_batch(
+        &self,
+        limit: i64,
+        lease_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<workflow_dispatch::ClaimedDispatchBatch>> {
+        workflow_dispatch::claim_dispatch_batch(&self.pool, limit, lease_until).await
+    }
+
+    /// See [`workflow_dispatch::freeze_candidates`].
+    pub async fn freeze_dispatch_candidates(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+        claim_id: Uuid,
+        workflow_ids: &[Uuid],
+    ) -> Result<workflow_dispatch::FreezeOutcome> {
+        workflow_dispatch::freeze_candidates(
+            &self.pool,
+            community_id,
+            event_id,
+            claim_id,
+            workflow_ids,
+        )
+        .await
+    }
+
+    /// See [`workflow_dispatch::list_dispatch_outcomes`].
+    pub async fn list_dispatch_outcomes(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+    ) -> Result<Vec<workflow_dispatch::DispatchOutcome>> {
+        workflow_dispatch::list_dispatch_outcomes(&self.pool, community_id, event_id).await
+    }
+
+    /// See [`workflow_dispatch::record_outcome`].
+    pub async fn record_dispatch_outcome(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+        workflow_id: Uuid,
+        update: &workflow_dispatch::OutcomeUpdate,
+    ) -> Result<bool> {
+        workflow_dispatch::record_outcome(&self.pool, community_id, event_id, workflow_id, update)
+            .await
+    }
+
+    /// See [`workflow_dispatch::create_dispatch_run`].
+    pub async fn create_dispatch_run(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+        workflow_id: Uuid,
+        trigger_context: Option<&serde_json::Value>,
+        expected_definition_hash: &[u8],
+    ) -> Result<workflow_dispatch::DispatchRunOutcome> {
+        workflow_dispatch::create_dispatch_run(
+            &self.pool,
+            community_id,
+            event_id,
+            workflow_id,
+            trigger_context,
+            expected_definition_hash,
+        )
+        .await
+    }
+
+    /// See [`workflow_dispatch::complete_dispatch`].
+    pub async fn complete_dispatch(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+        claim_id: Uuid,
+    ) -> Result<()> {
+        workflow_dispatch::complete_dispatch(&self.pool, community_id, event_id, claim_id).await
+    }
+
+    /// See [`workflow_dispatch::reschedule_dispatch`].
+    pub async fn reschedule_dispatch(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+        claim_id: Uuid,
+        error: &str,
+        backoff: std::time::Duration,
+    ) -> Result<workflow_dispatch::RescheduleOutcome> {
+        workflow_dispatch::reschedule_dispatch(
+            &self.pool,
+            community_id,
+            event_id,
+            claim_id,
+            error,
+            backoff,
+        )
+        .await
+    }
+
+    /// See [`workflow_dispatch::fail_dispatch_terminal`].
+    pub async fn fail_dispatch_terminal(
+        &self,
+        community_id: CommunityId,
+        event_id: &[u8],
+        claim_id: Uuid,
+        reason: &str,
+    ) -> Result<()> {
+        workflow_dispatch::fail_dispatch_terminal(
+            &self.pool,
+            community_id,
+            event_id,
+            claim_id,
+            reason,
+        )
+        .await
+    }
+
+    /// See [`workflow_dispatch::fail_exhausted_dispatches`].
+    pub async fn fail_exhausted_dispatches(&self) -> Result<u64> {
+        workflow_dispatch::fail_exhausted_dispatches(&self.pool).await
+    }
+
     /// Every enabled `ref_updated` definition in a community.
     #[datastore_span(name = "list_enabled_ref_updated_workflows", system = "postgresql")]
     pub async fn list_enabled_ref_updated_workflows(

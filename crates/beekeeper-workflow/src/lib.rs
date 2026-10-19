@@ -32,6 +32,7 @@
 
 pub mod action_sink;
 pub mod actions_file;
+pub mod application_trigger;
 pub mod error;
 pub mod executor;
 pub mod hash;
@@ -115,6 +116,55 @@ pub struct WorkflowEngine {
     /// `beekeeper-relay`).
     pub(crate) workflow_cache:
         moka::sync::Cache<(CommunityId, Uuid), Arc<Vec<beekeeper_db::workflow::WorkflowRecord>>>,
+    /// The relay's signing key. An `application_event` trigger fires only on
+    /// events this key signed; unset refuses every application event.
+    pub(crate) relay_pubkey: OnceLock<nostr::PublicKey>,
+}
+
+/// The result of offering one event to one workflow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admission {
+    /// A run exists for this (workflow, event): created now, or — on the
+    /// dispatch path — by an earlier attempt.
+    Admitted(Uuid),
+    /// Final: the workflow will never run for this event, with the reason
+    /// (definition parse failure, trigger or filter miss, provenance, owner
+    /// authority, definition changed, disabled).
+    Skipped(String),
+    /// Transient (a database error): the dispatch queue retries it.
+    Retryable(String),
+}
+
+/// How [`WorkflowEngine::admit_one`] creates the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunCreation {
+    /// `create_workflow_run`: the live post-commit path (`on_event`).
+    Live,
+    /// `create_dispatch_run`: exactly once per (workflow, event), and the
+    /// outcome row is marked admitted in the same transaction.
+    Dispatch,
+}
+
+/// What [`WorkflowEngine::dispatch_claimed_event`] did with one queue event.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DispatchReport {
+    /// `(workflow, run)` admitted on this pass.
+    pub admitted: Vec<(Uuid, Uuid)>,
+    /// `(workflow, reason)` skipped on this pass.
+    pub skipped: Vec<(Uuid, String)>,
+    /// `(workflow, error)` that must be retried.
+    pub retryable: Vec<(Uuid, String)>,
+    /// Set when the event itself can never be dispatched; the queue row is
+    /// failed terminally with this reason.
+    pub terminal: Option<String>,
+}
+
+impl DispatchReport {
+    /// Every candidate is decided (admitted or skipped) and nothing is
+    /// terminal: the queue row is `done`.
+    pub fn is_done(&self) -> bool {
+        self.retryable.is_empty() && self.terminal.is_none()
+    }
 }
 
 impl WorkflowEngine {
@@ -132,6 +182,21 @@ impl WorkflowEngine {
                 .max_capacity(10_000)
                 .time_to_live(std::time::Duration::from_secs(10))
                 .build(),
+            relay_pubkey: OnceLock::new(),
+        }
+    }
+
+    /// Tell the engine the relay's signing key. Called once at startup, next
+    /// to [`set_action_sink`](Self::set_action_sink). A second call with a
+    /// different key is refused and logged; the first key stays.
+    pub fn set_relay_pubkey(&self, pubkey: nostr::PublicKey) {
+        if let Err(rejected) = self.relay_pubkey.set(pubkey) {
+            if self.relay_pubkey.get() != Some(&rejected) {
+                tracing::error!(
+                    rejected = %rejected.to_hex(),
+                    "set_relay_pubkey called twice with different keys; keeping the first"
+                );
+            }
         }
     }
 
@@ -387,20 +452,20 @@ impl WorkflowEngine {
         {
             return Ok(());
         }
-        let ci_result = if kind_u32 == beekeeper_core::kind::KIND_CI_RESULT {
-            match beekeeper_core::ci_result::decode_ci_result(&event.event) {
-                Ok(result) => Some(result),
-                Err(error) => {
-                    tracing::debug!(
-                        event_id = %event.event.id.to_hex(),
-                        "Skipping workflow trigger — kind:46008 did not decode: {error}"
-                    );
-                    return Ok(());
-                }
+        // Application events are dispatched only by the durable queue
+        // (`dispatch_claimed_event`), never by this post-commit spawn.
+        if kind_u32 == beekeeper_core::kind::KIND_APPLICATION_EVENT {
+            return Ok(());
+        }
+        if kind_u32 == beekeeper_core::kind::KIND_CI_RESULT {
+            if let Err(error) = beekeeper_core::ci_result::decode_ci_result(&event.event) {
+                tracing::debug!(
+                    event_id = %event.event.id.to_hex(),
+                    "Skipping workflow trigger — kind:46008 did not decode: {error}"
+                );
+                return Ok(());
             }
-        } else {
-            None
-        };
+        }
 
         let cache_key = (community_id, channel_id);
         let workflows = match self.workflow_cache.get(&cache_key) {
@@ -422,121 +487,351 @@ impl WorkflowEngine {
         }
 
         let trigger_ctx = build_trigger_context(event);
+        for workflow in workflows.iter() {
+            match self
+                .admit_one(
+                    community_id,
+                    workflow,
+                    event,
+                    &trigger_ctx,
+                    RunCreation::Live,
+                )
+                .await
+            {
+                Admission::Admitted(run_id) => tracing::debug!(
+                    workflow_id = %workflow.id,
+                    run_id = %run_id,
+                    "Workflow triggered — spawned execution"
+                ),
+                Admission::Skipped(reason) => tracing::debug!(
+                    workflow_id = %workflow.id,
+                    "Workflow not triggered: {reason}"
+                ),
+                Admission::Retryable(error) => tracing::error!(
+                    workflow_id = %workflow.id,
+                    "Failed to create run: {error}"
+                ),
+            }
+        }
 
-        let trigger_ctx_json: serde_json::Value = match serde_json::to_value(&trigger_ctx) {
+        Ok(())
+    }
+
+    /// Offer one stored event to one workflow, and start a run if it fires.
+    ///
+    /// This is the per-workflow body shared by the live path ([`on_event`]
+    /// for channel kinds) and the durable dispatch queue. In order: parse
+    /// the definition; require it enabled and its trigger kind to match;
+    /// for `application_event`, require relay signature, a source tag, the
+    /// installation and the type (and flatten the event's data into the
+    /// trigger context); for `ci_result`, require the result's project,
+    /// check and conclusion; evaluate the trigger filter; recheck the
+    /// owner's *current* channel authority (SEC-006); create the run, and
+    /// spawn its execution only if this call created it.
+    ///
+    /// [`on_event`]: Self::on_event
+    async fn admit_one(
+        self: &Arc<Self>,
+        community_id: CommunityId,
+        workflow: &beekeeper_db::workflow::WorkflowRecord,
+        event: &beekeeper_core::StoredEvent,
+        base_ctx: &executor::TriggerContext,
+        creation: RunCreation,
+    ) -> Admission {
+        let kind_u32 = event_kind_u32(&event.event);
+        let def: WorkflowDef = match serde_json::from_value(workflow.definition.clone()) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(workflow_id = %workflow.id, "Failed to parse definition: {e}");
+                return Admission::Skipped(format!("definition does not parse: {e}"));
+            }
+        };
+        if !def.enabled {
+            return Admission::Skipped("definition is disabled".into());
+        }
+        if !trigger_matches_event(&def.trigger, kind_u32) {
+            return Admission::Skipped("trigger does not match this event kind".into());
+        }
+
+        let mut trigger_ctx = base_ctx.clone();
+        if let TriggerDef::ApplicationEvent {
+            event_type,
+            installation,
+            ..
+        } = &def.trigger
+        {
+            match application_trigger::check_event(
+                &event.event,
+                self.relay_pubkey.get(),
+                event_type,
+                installation,
+            ) {
+                Ok(facts) => {
+                    trigger_ctx
+                        .webhook_fields
+                        .extend(application_trigger::trigger_fields(
+                            &facts,
+                            &event.event.content,
+                        ))
+                }
+                Err(reason) => return Admission::Skipped(reason.to_owned()),
+            }
+        }
+        if let TriggerDef::CiResult { check, conclusion } = &def.trigger {
+            let result = match beekeeper_core::ci_result::decode_ci_result(&event.event) {
+                Ok(result) => result,
+                Err(error) => {
+                    return Admission::Skipped(format!("kind:46008 did not decode: {error}"))
+                }
+            };
+            let same_project =
+                workflow.project_ref.as_deref() == Some(result.identity.project.as_str());
+            if !same_project
+                || &result.identity.check != check
+                || !conclusion.contains(&result.conclusion)
+            {
+                tracing::debug!(
+                    workflow_id = %workflow.id,
+                    "ci_result trigger: result does not match this workflow's project, check or conclusion"
+                );
+                return Admission::Skipped(
+                    "ci_result does not match this workflow's project, check or conclusion".into(),
+                );
+            }
+        }
+
+        if !should_fire_workflow(&def, &trigger_ctx, workflow.id).await {
+            return Admission::Skipped("trigger filter did not match".into());
+        }
+
+        let Some(channel_id) = workflow.channel_id else {
+            return Admission::Skipped("workflow has no channel scope".into());
+        };
+        if trigger_ctx.channel_id.is_empty() {
+            trigger_ctx.channel_id = channel_id.to_string();
+        }
+
+        // SEC-006: recheck the owner's *current* channel authority
+        // immediately before run creation. The cached workflow list can be
+        // up to 10s stale, and disable-on-removal can race a concurrent
+        // event — this per-fire gate is the authoritative, fail-closed
+        // check that a removed (or under-privileged, for exfiltration
+        // definitions) owner cannot cause a run.
+        if let Err(e) = self
+            .check_owner_authority(community_id, channel_id, &workflow.owner_pubkey, &def)
+            .await
+        {
+            tracing::warn!(
+                workflow_id = %workflow.id,
+                "Skipping workflow — owner authority check failed: {e}"
+            );
+            return Admission::Skipped(format!("owner authority: {e}"));
+        }
+
+        let trigger_ctx_json = match serde_json::to_value(&trigger_ctx) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to serialize trigger context: {e}");
-                return Ok(());
+                return Admission::Skipped(format!("trigger context does not serialize: {e}"));
             }
         };
-
-        for workflow in workflows.iter() {
-            let def: WorkflowDef = match serde_json::from_value(workflow.definition.clone()) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(workflow_id = %workflow.id, "Failed to parse definition: {e}");
-                    continue;
-                }
-            };
-
-            if !def.enabled || !trigger_matches_event(&def.trigger, kind_u32) {
-                continue;
-            }
-
-            if !should_fire_workflow(&def, &trigger_ctx, workflow.id).await {
-                continue;
-            }
-            if let TriggerDef::CiResult { check, conclusion } = &def.trigger {
-                let Some(result) = &ci_result else {
-                    continue;
-                };
-                let same_project =
-                    workflow.project_ref.as_deref() == Some(result.identity.project.as_str());
-                if !same_project
-                    || &result.identity.check != check
-                    || !conclusion.contains(&result.conclusion)
-                {
-                    tracing::debug!(
-                        workflow_id = %workflow.id,
-                        "ci_result trigger: result does not match this workflow's project, check or conclusion"
-                    );
-                    continue;
-                }
-            }
-
-            // SEC-006: recheck the owner's *current* channel authority
-            // immediately before run creation. The cached workflow list can be
-            // up to 10s stale, and disable-on-removal can race a concurrent
-            // event — this per-fire gate is the authoritative, fail-closed
-            // check that a removed (or under-privileged, for exfiltration
-            // definitions) owner cannot cause a run.
-            if let Err(e) = self
-                .check_owner_authority(community_id, channel_id, &workflow.owner_pubkey, &def)
-                .await
-            {
-                tracing::warn!(
-                    workflow_id = %workflow.id,
-                    "Skipping workflow — owner authority check failed: {e}"
-                );
-                continue;
-            }
-
-            let trigger_event_id_bytes = event.event.id.as_bytes().to_vec();
-            let run_id = match self
+        let event_id = event.event.id.as_bytes().to_vec();
+        let (run_id, spawn) = match creation {
+            RunCreation::Live => match self
                 .db
                 .create_workflow_run(
                     community_id,
                     workflow.id,
-                    Some(&trigger_event_id_bytes),
+                    Some(&event_id),
                     Some(&trigger_ctx_json),
                     &workflow.definition_hash,
                 )
                 .await
             {
-                Ok(beekeeper_db::workflow::CreateRunOutcome::Created(id)) => id,
+                Ok(beekeeper_db::workflow::CreateRunOutcome::Created(id)) => (id, true),
                 Ok(beekeeper_db::workflow::CreateRunOutcome::DefinitionChanged {
                     current, ..
-                }) => {
-                    // The action was republished between reading it and
-                    // starting the run. No run exists, and this body must not
-                    // be retried: the next trigger reads the new definition
-                    // (ledger 199).
-                    tracing::warn!(
-                        workflow_id = %workflow.id,
-                        current_definition_hash = %hex::encode(current),
-                        "definition_changed: the action was republished while a run was being \
-                         started; no run was created and this body is not retried"
-                    );
-                    continue;
+                }) => return definition_changed(workflow.id, &current),
+                Err(e) => return Admission::Retryable(e.to_string()),
+            },
+            RunCreation::Dispatch => match self
+                .db
+                .create_dispatch_run(
+                    community_id,
+                    &event_id,
+                    workflow.id,
+                    Some(&trigger_ctx_json),
+                    &workflow.definition_hash,
+                )
+                .await
+            {
+                Ok(beekeeper_db::workflow_dispatch::DispatchRunOutcome::Created(id)) => (id, true),
+                // A previous attempt created it; whoever created it spawned it.
+                Ok(beekeeper_db::workflow_dispatch::DispatchRunOutcome::Existing(id)) => {
+                    (id, false)
                 }
-                Err(e) => {
-                    tracing::error!(workflow_id = %workflow.id, "Failed to create run: {e}");
-                    continue;
-                }
-            };
+                Ok(beekeeper_db::workflow_dispatch::DispatchRunOutcome::DefinitionChanged {
+                    current,
+                    ..
+                }) => return definition_changed(workflow.id, &current),
+                Err(e) => return Admission::Retryable(e.to_string()),
+            },
+        };
 
-            tracing::debug!(
-                workflow_id = %workflow.id,
-                run_id = %run_id,
-                "Workflow triggered — spawning execution"
-            );
-
+        if spawn {
             let engine = Arc::clone(self);
-            let def_clone = def.clone();
-            let ctx_clone = trigger_ctx.clone();
-
             tokio::spawn(async move {
                 let result =
-                    executor::execute_run(&engine, community_id, run_id, &def_clone, &ctx_clone)
-                        .await;
+                    executor::execute_run(&engine, community_id, run_id, &def, &trigger_ctx).await;
                 engine
                     .finalize_run(community_id, run_id, result, None)
                     .await;
             });
         }
+        Admission::Admitted(run_id)
+    }
 
-        Ok(())
+    /// Dispatch one claimed `workflow_dispatch_queue` event.
+    ///
+    /// On the first claim the candidates are looked up and frozen: by channel
+    /// for a kind:50000 application event (every enabled `application_event`
+    /// workflow in the event's channel, plus any definition that no longer
+    /// parses, so its skip is recorded), by project for a kind:46008 CI
+    /// result (`list_enabled_ci_result_workflows`). Later claims reuse the
+    /// frozen set, so a workflow enabled after the first claim never joins.
+    /// Each still-`pending` candidate is then admitted at most once; a
+    /// workflow deleted or disabled since freezing is skipped.
+    ///
+    /// Errors are infrastructure failures before any per-workflow decision
+    /// (candidate lookup, freezing, recording an outcome); the caller
+    /// reschedules the row.
+    pub async fn dispatch_claimed_event(
+        self: &Arc<Self>,
+        community_id: CommunityId,
+        claim_id: Uuid,
+        event: &beekeeper_core::StoredEvent,
+        candidates_frozen: bool,
+    ) -> Result<DispatchReport, WorkflowError> {
+        let event_id = event.event.id.as_bytes().to_vec();
+        let kind_u32 = event_kind_u32(&event.event);
+        let mut report = DispatchReport::default();
+        if !beekeeper_db::workflow_dispatch::DISPATCH_KINDS.contains(&kind_u32) {
+            report.terminal = Some(format!("kind {kind_u32} is not dispatched by the queue"));
+            return Ok(report);
+        }
+        if !candidates_frozen {
+            let candidates = match self.dispatch_candidates(community_id, event).await? {
+                Ok(candidates) => candidates,
+                Err(terminal) => {
+                    report.terminal = Some(terminal);
+                    return Ok(report);
+                }
+            };
+            self.db
+                .freeze_dispatch_candidates(community_id, &event_id, claim_id, &candidates)
+                .await?;
+        }
+
+        let trigger_ctx = build_trigger_context(event);
+        let outcomes = self
+            .db
+            .list_dispatch_outcomes(community_id, &event_id)
+            .await?;
+        for outcome in outcomes.iter().filter(|o| o.disposition == "pending") {
+            let admission = match self
+                .db
+                .get_workflow(community_id, outcome.workflow_id)
+                .await
+            {
+                Ok(workflow)
+                    if workflow.enabled
+                        && workflow.status == beekeeper_db::workflow::WorkflowStatus::Active =>
+                {
+                    self.admit_one(
+                        community_id,
+                        &workflow,
+                        event,
+                        &trigger_ctx,
+                        RunCreation::Dispatch,
+                    )
+                    .await
+                }
+                Ok(_) => Admission::Skipped("disabled".into()),
+                Err(beekeeper_db::DbError::NotFound(_)) => {
+                    Admission::Skipped("workflow deleted".into())
+                }
+                Err(e) => Admission::Retryable(e.to_string()),
+            };
+            match admission {
+                Admission::Admitted(run_id) => report.admitted.push((outcome.workflow_id, run_id)),
+                Admission::Skipped(reason) => {
+                    self.db
+                        .record_dispatch_outcome(
+                            community_id,
+                            &event_id,
+                            outcome.workflow_id,
+                            &beekeeper_db::workflow_dispatch::OutcomeUpdate::Skipped(
+                                reason.clone(),
+                            ),
+                        )
+                        .await?;
+                    report.skipped.push((outcome.workflow_id, reason));
+                }
+                Admission::Retryable(error) => {
+                    self.db
+                        .record_dispatch_outcome(
+                            community_id,
+                            &event_id,
+                            outcome.workflow_id,
+                            &beekeeper_db::workflow_dispatch::OutcomeUpdate::Retryable(
+                                error.clone(),
+                            ),
+                        )
+                        .await?;
+                    report.retryable.push((outcome.workflow_id, error));
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    /// The candidate workflows of a dispatch event, or a terminal reason
+    /// when the event can never be dispatched.
+    async fn dispatch_candidates(
+        &self,
+        community_id: CommunityId,
+        event: &beekeeper_core::StoredEvent,
+    ) -> Result<Result<Vec<Uuid>, String>, WorkflowError> {
+        let kind_u32 = event_kind_u32(&event.event);
+        if kind_u32 == beekeeper_core::kind::KIND_CI_RESULT {
+            let result = match beekeeper_core::ci_result::decode_ci_result(&event.event) {
+                Ok(result) => result,
+                Err(error) => return Ok(Err(format!("ci_result_undecodable: {error}"))),
+            };
+            let workflows = self
+                .db
+                .list_enabled_ci_result_workflows(community_id, &result.identity.project)
+                .await?;
+            return Ok(Ok(workflows.into_iter().map(|w| w.id).collect()));
+        }
+        let Some(channel_id) = event.channel_id else {
+            return Ok(Ok(Vec::new()));
+        };
+        // Uncached on purpose: the frozen set is a durable record.
+        let workflows = self
+            .db
+            .list_enabled_channel_workflows(community_id, channel_id)
+            .await?;
+        Ok(Ok(workflows
+            .into_iter()
+            .filter(|workflow| {
+                match serde_json::from_value::<WorkflowDef>(workflow.definition.clone()) {
+                    Ok(def) => trigger_matches_event(&def.trigger, kind_u32),
+                    Err(_) => true,
+                }
+            })
+            .map(|workflow| workflow.id)
+            .collect()))
     }
 
     /// Called by the git transport right after a push's kind:30618 state was
@@ -1232,7 +1527,11 @@ async fn should_fire_workflow(
         }
     }
 
-    if let TriggerDef::DiffPosted {
+    if let TriggerDef::ApplicationEvent {
+        filter: Some(ref expr),
+        ..
+    }
+    | TriggerDef::DiffPosted {
         filter: Some(ref expr),
     } = def.trigger
     {
@@ -1378,6 +1677,18 @@ fn owner_authority_allows(role: Option<&str>, needs_elevated: bool) -> bool {
     }
 }
 
+/// A run was not created because the action was republished between reading
+/// it and starting the run. Never retried (ledger 199).
+fn definition_changed(workflow_id: Uuid, current: &[u8]) -> Admission {
+    tracing::warn!(
+        workflow_id = %workflow_id,
+        current_definition_hash = %hex::encode(current),
+        "definition_changed: the action was republished while a run was being \
+         started; no run was created and this body is not retried"
+    );
+    Admission::Skipped("definition_changed".into())
+}
+
 /// Returns `true` if the trigger type matches the given event kind.
 fn trigger_matches_event(trigger: &TriggerDef, kind_u32: u32) -> bool {
     use beekeeper_core::kind::{KIND_REACTION, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_DIFF};
@@ -1386,6 +1697,9 @@ fn trigger_matches_event(trigger: &TriggerDef, kind_u32: u32) -> bool {
         TriggerDef::ReactionAdded { .. } => kind_u32 == KIND_REACTION,
         TriggerDef::DiffPosted { .. } => kind_u32 == KIND_STREAM_MESSAGE_DIFF,
         TriggerDef::CiResult { .. } => kind_u32 == beekeeper_core::kind::KIND_CI_RESULT,
+        TriggerDef::ApplicationEvent { .. } => {
+            kind_u32 == beekeeper_core::kind::KIND_APPLICATION_EVENT
+        }
         // Schedule and Webhook triggers are not fired by channel events.
         TriggerDef::Schedule { .. }
         | TriggerDef::Webhook
@@ -1816,6 +2130,64 @@ steps:
                 "reaction_added should not match workflow execution kind {kind}"
             );
         }
+    }
+
+    #[test]
+    fn application_event_trigger_matches_kind_50000_only() {
+        let trigger = TriggerDef::ApplicationEvent {
+            event_type: "com.github.push".into(),
+            installation: "any".into(),
+            filter: None,
+        };
+        assert!(trigger_matches_event(&trigger, 50000));
+        for kind in [9, 46008, 40008, 7] {
+            assert!(!trigger_matches_event(&trigger, kind), "{kind}");
+        }
+    }
+
+    #[tokio::test]
+    async fn application_event_filter_reads_flattened_data() {
+        let def = |filter: &str| WorkflowDef {
+            name: "f".into(),
+            description: None,
+            project: None,
+            trigger: TriggerDef::ApplicationEvent {
+                event_type: "com.github.push".into(),
+                installation: "any".into(),
+                filter: Some(filter.into()),
+            },
+            steps: vec![],
+            enabled: true,
+        };
+        let mut ctx = executor::TriggerContext::default();
+        ctx.webhook_fields.insert(
+            "data.repository.full_name".into(),
+            "agiterra/beekeeper".into(),
+        );
+        ctx.webhook_fields
+            .insert("app_type".into(), "com.github.push".into());
+        let id = Uuid::new_v4();
+        assert!(
+            should_fire_workflow(
+                &def(r#"trigger_data.repository.full_name == "agiterra/beekeeper""#),
+                &ctx,
+                id
+            )
+            .await
+        );
+        assert!(
+            !should_fire_workflow(
+                &def(r#"trigger_data.repository.full_name == "other/repo""#),
+                &ctx,
+                id
+            )
+            .await
+        );
+        assert!(
+            should_fire_workflow(&def(r#"trigger_app_type == "com.github.push""#), &ctx, id).await
+        );
+        // A filter naming a field the event does not carry does not fire.
+        assert!(!should_fire_workflow(&def(r#"trigger_data.missing == "x""#), &ctx, id).await);
     }
 
     #[test]
