@@ -647,8 +647,11 @@ pub(crate) async fn query_events_on(
                 if i > 0 {
                     qb.push(" OR ");
                 }
-                let containment =
-                    serde_json::json!([["l", event_type, "org.agiterra.application-event"]]);
+                let containment = serde_json::json!([[
+                    "l",
+                    event_type,
+                    beekeeper_core::application_event::APPLICATION_EVENT_NAMESPACE
+                ]]);
                 qb.push(format!("{col_prefix}tags @> "));
                 qb.push_bind(containment);
             }
@@ -1100,8 +1103,11 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
                 if i > 0 {
                     qb.push(" OR ");
                 }
-                let containment =
-                    serde_json::json!([["l", event_type, "org.agiterra.application-event"]]);
+                let containment = serde_json::json!([[
+                    "l",
+                    event_type,
+                    beekeeper_core::application_event::APPLICATION_EVENT_NAMESPACE
+                ]]);
                 qb.push(format!("{col_prefix}tags @> "));
                 qb.push_bind(containment);
             }

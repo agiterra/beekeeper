@@ -14,6 +14,8 @@ pub mod agents_repo_draft;
 /// Pure agents-repository draft fold shared by every adapter, pinned by
 /// `conformance/agents-repo-draft-fold/`.
 pub mod agents_repo_draft_fold;
+/// Kind:50000 application-event envelope rules shared by ingest and relay producers.
+pub mod application_event;
 /// This build's own commit, its ordinal and its time — the client-side
 /// counterpart of the relay's NIP-11 `software_commit`, with the same
 /// disclosed `unknown`/`null` non-answers.
