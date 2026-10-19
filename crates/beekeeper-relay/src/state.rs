@@ -671,6 +671,10 @@ pub struct AppState {
     /// Loaded plugins (`api::plugins`). Empty until `main` installs the
     /// registry `BEEKEEPER_PLUGINS_FILE` names; plugins never see this state.
     pub plugins: Arc<beekeeper_plugin_host::PluginHost>,
+    /// Wakes the durable workflow dispatch worker
+    /// (`workflow_dispatch_runtime`) as soon as a dispatchable event commits,
+    /// instead of at its next poll.
+    pub workflow_dispatch_notify: Arc<tokio::sync::Notify>,
 
     /// Recently-published event IDs for local-echo deduplication, keyed by
     /// `(community_id, event_id)`. Events fanned out in-process are added here;
@@ -954,6 +958,10 @@ impl AppState {
             Arc::new(RedisNip98ReplayGuard::new(redis_pool.clone()));
         let admission_rate_limiter = Arc::new(RedisRateLimiter::new(redis_pool.clone()));
         let audit_enabled = audit_arc.is_some();
+        // The engine fires `application_event` triggers only on events this
+        // key signed. Wiring it here, where the key and the engine meet,
+        // means no construction path can leave it unset.
+        workflow_engine.set_relay_pubkey(relay_keypair.public_key());
         let state = Self {
             config: Arc::new(config),
             db,
@@ -974,6 +982,7 @@ impl AppState {
             workflow_engine,
             relay_keypair,
             plugins: Arc::new(beekeeper_plugin_host::PluginHost::default()),
+            workflow_dispatch_notify: Arc::new(tokio::sync::Notify::new()),
 
             local_event_ids: Arc::new(
                 moka::sync::Cache::builder()

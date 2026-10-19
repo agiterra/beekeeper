@@ -4304,6 +4304,26 @@ impl Db {
         workflow_dispatch::claim_dispatch_batch(&self.pool, limit, lease_until).await
     }
 
+    /// See [`workflow_dispatch::claim_dispatch_batch_in`].
+    pub async fn claim_dispatch_batch_in(
+        &self,
+        only_community: Option<CommunityId>,
+        limit: i64,
+        lease_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<workflow_dispatch::ClaimedDispatchBatch>> {
+        workflow_dispatch::claim_dispatch_batch_in(&self.pool, only_community, limit, lease_until)
+            .await
+    }
+
+    /// See [`workflow_dispatch::prune_dispatch_queue`].
+    pub async fn prune_dispatch_queue(
+        &self,
+        done_retention: std::time::Duration,
+        failed_retention: std::time::Duration,
+    ) -> Result<(u64, u64)> {
+        workflow_dispatch::prune_dispatch_queue(&self.pool, done_retention, failed_retention).await
+    }
+
     /// See [`workflow_dispatch::freeze_candidates`].
     pub async fn freeze_dispatch_candidates(
         &self,

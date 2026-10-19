@@ -649,6 +649,11 @@ async fn async_main() -> anyhow::Result<()> {
     let wf_cron = Arc::clone(&workflow_engine);
     tokio::spawn(async move { wf_cron.run().await });
 
+    // Durable workflow dispatch (kinds 50000, 46008). Unconditional: it is
+    // the only path that starts those workflows, so it must not sit behind
+    // an optional feature's configuration.
+    beekeeper_relay::workflow_dispatch_runtime::spawn(Arc::clone(&state));
+
     // Ephemeral channel reaper — archives channels whose TTL deadline has passed.
     // Runs every 60s, matching the workflow cron loop pattern. The SQL UPDATE
     // uses `archived_at IS NULL` as a guard, so concurrent runs from multiple

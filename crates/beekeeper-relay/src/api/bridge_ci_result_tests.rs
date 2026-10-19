@@ -604,25 +604,20 @@ async fn run_count(fixture: &WebhookCiFixture, workflow_id: Uuid) -> usize {
         .len()
 }
 
-/// EVIDENCE OF A DEFECT (plan finding F1), not a statement of intended
-/// behaviour. Step 5 of the GitHub-plugin slice flips the first assertion to
-/// "exactly one run" once the durable dispatch queue consumes kind:46008.
+/// Plan finding F1, fixed by the durable dispatch queue (it was evidence of
+/// the defect, asserting 0 runs, until the queue landed).
 ///
-/// A workflow whose trigger is `on: ci_result` for the very project, check
-/// and conclusion of a relay-recorded CI result is never started by the
-/// production path, for two independent reasons:
-/// - `dispatch_persistent_event` skips `on_event` for every workflow-execution
-///   kind, and 46008 is one (`handlers/event.rs`, `is_workflow_execution_kind`);
-/// - the result is stored with `channel_id = None` (`ci_result.rs`), and
-///   `on_event` returns before matching when an event has no channel.
-///
-/// The control at the end proves the definition really matches: handing the
-/// same stored event to `on_event` with the workflow's channel attached does
-/// start a run. So the zero above it is the dispatch path, not a fixture that
-/// could never have fired.
+/// A workflow whose trigger is `on: ci_result` for the project, check and
+/// conclusion of a relay-recorded CI result used never to start: 46008 is a
+/// workflow-execution kind that `dispatch_persistent_event` does not hand to
+/// `on_event`, and the result is stored without a channel. Now the result's
+/// insert enqueues it, and the dispatch worker finds the listener by project
+/// and starts it exactly once. The live post-commit path still does not
+/// start it (0 runs before the queue is drained), so there is one dispatch
+/// path, not two.
 #[tokio::test]
 #[ignore = "requires Postgres and Redis"]
-async fn ci_result_trigger_never_fires_through_production_dispatch_f1_evidence() {
+async fn ci_result_trigger_fires_exactly_once_through_the_dispatch_queue() {
     let fixture = fixture(None).await;
 
     let listener_id = Uuid::new_v4();
@@ -681,37 +676,37 @@ async fn ci_result_trigger_never_fires_through_production_dispatch_f1_evidence()
         "F1 reason 2: the CI result is stored without a channel"
     );
 
-    // `on_event` is spawned, so give any dispatch time to land before
-    // reading the absence. Two seconds is far above the time a local run
-    // insert takes; the control below uses the same budget to succeed.
+    // The live path spawns; give it time to (wrongly) land before reading
+    // the absence.
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
         run_count(&fixture, listener_id).await,
         0,
-        "F1: a matching `on: ci_result` workflow is not started by the production path"
+        "the live post-commit path must not start a ci_result workflow"
     );
 
-    // Control: the same event, with the listener's channel attached, does
-    // start the listener through the engine. Without this the zero above
-    // could be a definition that never matched.
-    let mut with_channel = stored[0].clone();
-    with_channel.channel_id = Some(fixture.channel_id);
-    fixture
+    // The durable queue does, exactly once, however often it is drained.
+    for _ in 0..2 {
+        while crate::workflow_dispatch_runtime::run_once(&fixture.state, Some(fixture.community))
+            .await
+            .expect("drain dispatch queue")
+            > 0
+        {}
+    }
+    assert_eq!(
+        run_count(&fixture, listener_id).await,
+        1,
+        "F1 fixed: a matching `on: ci_result` workflow starts exactly once"
+    );
+    let outcomes = fixture
         .state
-        .workflow_engine
-        .on_event(fixture.community, &with_channel)
+        .db
+        .list_dispatch_outcomes(fixture.community, stored[0].event.id.as_bytes())
         .await
-        .expect("engine accepts the CI result with a channel");
-    let fired = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let count = run_count(&fixture, listener_id).await;
-            if count > 0 {
-                break count;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("control: the listener matches the result when the engine is handed a channel");
-    assert_eq!(fired, 1);
+        .expect("dispatch outcomes");
+    let listener_outcome = outcomes
+        .iter()
+        .find(|o| o.workflow_id == listener_id)
+        .expect("the listener was a frozen candidate");
+    assert_eq!(listener_outcome.disposition, "admitted");
 }

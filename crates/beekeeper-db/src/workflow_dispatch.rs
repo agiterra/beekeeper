@@ -94,8 +94,9 @@ pub async fn claim_dispatch_batch(
     claim_dispatch_batch_in(pool, None, limit, lease_until).await
 }
 
-/// [`claim_dispatch_batch`], optionally restricted to one community.
-pub(crate) async fn claim_dispatch_batch_in(
+/// [`claim_dispatch_batch`], optionally restricted to one community (a
+/// targeted drain: tests, and an operator re-driving one tenant).
+pub async fn claim_dispatch_batch_in(
     pool: &PgPool,
     only_community: Option<CommunityId>,
     limit: i64,
@@ -548,6 +549,50 @@ pub async fn fail_exhausted_dispatches(pool: &PgPool) -> Result<u64> {
     }
     tx.commit().await?;
     Ok(exhausted.len() as u64)
+}
+
+/// Rows the retention sweep removes per call, so one sweep is a bounded
+/// statement even after a long outage.
+pub const PRUNE_BATCH: i64 = 5_000;
+/// `done` rows are kept this long after they finish (plan § 4).
+pub const DONE_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
+/// `failed` rows are kept this long after they finish (plan § 4; operator
+/// acknowledgement is slice 2).
+pub const FAILED_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
+
+/// Retention sweep: delete up to [`PRUNE_BATCH`] `done` rows finished
+/// before `done_retention` ago and up to [`PRUNE_BATCH`] `failed` rows
+/// finished before `failed_retention` ago (their outcomes cascade).
+/// `pending` and `claimed` rows are never pruned. Returns
+/// `(done_deleted, failed_deleted)`.
+pub async fn prune_dispatch_queue(
+    pool: &PgPool,
+    done_retention: Duration,
+    failed_retention: Duration,
+) -> Result<(u64, u64)> {
+    let mut deleted = [0_u64; 2];
+    for (slot, (state, retention)) in [("done", done_retention), ("failed", failed_retention)]
+        .into_iter()
+        .enumerate()
+    {
+        deleted[slot] = sqlx::query(
+            "DELETE FROM workflow_dispatch_queue q USING ( \
+                 SELECT community_id, event_id FROM workflow_dispatch_queue \
+                 WHERE state = $1 \
+                   AND finished_at < now() - make_interval(secs => $2) \
+                   AND community_write_allowed(community_id) \
+                 LIMIT $3) old \
+             WHERE q.community_id = old.community_id AND q.event_id = old.event_id \
+               AND q.state = $1",
+        )
+        .bind(state)
+        .bind(retention.as_secs_f64())
+        .bind(PRUNE_BATCH)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
+    Ok((deleted[0], deleted[1]))
 }
 
 /// Result of [`create_dispatch_run`].
@@ -1624,5 +1669,61 @@ mod db_tests {
                 .map(|w| w.id)
                 .collect();
         assert_eq!(found, vec![wanted]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn retention_prunes_only_old_finished_rows() {
+        let pool = setup_pool().await;
+        let community = make_community(&pool).await;
+        let workflow = make_workflow(&pool, community).await;
+        let ids = enqueue_events(&pool, community, 6).await;
+        // (state, finished days ago)
+        let plan: [(&str, Option<i32>); 6] = [
+            ("done", Some(8)),
+            ("done", Some(6)),
+            ("failed", Some(31)),
+            ("failed", Some(29)),
+            ("pending", None),
+            ("claimed", None),
+        ];
+        for (id, (state, days)) in ids.iter().zip(plan) {
+            sqlx::query(
+                "UPDATE workflow_dispatch_queue SET state = $3, \
+                 finished_at = CASE WHEN $4::int IS NULL THEN NULL \
+                                    ELSE now() - make_interval(days => $4::int) END, \
+                 created_at = now() - interval '60 days' \
+                 WHERE community_id = $1 AND event_id = $2",
+            )
+            .bind(community.as_uuid())
+            .bind(id)
+            .bind(state)
+            .bind(days)
+            .execute(&pool)
+            .await
+            .expect("age row");
+        }
+        sqlx::query(
+            "INSERT INTO workflow_dispatch_outcomes (community_id, event_id, workflow_id) \
+             VALUES ($1, $2, $3)",
+        )
+        .bind(community.as_uuid())
+        .bind(&ids[0])
+        .bind(workflow)
+        .execute(&pool)
+        .await
+        .expect("outcome on a prunable row");
+        prune_dispatch_queue(&pool, DONE_RETENTION, FAILED_RETENTION)
+            .await
+            .expect("prune");
+        let mut present = Vec::new();
+        for id in &ids {
+            present.push(queue_state(&pool, community, id).await.is_some());
+        }
+        assert_eq!(present, vec![false, true, false, true, true, true]);
+        assert!(list_dispatch_outcomes(&pool, community, &ids[0])
+            .await
+            .expect("outcomes")
+            .is_empty());
     }
 }

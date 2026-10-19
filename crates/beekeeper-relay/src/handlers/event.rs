@@ -965,11 +965,16 @@ async fn dispatch_persistent_event_inner(
             .iter()
             .any(|t| t.as_slice().first().map(|s| s.as_str()) == Some("buzz:workflow"));
 
-    if !beekeeper_core::kind::is_workflow_execution_kind(kind_u32)
-        && !beekeeper_core::kind::is_command_kind(kind_u32)
-        && !is_relay_workflow_msg
-        && kind_u32 != KIND_GIFT_WRAP
-    {
+    // Kinds the durable dispatch queue owns (50000, 46008) are enqueued by
+    // the events trigger in the insert's own transaction; here they only wake
+    // the queue worker. Starting them from this spawn as well would be a
+    // second, crash-unsafe dispatch path.
+    let queue_dispatched = beekeeper_db::workflow_dispatch::DISPATCH_KINDS.contains(&kind_u32);
+    if queue_dispatched {
+        state.workflow_dispatch_notify.notify_one();
+    }
+
+    if spawns_live_workflow_trigger(kind_u32, is_relay_workflow_msg) {
         let workflow_engine = Arc::clone(&state.workflow_engine);
         let workflow_event = stored_event.clone();
         let trigger_kind = kind_u32.to_string();
@@ -1726,6 +1731,19 @@ fn single_tag_content<'a>(event: &'a Event, tag_name: &str) -> Result<&'a str, S
     Ok(value)
 }
 
+/// Whether the post-commit fan-out hands this event to
+/// [`WorkflowEngine::on_event`](beekeeper_workflow::WorkflowEngine::on_event).
+/// Never for workflow-execution kinds, commands, relay-signed workflow
+/// messages, gift wraps, or the kinds the durable dispatch queue owns
+/// (`DISPATCH_KINDS`): those have exactly one dispatch path, the queue.
+fn spawns_live_workflow_trigger(kind_u32: u32, is_relay_workflow_msg: bool) -> bool {
+    !beekeeper_core::kind::is_workflow_execution_kind(kind_u32)
+        && !beekeeper_core::kind::is_command_kind(kind_u32)
+        && !is_relay_workflow_msg
+        && kind_u32 != KIND_GIFT_WRAP
+        && !beekeeper_db::workflow_dispatch::DISPATCH_KINDS.contains(&kind_u32)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1744,6 +1762,29 @@ mod tests {
     use tokio::sync::{mpsc, Mutex, RwLock};
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
+
+    /// The durable queue is the only dispatch path for 50000 and 46008: the
+    /// post-commit fan-out must not hand them to `on_event` (which also
+    /// refuses 50000 itself; each layer is checked on its own).
+    #[test]
+    fn queue_dispatched_kinds_never_take_the_live_workflow_path() {
+        use beekeeper_core::kind::{KIND_APPLICATION_EVENT, KIND_CI_RESULT};
+        assert!(!super::spawns_live_workflow_trigger(
+            KIND_APPLICATION_EVENT,
+            false
+        ));
+        assert!(!super::spawns_live_workflow_trigger(KIND_CI_RESULT, false));
+        // Control: an ordinary channel message still takes it, and a
+        // relay-signed workflow message still does not.
+        assert!(super::spawns_live_workflow_trigger(
+            KIND_STREAM_MESSAGE,
+            false
+        ));
+        assert!(!super::spawns_live_workflow_trigger(
+            KIND_STREAM_MESSAGE,
+            true
+        ));
+    }
 
     #[test]
     fn fanout_event_frame_matches_legacy_format_byte_for_byte() {
