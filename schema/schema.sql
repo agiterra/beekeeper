@@ -413,6 +413,13 @@ CREATE TABLE workflow_runs (
     -- refuse to resume, because nothing can say what their operator approved.
     definition_hash     BYTEA,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- The source event of a run created by the durable dispatch queue
+    -- (keep in sync with migrations/0047). NULL for every other run. The
+    -- partial unique index below makes queue admission exactly-once per
+    -- (workflow, event) without constraining trigger_event_id, which
+    -- ref_updated legitimately repeats across one run per changed ref.
+    dispatch_event_id   BYTEA
+        CHECK (dispatch_event_id IS NULL OR length(dispatch_event_id) = 32),
     PRIMARY KEY (community_id, id),
     FOREIGN KEY (community_id, workflow_id)
         REFERENCES workflows (community_id, id) ON DELETE CASCADE
@@ -420,6 +427,9 @@ CREATE TABLE workflow_runs (
 
 CREATE INDEX idx_workflow_runs_workflow ON workflow_runs (community_id, workflow_id);
 CREATE INDEX idx_workflow_runs_status ON workflow_runs (community_id, status);
+CREATE UNIQUE INDEX workflow_runs_dispatch_once
+    ON workflow_runs (community_id, workflow_id, dispatch_event_id)
+    WHERE dispatch_event_id IS NOT NULL;
 
 -- ── Workflow approvals ────────────────────────────────────────────────────────
 -- token-hash lookup scoped: approval token grants cannot act on another
@@ -1144,6 +1154,70 @@ $$;
 CREATE TRIGGER events_enqueue_push_match
 AFTER INSERT ON events
 FOR EACH ROW EXECUTE FUNCTION enqueue_push_match_job();
+
+-- Durable workflow dispatch (keep in sync with migrations/0047). The trigger
+-- runs in the event insert transaction, so every committed kind:50000
+-- application event and kind:46008 CI result has a crash-safe dispatch job and
+-- a rolled-back insert never does. Keep the kind list identical to
+-- beekeeper_db::workflow_dispatch::DISPATCH_KINDS. Rows are never deleted on
+-- exhaustion or a missing source event; they end 'failed' with a reason.
+CREATE TABLE workflow_dispatch_queue (
+    community_id      UUID NOT NULL REFERENCES communities(id),
+    event_id          BYTEA NOT NULL CHECK (length(event_id) = 32),
+    kind              INTEGER NOT NULL,
+    state             TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (state IN ('pending', 'claimed', 'done', 'failed')),
+    attempts          INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    lease_until       TIMESTAMPTZ,
+    claim_id          UUID,
+    candidates_frozen BOOLEAN NOT NULL DEFAULT false,
+    last_error        TEXT,
+    terminal_reason   TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at       TIMESTAMPTZ,
+    PRIMARY KEY (community_id, event_id)
+);
+CREATE INDEX workflow_dispatch_queue_due
+    ON workflow_dispatch_queue (next_attempt_at, created_at) WHERE state = 'pending';
+CREATE INDEX workflow_dispatch_queue_recovery
+    ON workflow_dispatch_queue (lease_until) WHERE state = 'claimed';
+CREATE INDEX workflow_dispatch_queue_failed
+    ON workflow_dispatch_queue (community_id, finished_at) WHERE state = 'failed';
+
+CREATE TABLE workflow_dispatch_outcomes (
+    community_id UUID NOT NULL REFERENCES communities(id),
+    event_id     BYTEA NOT NULL,
+    workflow_id  UUID NOT NULL,
+    disposition  TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (disposition IN ('pending', 'admitted', 'skipped', 'failed')),
+    run_id       UUID,
+    reason       TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (community_id, event_id, workflow_id),
+    FOREIGN KEY (community_id, event_id)
+        REFERENCES workflow_dispatch_queue (community_id, event_id) ON DELETE CASCADE,
+    CHECK ((disposition = 'admitted') = (run_id IS NOT NULL))
+);
+CREATE INDEX workflow_dispatch_outcomes_workflow
+    ON workflow_dispatch_outcomes (community_id, workflow_id, updated_at);
+
+CREATE FUNCTION enqueue_workflow_dispatch() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.kind IN (50000, 46008) THEN
+        INSERT INTO workflow_dispatch_queue (community_id, event_id, kind)
+        VALUES (NEW.community_id, NEW.id, NEW.kind)
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER events_enqueue_workflow_dispatch
+AFTER INSERT ON events
+FOR EACH ROW EXECUTE FUNCTION enqueue_workflow_dispatch();
 
 -- Channel TTL refresh (keep in sync with migrations/0024). Runs deferred, in
 -- the transaction that makes a channel-scoped event durable, so a TTL
