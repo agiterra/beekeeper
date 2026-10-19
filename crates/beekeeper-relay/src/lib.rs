@@ -60,6 +60,8 @@ pub mod webhook_plugin;
 /// Webhook secret generation and constant-time comparison.
 pub mod webhook_secret;
 pub(crate) mod workflow_ci_result;
+/// Durable workflow dispatch worker for kinds 50000 and 46008.
+pub mod workflow_dispatch_runtime;
 /// Workflow action sink — relay-side implementation of [`beekeeper_workflow::ActionSink`].
 pub mod workflow_sink;
 

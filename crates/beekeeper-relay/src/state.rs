@@ -668,6 +668,10 @@ pub struct AppState {
     pub workflow_engine: Arc<WorkflowEngine>,
     /// Relay signing keypair — used to sign system messages (kind 40099).
     pub relay_keypair: nostr::Keys,
+    /// Wakes the durable workflow dispatch worker
+    /// (`workflow_dispatch_runtime`) as soon as a dispatchable event commits,
+    /// instead of at its next poll.
+    pub workflow_dispatch_notify: Arc<tokio::sync::Notify>,
 
     /// Recently-published event IDs for local-echo deduplication, keyed by
     /// `(community_id, event_id)`. Events fanned out in-process are added here;
@@ -951,6 +955,10 @@ impl AppState {
             Arc::new(RedisNip98ReplayGuard::new(redis_pool.clone()));
         let admission_rate_limiter = Arc::new(RedisRateLimiter::new(redis_pool.clone()));
         let audit_enabled = audit_arc.is_some();
+        // The engine fires `application_event` triggers only on events this
+        // key signed. Wiring it here, where the key and the engine meet,
+        // means no construction path can leave it unset.
+        workflow_engine.set_relay_pubkey(relay_keypair.public_key());
         let state = Self {
             config: Arc::new(config),
             db,
@@ -970,6 +978,7 @@ impl AppState {
             media_upload_semaphore: Arc::new(Semaphore::new(media_max_concurrent_uploads)),
             workflow_engine,
             relay_keypair,
+            workflow_dispatch_notify: Arc::new(tokio::sync::Notify::new()),
 
             local_event_ids: Arc::new(
                 moka::sync::Cache::builder()

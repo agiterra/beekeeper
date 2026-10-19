@@ -186,6 +186,13 @@ impl WorkflowEngine {
         }
     }
 
+    /// Run permits free right now. The dispatch worker claims at most this
+    /// many events, so it does not admit runs the executor would refuse with
+    /// `CapacityExceeded`.
+    pub fn available_run_permits(&self) -> usize {
+        self.run_semaphore.available_permits()
+    }
+
     /// Tell the engine the relay's signing key. Called once at startup, next
     /// to [`set_action_sink`](Self::set_action_sink). A second call with a
     /// different key is refused and logged; the first key stays.
@@ -2561,6 +2568,86 @@ steps:
             1,
             "no new run may be created after the owner lost membership"
         );
+    }
+
+    /// `on_event` never starts an `application_event` workflow, even for a
+    /// relay-signed, plugin-sourced kind:50000 that the trigger would accept:
+    /// the durable queue is the only dispatch path for 50000. (The relay's
+    /// fan-out also withholds 50000 from `on_event`; this checks the engine's
+    /// own guard on its own.)
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn on_event_ignores_application_events() {
+        let db = setup_db().await;
+        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+        let def_json = serde_json::json!({
+            "name": "app-event",
+            "trigger": {"on": "application_event", "type": "com.github.push", "installation": "any"},
+            "steps": [{"id": "s1", "action": "send_message", "text": "hi"}],
+            "enabled": true,
+        })
+        .to_string();
+        let workflow_id = db
+            .create_workflow(
+                community,
+                Some(channel_id),
+                &creator,
+                "app-event",
+                &def_json,
+                &[0u8; 32],
+                None,
+            )
+            .await
+            .expect("create workflow");
+        let relay = nostr::Keys::generate();
+        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+        engine.set_relay_pubkey(relay.public_key());
+        let event = nostr::EventBuilder::new(
+            nostr::Kind::Custom(beekeeper_core::kind::KIND_APPLICATION_EVENT as u16),
+            r#"{"schema":1,"data":{}}"#,
+        )
+        .tags([
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("h"),
+            nostr::Tag::parse([
+                "L",
+                beekeeper_core::application_event::APPLICATION_EVENT_NAMESPACE,
+            ])
+            .expect("L"),
+            nostr::Tag::parse([
+                "l",
+                "com.github.push",
+                beekeeper_core::application_event::APPLICATION_EVENT_NAMESPACE,
+            ])
+            .expect("l"),
+            nostr::Tag::parse(["beekeeper:source", "github", &Uuid::new_v4().to_string()])
+                .expect("source"),
+        ])
+        .sign_with_keys(&relay)
+        .expect("sign");
+        // Control: the trigger itself accepts this event, so a zero below is
+        // the guard, not a non-matching fixture.
+        application_trigger::check_event(
+            &event,
+            Some(&relay.public_key()),
+            "com.github.push",
+            "any",
+        )
+        .expect("the trigger accepts the event");
+        engine
+            .on_event(
+                community,
+                &beekeeper_core::StoredEvent::new(event, Some(channel_id)),
+            )
+            .await
+            .expect("on_event");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let runs = db
+            .list_workflow_runs(community, workflow_id, 10)
+            .await
+            .expect("list runs");
+        assert!(runs.is_empty(), "on_event must not start a 50000 workflow");
     }
 
     /// Exfiltration-capable definitions (call_webhook) require the owner to
