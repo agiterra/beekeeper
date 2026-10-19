@@ -71,6 +71,8 @@ pub mod usage;
 pub mod user;
 /// Workflow, run, and approval persistence.
 pub mod workflow;
+/// Durable workflow dispatch queue for kind:50000 and kind:46008 (migration 0047).
+pub mod workflow_dispatch;
 
 pub use ci_result::CiResultInsertOutcome;
 pub use error::{DbError, Result};

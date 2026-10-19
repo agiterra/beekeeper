@@ -629,7 +629,17 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 46);
+        assert_eq!(migrations.len(), 47);
+        // Durable workflow dispatch is its own additive migration; the
+        // exactly-once key must stay partial (ref_updated repeats
+        // trigger_event_id across one run per changed ref).
+        assert_eq!(migrations[46].version, 47);
+        let dispatch = normalize_sql(migrations[46].sql.as_ref());
+        assert!(dispatch.contains("create trigger events_enqueue_workflow_dispatch"));
+        assert!(dispatch.contains(
+            "on workflow_runs (community_id, workflow_id, dispatch_event_id) \
+             where dispatch_event_id is not null"
+        ));
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]

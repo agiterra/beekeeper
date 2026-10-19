@@ -86,6 +86,8 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "users",
     "workflow_approvals",
     "workflow_autorun_grants",
+    "workflow_dispatch_outcomes",
+    "workflow_dispatch_queue",
     "workflow_host_steps",
     "workflow_runs",
     "workflows",
@@ -96,6 +98,10 @@ pub const PURGE_SCOPED_TABLES: &[&str] = &[
     "workflow_approvals",
     "workflow_autorun_grants",
     "workflow_host_steps",
+    // Dispatch outcomes are an ON DELETE CASCADE child of the queue; listed
+    // first so the queue's unit is idempotent either way.
+    "workflow_dispatch_outcomes",
+    "workflow_dispatch_queue",
     "scheduled_workflow_fires",
     "workflow_runs",
     "push_wake_outbox",
