@@ -72,73 +72,11 @@ fn validate_custom_emoji_tags(event: &Event) -> Result<(), IngestError> {
     Ok(())
 }
 
-const APPLICATION_EVENT_NAMESPACE: &str = "org.agiterra.application-event";
-
+/// Ingest's view of the shared kind:50000 envelope rules
+/// (`beekeeper_core::application_event`), with ingest's rejection prefix.
 fn validate_application_event(event: &Event) -> Result<(), IngestError> {
-    let invalid =
-        |reason: &str| IngestError::Rejected(format!("invalid: application event {reason}"));
-    let mut h = 0;
-    let mut namespace = 0;
-    let mut label = 0;
-    for tag in event.tags.iter() {
-        let parts = tag.as_slice();
-        match parts.first().map(String::as_str) {
-            Some("h") => {
-                h += 1;
-                if parts.len() != 2 || uuid::Uuid::parse_str(&parts[1]).is_err() {
-                    return Err(invalid("requires one valid channel h tag"));
-                }
-            }
-            Some("L") => {
-                namespace += 1;
-                if parts.len() != 2 || parts[1] != APPLICATION_EVENT_NAMESPACE {
-                    return Err(invalid("has an invalid namespace tag"));
-                }
-            }
-            Some("l") => {
-                label += 1;
-                if parts.len() != 3
-                    || parts[2] != APPLICATION_EVENT_NAMESPACE
-                    || !valid_application_event_type(&parts[1])
-                {
-                    return Err(invalid("has an invalid type tag"));
-                }
-            }
-            _ => {}
-        }
-    }
-    if h != 1 || namespace != 1 || label != 1 {
-        return Err(invalid("requires exactly one h, L, and l tag"));
-    }
-    let content: serde_json::Value =
-        serde_json::from_str(&event.content).map_err(|_| invalid("content must be JSON"))?;
-    if content
-        .get("schema")
-        .and_then(serde_json::Value::as_u64)
-        .is_none_or(|v| v == 0)
-        || !content
-            .get("data")
-            .is_some_and(serde_json::Value::is_object)
-    {
-        return Err(invalid(
-            "content requires an integer schema and object data",
-        ));
-    }
-    Ok(())
-}
-
-fn valid_application_event_type(value: &str) -> bool {
-    value.len() <= 128
-        && value.split('.').count() >= 3
-        && value.split('.').all(|part| {
-            !part.is_empty()
-                && part.len() <= 63
-                && !part.starts_with('-')
-                && !part.ends_with('-')
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        })
+    beekeeper_core::application_event::validate_application_event(event)
+        .map_err(|reason| IngestError::Rejected(format!("invalid: application event {reason}")))
 }
 
 fn validate_reaction_emoji(event: &Event, emoji: &str) -> Result<(), IngestError> {
@@ -5368,6 +5306,7 @@ mod tests {
 
     use super::*;
     use beekeeper_conformance::{TraceStep, Tracer};
+    use beekeeper_core::application_event::APPLICATION_EVENT_NAMESPACE;
     use beekeeper_core::kind::{
         KIND_CANVAS, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_LONG_FORM,
         KIND_MANAGED_AGENT, KIND_PERSONA, KIND_PRESENCE_UPDATE, KIND_STREAM_MESSAGE,
