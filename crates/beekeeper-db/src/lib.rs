@@ -69,6 +69,8 @@ pub mod thread;
 pub mod usage;
 /// User profile persistence.
 pub mod user;
+/// Vendor webhook installations and authenticated deliveries (migration 0048).
+pub mod vendor_ingress;
 /// Workflow, run, and approval persistence.
 pub mod workflow;
 /// Durable workflow dispatch queue for kind:50000 and kind:46008 (migration 0047).
@@ -4293,6 +4295,70 @@ impl Db {
         project_ref: &str,
     ) -> Result<Vec<workflow::WorkflowRecord>> {
         workflow::list_enabled_ci_result_workflows(&self.pool, community_id, project_ref).await
+    }
+
+    /// See [`vendor_ingress::create_installation`].
+    pub async fn create_vendor_installation(
+        &self,
+        community_id: CommunityId,
+        new: &vendor_ingress::NewInstallation<'_>,
+    ) -> Result<vendor_ingress::VendorInstallation> {
+        vendor_ingress::create_installation(&self.pool, community_id, new).await
+    }
+
+    /// See [`vendor_ingress::get_installation`].
+    pub async fn get_vendor_installation(
+        &self,
+        community_id: CommunityId,
+        id: Uuid,
+    ) -> Result<Option<vendor_ingress::VendorInstallation>> {
+        vendor_ingress::get_installation(&self.pool, community_id, id).await
+    }
+
+    /// See [`vendor_ingress::record_delivery_committed`]. `Ok` means durable.
+    pub async fn record_vendor_delivery(
+        &self,
+        installation: &vendor_ingress::VendorInstallation,
+        delivery: &vendor_ingress::Delivery<'_>,
+    ) -> Result<vendor_ingress::DeliveryOutcome> {
+        vendor_ingress::record_delivery_committed(&self.pool, installation, delivery).await
+    }
+
+    /// See [`vendor_ingress::record_unauthenticated_rejection`].
+    pub async fn record_vendor_unauthenticated_rejection(
+        &self,
+        community_id: CommunityId,
+        installation_id: Uuid,
+        reason: &str,
+    ) -> Result<()> {
+        vendor_ingress::record_unauthenticated_rejection(
+            &self.pool,
+            community_id,
+            installation_id,
+            reason,
+        )
+        .await
+    }
+
+    /// See [`vendor_ingress::record_installation_error`].
+    pub async fn record_vendor_installation_error(
+        &self,
+        community_id: CommunityId,
+        installation_id: Uuid,
+        error: &str,
+    ) -> Result<()> {
+        vendor_ingress::record_installation_error(&self.pool, community_id, installation_id, error)
+            .await
+    }
+
+    /// See [`vendor_ingress::get_delivery`].
+    pub async fn get_vendor_delivery(
+        &self,
+        community_id: CommunityId,
+        installation_id: Uuid,
+        delivery_id: &str,
+    ) -> Result<Option<vendor_ingress::VendorDelivery>> {
+        vendor_ingress::get_delivery(&self.pool, community_id, installation_id, delivery_id).await
     }
 
     /// See [`workflow_dispatch::claim_dispatch_batch`].

@@ -1219,6 +1219,58 @@ CREATE TRIGGER events_enqueue_workflow_dispatch
 AFTER INSERT ON events
 FOR EACH ROW EXECUTE FUNCTION enqueue_workflow_dispatch();
 
+-- Vendor webhook ingress (keep in sync with migrations/0048). Installations
+-- hold the per-installation webhook secret (plaintext, ASK-201) and bounded
+-- counters for unauthenticated rejections. vendor_deliveries holds only
+-- AUTHENTICATED deliveries (F3: an unauthenticated request must never occupy
+-- a delivery id); an accepted row is written in its kind:50000 event's
+-- transaction, and event_id is set iff accepted.
+CREATE TABLE vendor_installations (
+    community_id         UUID NOT NULL REFERENCES communities(id),
+    id                   UUID NOT NULL DEFAULT gen_random_uuid(),
+    plugin               TEXT NOT NULL CHECK (length(plugin) BETWEEN 1 AND 64),
+    channel_id           UUID NOT NULL,
+    created_by           BYTEA NOT NULL,
+    secret               BYTEA NOT NULL CHECK (length(secret) >= 16),
+    settings             JSONB NOT NULL DEFAULT '{}'::jsonb
+                             CHECK (jsonb_typeof(settings) = 'object'),
+    enabled              BOOLEAN NOT NULL DEFAULT true,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    disabled_at          TIMESTAMPTZ,
+    rejected_count       BIGINT NOT NULL DEFAULT 0 CHECK (rejected_count >= 0),
+    last_rejected_at     TIMESTAMPTZ,
+    last_rejected_reason TEXT,
+    error_count          BIGINT NOT NULL DEFAULT 0 CHECK (error_count >= 0),
+    last_error_at        TIMESTAMPTZ,
+    last_error           TEXT,
+    last_accepted_at     TIMESTAMPTZ,
+    PRIMARY KEY (community_id, id),
+    FOREIGN KEY (community_id, channel_id) REFERENCES channels (community_id, id),
+    FOREIGN KEY (community_id, created_by) REFERENCES users (community_id, pubkey)
+);
+CREATE INDEX vendor_installations_channel
+    ON vendor_installations (community_id, channel_id);
+
+CREATE TABLE vendor_deliveries (
+    community_id    UUID NOT NULL REFERENCES communities(id),
+    installation_id UUID NOT NULL,
+    delivery_id     TEXT NOT NULL CHECK (length(delivery_id) BETWEEN 1 AND 200),
+    disposition     TEXT NOT NULL CHECK (disposition IN ('accepted', 'ignored', 'rejected')),
+    vendor_event    TEXT NOT NULL CHECK (length(vendor_event) <= 200),
+    reason          TEXT,
+    event_id        BYTEA CHECK (event_id IS NULL OR length(event_id) = 32),
+    plugin_digest   BYTEA NOT NULL CHECK (length(plugin_digest) = 32),
+    received_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (community_id, installation_id, delivery_id),
+    FOREIGN KEY (community_id, installation_id)
+        REFERENCES vendor_installations (community_id, id),
+    CHECK ((disposition = 'accepted') = (event_id IS NOT NULL))
+);
+CREATE INDEX vendor_deliveries_received
+    ON vendor_deliveries (community_id, installation_id, received_at);
+CREATE INDEX vendor_deliveries_retention
+    ON vendor_deliveries (received_at);
+
 -- Channel TTL refresh (keep in sync with migrations/0024). Runs deferred, in
 -- the transaction that makes a channel-scoped event durable, so a TTL
 -- transition committed while ingest was in flight is never missed. The

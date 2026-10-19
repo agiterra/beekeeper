@@ -84,6 +84,8 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "subscriptions",
     "thread_metadata",
     "users",
+    "vendor_deliveries",
+    "vendor_installations",
     "workflow_approvals",
     "workflow_autorun_grants",
     "workflow_dispatch_outcomes",
@@ -113,6 +115,10 @@ pub const PURGE_SCOPED_TABLES: &[&str] = &[
     "thread_metadata",
     "moderation_actions",
     "workflows",
+    // Deliveries reference their installation; installations reference
+    // channels and users, which are purged later.
+    "vendor_deliveries",
+    "vendor_installations",
     "event_mentions",
     "reactions",
     "push_match_queue",
