@@ -127,7 +127,7 @@ pub const PROJECT_COORDINATE_TABLES: &[&str] = &[
 
 /// Live tables that reach this purge's rows through `channel_id`.
 ///
-/// Ten of the sixteen [`purge_units`] find their rows this way, not through a
+/// Twelve of the eighteen [`purge_units`] find their rows this way, not through a
 /// coordinate column: the project's tombstoned `channels` are the anchor, and
 /// `project_ref` lives on the `channels` row that is deleted **last**. A
 /// migration that adds a `channel_id` table without adding a purge unit for it
@@ -149,6 +149,7 @@ pub const PROJECT_CHANNEL_SCOPED_TABLES: &[&str] = &[
     "moderation_actions",
     "moderation_reports",
     "thread_metadata",
+    "vendor_installations",
     "workflows",
 ];
 
@@ -281,6 +282,22 @@ fn purge_units() -> Vec<PurgeUnit> {
         PurgeUnit {
             table: "workflows",
             target: "workflows",
+            predicate: "community_id = $1 AND channel_id = ANY($2)",
+            binds: UnitBinds::Channels,
+        },
+        // A vendor installation is bound to a channel; its delivery log goes
+        // with it (deliveries reference the installation).
+        PurgeUnit {
+            table: "vendor_deliveries",
+            target: "vendor_deliveries",
+            predicate: "community_id = $1 AND installation_id IN \
+                 (SELECT i.id FROM vendor_installations i \
+                   WHERE i.community_id = $1 AND i.channel_id = ANY($2))",
+            binds: UnitBinds::Channels,
+        },
+        PurgeUnit {
+            table: "vendor_installations",
+            target: "vendor_installations",
             predicate: "community_id = $1 AND channel_id = ANY($2)",
             binds: UnitBinds::Channels,
         },
@@ -859,7 +876,7 @@ async fn unit_delete(
 ///
 /// * a `project_ref`/`coordinate` column — [`PROJECT_COORDINATE_TABLES`];
 /// * a `channel_id` column — [`PROJECT_CHANNEL_SCOPED_TABLES`], which is how
-///   ten of the sixteen [`purge_units`] actually reach their rows.
+///   twelve of the eighteen [`purge_units`] actually reach their rows.
 ///
 /// Either kind of new table is a new place project rows can hide, so either
 /// blocks the purge until the matching manifest is intentionally updated.
@@ -1539,7 +1556,7 @@ mod tests {
         );
     }
 
-    /// Ten of the sixteen units reach rows through `channel_id`, so that table
+    /// Twelve of the eighteen units reach rows through `channel_id`, so that table
     /// class needs the same pin-and-compare treatment as the coordinate one.
     #[test]
     fn the_pinned_channel_scoped_catalog_is_sorted_unique_and_fully_purged() {
@@ -1567,9 +1584,11 @@ mod tests {
             if unit.binds != UnitBinds::Channels {
                 continue;
             }
-            // Workflow children reach their rows through workflow_id, not a
-            // channel_id column of their own.
-            if unit.predicate.contains("workflow_id IN") {
+            // Workflow and installation children reach their rows through
+            // their parent's id, not a channel_id column of their own.
+            if unit.predicate.contains("workflow_id IN")
+                || unit.predicate.contains("installation_id IN")
+            {
                 continue;
             }
             assert!(

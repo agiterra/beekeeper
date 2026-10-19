@@ -629,7 +629,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 47);
+        assert_eq!(migrations.len(), 48);
         // Durable workflow dispatch is its own additive migration; the
         // exactly-once key must stay partial (ref_updated repeats
         // trigger_event_id across one run per changed ref).
@@ -640,6 +640,16 @@ mod tests {
             "on workflow_runs (community_id, workflow_id, dispatch_event_id) \
              where dispatch_event_id is not null"
         ));
+        // Vendor ingress: the delivery key admits only authenticated rows
+        // (F3), so it is a plain key on a table unauthenticated requests
+        // never write to, and an accepted row always names its event.
+        assert_eq!(migrations[47].version, 48);
+        let vendor = normalize_sql(migrations[47].sql.as_ref());
+        assert!(vendor.contains("create table vendor_installations"));
+        assert!(vendor.contains("create table vendor_deliveries"));
+        assert!(vendor.contains("check ((disposition = 'accepted') = (event_id is not null))"));
+        assert!(vendor.contains("select attach_community_write_fence('vendor_deliveries')"));
+        assert!(vendor.contains("select attach_community_write_fence('vendor_installations')"));
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
