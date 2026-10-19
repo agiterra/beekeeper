@@ -25,6 +25,7 @@ struct WebhookCiFixture {
     community: beekeeper_core::CommunityId,
     host: String,
     owner: nostr::Keys,
+    channel_id: Uuid,
     workflow_id: Uuid,
     secret: String,
     result: CiResult,
@@ -204,6 +205,7 @@ async fn fixture(request_host: Option<String>) -> WebhookCiFixture {
         community,
         host,
         owner,
+        channel_id: channel.id,
         workflow_id,
         secret,
         result,
@@ -589,4 +591,127 @@ async fn ci_result_real_bee_wait_receives_live_then_replays_stored_result() {
 
     server.abort();
     let _ = server.await;
+}
+
+/// Count the runs one workflow has, by any path.
+async fn run_count(fixture: &WebhookCiFixture, workflow_id: Uuid) -> usize {
+    fixture
+        .state
+        .db
+        .list_workflow_runs(fixture.community, workflow_id, 100)
+        .await
+        .expect("list workflow runs")
+        .len()
+}
+
+/// EVIDENCE OF A DEFECT (plan finding F1), not a statement of intended
+/// behaviour. Step 5 of the GitHub-plugin slice flips the first assertion to
+/// "exactly one run" once the durable dispatch queue consumes kind:46008.
+///
+/// A workflow whose trigger is `on: ci_result` for the very project, check
+/// and conclusion of a relay-recorded CI result is never started by the
+/// production path, for two independent reasons:
+/// - `dispatch_persistent_event` skips `on_event` for every workflow-execution
+///   kind, and 46008 is one (`handlers/event.rs`, `is_workflow_execution_kind`);
+/// - the result is stored with `channel_id = None` (`ci_result.rs`), and
+///   `on_event` returns before matching when an event has no channel.
+///
+/// The control at the end proves the definition really matches: handing the
+/// same stored event to `on_event` with the workflow's channel attached does
+/// start a run. So the zero above it is the dispatch path, not a fixture that
+/// could never have fired.
+#[tokio::test]
+#[ignore = "requires Postgres and Redis"]
+async fn ci_result_trigger_never_fires_through_production_dispatch_f1_evidence() {
+    let fixture = fixture(None).await;
+
+    let listener_id = Uuid::new_v4();
+    let listener = beekeeper_workflow::WorkflowDef {
+        name: "Fires on the recorded CI result".into(),
+        description: None,
+        project: Some(fixture.result.identity.project.clone()),
+        trigger: beekeeper_workflow::TriggerDef::CiResult {
+            check: fixture.result.identity.check.clone(),
+            conclusion: vec![fixture.result.conclusion],
+        },
+        steps: vec![beekeeper_workflow::Step {
+            id: "note".into(),
+            name: None,
+            if_expr: None,
+            timeout_secs: None,
+            action: beekeeper_workflow::ActionDef::SendMessage {
+                text: "ci_result fired".into(),
+                channel: None,
+            },
+        }],
+        enabled: true,
+    };
+    listener
+        .validate()
+        .expect("the listener is a valid ci_result definition");
+    fixture
+        .state
+        .db
+        .upsert_workflow(
+            fixture.community,
+            listener_id,
+            Some(fixture.channel_id),
+            &fixture.owner.public_key().to_bytes(),
+            &listener.name,
+            &serde_json::to_string(&listener).expect("serialize listener"),
+            &[11_u8; 32],
+            Some(&fixture.result.identity.project),
+        )
+        .await
+        .expect("store ci_result listener workflow");
+
+    // The production producer: authorize, sign, store atomically, dispatch.
+    let event_id = crate::workflow_ci_result::record_ci_result(
+        &Arc::downgrade(&fixture.state),
+        fixture.community,
+        &fixture.result,
+    )
+    .await
+    .expect("the producer records the CI result");
+    let stored = stored_results(&fixture).await;
+    assert_eq!(stored.len(), 1, "exactly one CI result is durable");
+    assert_eq!(stored[0].event.id.to_hex(), event_id);
+    assert_eq!(
+        stored[0].channel_id, None,
+        "F1 reason 2: the CI result is stored without a channel"
+    );
+
+    // `on_event` is spawned, so give any dispatch time to land before
+    // reading the absence. Two seconds is far above the time a local run
+    // insert takes; the control below uses the same budget to succeed.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        run_count(&fixture, listener_id).await,
+        0,
+        "F1: a matching `on: ci_result` workflow is not started by the production path"
+    );
+
+    // Control: the same event, with the listener's channel attached, does
+    // start the listener through the engine. Without this the zero above
+    // could be a definition that never matched.
+    let mut with_channel = stored[0].clone();
+    with_channel.channel_id = Some(fixture.channel_id);
+    fixture
+        .state
+        .workflow_engine
+        .on_event(fixture.community, &with_channel)
+        .await
+        .expect("engine accepts the CI result with a channel");
+    let fired = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let count = run_count(&fixture, listener_id).await;
+            if count > 0 {
+                break count;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("control: the listener matches the result when the engine is handed a channel");
+    assert_eq!(fired, 1);
 }
