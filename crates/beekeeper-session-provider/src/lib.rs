@@ -12260,6 +12260,9 @@ mod tests {
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
         published: Arc<Mutex<Vec<Event>>>,
         reject_next_publish: Arc<AtomicBool>,
+        /// Answer every `/query` with `403`, which the client does not retry:
+        /// a relay that is up but cannot be read.
+        refuse_queries: Arc<AtomicBool>,
         /// Events this fake withholds until it has already served one
         /// authority-chain read.
         ///
@@ -12289,6 +12292,12 @@ mod tests {
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
         published: Arc<Mutex<Vec<Event>>>,
         reject_next_publish: Arc<AtomicBool>,
+        /// Refuse every read until cleared. A test that needs an unreadable
+        /// relay sets this rather than shutting one down: a shut-down fake
+        /// frees its port, the client retries a refused connection for
+        /// seconds, and a test running in parallel that binds the same port
+        /// answers the read (main pipeline 346).
+        refuse_queries: Arc<AtomicBool>,
         /// Events revealed only from the second authority-chain read onwards.
         deferred: Arc<Mutex<Vec<Event>>>,
         /// The identity this fake advertises, so a test can serve one, take it
@@ -12530,7 +12539,10 @@ mod tests {
     async fn test_relay_query(
         State(state): State<TestRelayState>,
         Json(query): Json<serde_json::Value>,
-    ) -> Json<serde_json::Value> {
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        if state.refuse_queries.load(Ordering::SeqCst) {
+            return Err(axum::http::StatusCode::FORBIDDEN);
+        }
         state
             .queries
             .lock()
@@ -12589,7 +12601,9 @@ mod tests {
         {
             matched.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         }
-        Json(serde_json::to_value(matched).expect("serialize events"))
+        Ok(Json(
+            serde_json::to_value(matched).expect("serialize events"),
+        ))
     }
 
     async fn spawn_test_relay(
@@ -12651,6 +12665,7 @@ mod tests {
         let queries = Arc::new(Mutex::new(Vec::new()));
         let published = Arc::new(Mutex::new(Vec::new()));
         let reject_next_publish = Arc::new(AtomicBool::new(false));
+        let refuse_queries = Arc::new(AtomicBool::new(false));
         // A real relay publishes an identity, so the fake does too by default:
         // a provider that witnesses it can verify receipts, and one that never
         // asks stays exactly as unverified as it was. Tests that sign receipts
@@ -12664,6 +12679,7 @@ mod tests {
             queries: queries.clone(),
             published: published.clone(),
             reject_next_publish: reject_next_publish.clone(),
+            refuse_queries: refuse_queries.clone(),
             deferred: deferred.clone(),
             chain_reads,
             relay_self: relay_self.clone(),
@@ -12690,6 +12706,7 @@ mod tests {
                 queries,
                 published,
                 reject_next_publish,
+                refuse_queries,
                 deferred,
                 relay_self,
                 url: relay_url.clone(),
@@ -14359,6 +14376,7 @@ mod tests {
                 queries: Arc::new(Mutex::new(Vec::new())),
                 published: Arc::new(Mutex::new(Vec::new())),
                 reject_next_publish: Arc::new(AtomicBool::new(false)),
+                refuse_queries: Arc::new(AtomicBool::new(false)),
                 deferred: Arc::default(),
                 chain_reads: Arc::default(),
                 relay_self: Arc::new(Mutex::new(None)),

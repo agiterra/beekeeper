@@ -1409,12 +1409,14 @@ async fn an_unreadable_chain_refuses_and_holds_metadata_until_it_can_be_read() {
     let target = record.target(&provider.config.instance_id);
     provider.state.insert_session(record).expect("insert");
 
-    // A relay that goes away before recovery reads it.
-    let (dead, _control, dead_server) =
+    // A relay recovery cannot read. Up and refusing, not shut down: see
+    // `RecordingTestRelay::refuse_queries` for why a dead one is a flake.
+    let (unreadable, unreadable_control, unreadable_server) =
         spawn_recording_test_relay(&provider_keys, Vec::new()).await;
-    provider.set_rest_client(dead.rest_client());
-    dead.shutdown().await;
-    dead_server.abort();
+    unreadable_control
+        .refuse_queries
+        .store(true, Ordering::SeqCst);
+    provider.set_rest_client(unreadable.rest_client());
 
     provider.recover().await.expect("recover survives it");
 
@@ -1459,6 +1461,8 @@ async fn an_unreadable_chain_refuses_and_holds_metadata_until_it_can_be_read() {
         claim_receipt(&relay_keys, channel_id, &grant),
         claim_receipt(&relay_keys, channel_id, &takeover),
     ];
+    unreadable.shutdown().await;
+    unreadable_server.abort();
     let (relay, _control, server) = spawn_recording_test_relay(&provider_keys, events).await;
     provider.set_rest_client(relay.rest_client());
 
