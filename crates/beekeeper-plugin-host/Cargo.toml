@@ -21,6 +21,6 @@ toml       = "1.0"
 tracing    = { workspace = true }
 
 [dev-dependencies]
-beekeeper-nip-td = { path = "../beekeeper-nip-td" }
+beekeeper-nip-td = { workspace = true }
 tempfile = "3"
 wat = "1"

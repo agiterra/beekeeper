@@ -155,6 +155,8 @@ schemars = { version = "1", default-features = false }
 beekeeper-core = { path = "crates/beekeeper-core" }
 beekeeper-conformance = { path = "crates/beekeeper-conformance" }
 beekeeper-db = { path = "crates/beekeeper-db" }
+beekeeper-nip-td = { path = "crates/beekeeper-nip-td" }
+beekeeper-plugin-host = { path = "crates/beekeeper-plugin-host" }
 beekeeper-deletion = { path = "crates/beekeeper-deletion" }
 beekeeper-auth = { path = "crates/beekeeper-auth" }
 beekeeper-pubsub = { path = "crates/beekeeper-pubsub" }

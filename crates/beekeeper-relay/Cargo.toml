@@ -18,6 +18,7 @@ path = "src/main.rs"
 beekeeper-core = { workspace = true }
 beekeeper-conformance = { workspace = true }
 beekeeper-db = { workspace = true }
+beekeeper-plugin-host = { workspace = true }
 beekeeper-datastore-tracing = { workspace = true }
 beekeeper-deletion = { workspace = true }
 beekeeper-auth = { workspace = true }

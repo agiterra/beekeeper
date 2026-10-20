@@ -1188,6 +1188,7 @@ dependencies = [
  "beekeeper-db",
  "beekeeper-deletion",
  "beekeeper-media",
+ "beekeeper-plugin-host",
  "beekeeper-pubsub",
  "beekeeper-relay-mesh",
  "beekeeper-sdk",

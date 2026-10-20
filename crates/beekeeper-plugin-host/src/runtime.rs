@@ -431,7 +431,13 @@ impl PluginHost {
     /// Load every registry entry or fail naming the first that cannot load.
     pub fn load(registry: &Registry, validators: DraftValidators) -> Result<Self, LoadError> {
         let engine = engine()?;
-        let ticker_stop = spawn_ticker(&engine);
+        // No plugins, no ticker thread: an embedder that registered nothing
+        // pays for nothing but an idle engine.
+        let ticker_stop = if registry.entries.is_empty() {
+            Arc::new(AtomicBool::new(true))
+        } else {
+            spawn_ticker(&engine)
+        };
         let mut host = Self {
             engine,
             plugins: BTreeMap::new(),

@@ -92,6 +92,9 @@ fn build_router_core(state: Arc<AppState>, webhook_router: Router) -> Router {
         .route("/events", post(api::bridge::submit_event))
         .route("/query", post(api::bridge::query_events))
         .route("/count", post(api::bridge::count_events))
+        // Plugin operations (NIP-98 auth; docs/plugins.md)
+        .route("/plugins", get(api::plugins::list_plugins))
+        .route("/plugins/{name}/invoke", post(api::plugins::invoke_plugin))
         .route(
             "/workflows/{workflow_id}/runs",
             get(api::workflows::workflow_runs),

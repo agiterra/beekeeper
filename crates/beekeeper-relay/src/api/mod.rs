@@ -9,6 +9,7 @@ pub mod media;
 pub mod mesh_demo;
 pub mod nip05;
 pub mod operator;
+pub mod plugins;
 pub mod system_health;
 pub mod workflows;
 

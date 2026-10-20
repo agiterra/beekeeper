@@ -668,6 +668,9 @@ pub struct AppState {
     pub workflow_engine: Arc<WorkflowEngine>,
     /// Relay signing keypair — used to sign system messages (kind 40099).
     pub relay_keypair: nostr::Keys,
+    /// Loaded plugins (`api::plugins`). Empty until `main` installs the
+    /// registry `BEEKEEPER_PLUGINS_FILE` names; plugins never see this state.
+    pub plugins: Arc<beekeeper_plugin_host::PluginHost>,
 
     /// Recently-published event IDs for local-echo deduplication, keyed by
     /// `(community_id, event_id)`. Events fanned out in-process are added here;
@@ -970,6 +973,10 @@ impl AppState {
             media_upload_semaphore: Arc::new(Semaphore::new(media_max_concurrent_uploads)),
             workflow_engine,
             relay_keypair,
+            plugins: Arc::new(
+                beekeeper_plugin_host::PluginHost::empty()
+                    .expect("an empty plugin registry always loads"),
+            ),
 
             local_event_ids: Arc::new(
                 moka::sync::Cache::builder()

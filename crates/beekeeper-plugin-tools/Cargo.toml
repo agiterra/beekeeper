@@ -16,8 +16,8 @@ name = "beekeeper-plugin-run"
 path = "src/bin/run.rs"
 
 [dependencies]
-beekeeper-plugin-host = { path = "../beekeeper-plugin-host" }
-beekeeper-nip-td      = { path = "../beekeeper-nip-td" }
+beekeeper-plugin-host = { workspace = true }
+beekeeper-nip-td      = { workspace = true }
 wit-component = "0.262"
 serde      = { workspace = true }
 serde_json = { workspace = true }

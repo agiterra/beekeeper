@@ -466,6 +466,13 @@ async fn async_main() -> anyhow::Result<()> {
         relay_keypair,
         media_storage,
     );
+    let mut app_state = app_state;
+    // Fatal when a named registry cannot load, like the mesh: an operator who
+    // registered a plugin gets it or is told why not.
+    app_state.plugins = Arc::new(
+        beekeeper_relay::api::plugins::load_plugins_from_env()
+            .map_err(|e| anyhow::anyhow!("plugin registry: {e}"))?,
+    );
     let state = Arc::new(app_state);
 
     // Machine health for `GET /health/system`: a sampling thread, started
