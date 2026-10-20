@@ -51,7 +51,7 @@ record() { echo "$*" | tee -a "${RESULTS}"; }
 RELAY_PID=""
 cleanup() {
   local status=$?
-  if [[ "${KEEP}" == true && ${status} -eq 0 ]]; then
+  if [[ "${KEEP}" == true ]]; then
     log "relay left running (pid ${RELAY_PID}); stop it with: kill ${RELAY_PID}; then drop ${DB_NAME}"
     return
   fi
@@ -121,7 +121,7 @@ run() {
   local code=$?
   set -e
   local summary
-  summary="$(grep -E '^test result' "${OUT}/${name}.log" | tail -1)"
+  summary="$(grep -E '^test result|CHECK PASSED|passed|failed' "${OUT}/${name}.log" | tail -1 || true)"
   record "${name}: exit ${code} ${summary}"
   [[ ${code} -eq 0 ]] || status=1
 }

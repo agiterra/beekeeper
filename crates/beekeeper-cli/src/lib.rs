@@ -418,6 +418,13 @@ enum Cmd {
     /// Read and edit a project's shared to-do lists (NIP-TD, kind 44248)
     #[command(subcommand)]
     Todos(TodosCmd),
+    /// A project's issues, through the relay's Planning plugin
+    /// (beekeeper.planning/1); writes are signed as you
+    #[command(subcommand)]
+    Planning(PlanningCmd),
+    /// List the plugins this relay runs, or invoke one operation
+    #[command(subcommand)]
+    Plugins(PluginsCmd),
     /// Read a project's agents repository, draft changes to it, and commit them
     /// (NIP-AD, kind 44250)
     #[command(subcommand, name = "agents-repo")]
@@ -5445,6 +5452,159 @@ pub enum PlansCmd {
     },
 }
 
+/// `bee plugins` — the plugins this relay runs (`docs/plugins.md`).
+#[derive(Subcommand)]
+pub enum PluginsCmd {
+    /// What the relay runs: name, version, sha256, APIs and operations
+    List,
+    /// Invoke one operation on one project; `--publish` signs and publishes
+    /// the drafts a write returns, as you
+    Invoke {
+        /// Registered plugin name
+        plugin: String,
+        /// Operation name (see `bee plugins list`)
+        operation: String,
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Operation input as JSON (default `{}`)
+        #[arg(long)]
+        input: Option<String>,
+        /// Sign and publish the returned drafts
+        #[arg(long)]
+        publish: bool,
+    },
+}
+
+/// `bee planning` — a project's issues through the relay's Planning plugin.
+///
+/// Every subcommand takes `--project` like `bee todos`, and `--provider` to
+/// name the plugin when the relay runs more than one implementation of
+/// `beekeeper.planning/1`. Issues are named by key, `<containerId>/<issueId>`,
+/// as `bee planning read` prints them.
+#[derive(Subcommand)]
+pub enum PlanningCmd {
+    /// The relay's Planning providers
+    Providers {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+    },
+    /// Every issue and container
+    Read {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// One issue's history, one entry per signed change
+    Activity {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        /// Issue key `<containerId>/<issueId>`
+        #[arg(long)]
+        issue: String,
+    },
+    /// Create an issue (in the default list when --container is absent)
+    Create {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// Status id (native: triage, backlog, todo, in_progress, done, canceled)
+        #[arg(long, default_value = "todo")]
+        status: String,
+        /// Priority id (native: urgent, high, medium, low, none)
+        #[arg(long, default_value = "none")]
+        priority: String,
+        /// 64-hex pubkey, or `none`
+        #[arg(long)]
+        assignee: Option<String>,
+        /// Container id (a native list id)
+        #[arg(long)]
+        container: Option<String>,
+    },
+    /// Rename an issue
+    Title {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        issue: String,
+        #[arg(long)]
+        title: String,
+    },
+    /// Set or clear an issue's description
+    Describe {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        issue: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Move an issue to a status
+    Status {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        issue: String,
+        #[arg(long)]
+        status: String,
+    },
+    /// Set an issue's priority
+    Priority {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        issue: String,
+        #[arg(long)]
+        priority: String,
+    },
+    /// Assign an issue (`none` unassigns)
+    Assign {
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        issue: String,
+        #[arg(long)]
+        assignee: String,
+    },
+}
+
+impl PlanningCmd {
+    /// The `--provider` a subcommand was given, if any.
+    pub fn provider(&self) -> Option<String> {
+        match self {
+            Self::Providers { .. } => None,
+            Self::Read { provider, .. }
+            | Self::Activity { provider, .. }
+            | Self::Create { provider, .. }
+            | Self::Title { provider, .. }
+            | Self::Describe { provider, .. }
+            | Self::Status { provider, .. }
+            | Self::Priority { provider, .. }
+            | Self::Assign { provider, .. } => provider.clone(),
+        }
+    }
+}
+
 /// `bee todos` — a project's shared to-do lists.
 ///
 /// Every subcommand takes `--project`, resolved exactly as `bee pulse` does
@@ -6107,6 +6267,8 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
         Cmd::Todos(sub) => commands::todos::dispatch(sub, &client, &cli.format).await,
+        Cmd::Planning(sub) => commands::planning::dispatch(sub, &client).await,
+        Cmd::Plugins(sub) => commands::plugins::dispatch(sub, &client).await,
         Cmd::AgentsRepo(sub) => commands::agents_repo::dispatch(sub, &client, &cli.format).await,
         Cmd::Plans(sub) => commands::agents_repo::dispatch_plans(sub, &client, &cli.format).await,
         Cmd::Docs(sub) => commands::agents_repo::dispatch_docs(sub, &client, &cli.format).await,
@@ -6788,7 +6950,9 @@ mod tests {
             "packs",
             "patches",
             "pins",
+            "planning",
             "plans",
+            "plugins",
             "pr",
             "preview",
             "projects",

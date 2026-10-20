@@ -878,6 +878,38 @@ impl BeekeeperClient {
         .await
     }
 
+    /// POST JSON to a NIP-98 route that changes nothing on the relay — a
+    /// plugin invocation returns a result and unsigned drafts, never a stored
+    /// fact — so, like [`Self::get_authed`], a lost reply is safely retried
+    /// with a fresh token.
+    pub async fn post_authed(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<String, CliError> {
+        let url = format!("{}{path}", self.relay_url);
+        let bytes = serde_json::to_vec(body).map_err(|e| CliError::Other(e.to_string()))?;
+        self.with_retry_body(|| {
+            let url = url.clone();
+            let bytes = bytes.clone();
+            async move {
+                let auth = sign_nip98(&self.keys, "POST", &url, Some(&bytes))?;
+                let resp = self
+                    .with_auth_tag(
+                        self.http
+                            .post(&url)
+                            .header("Authorization", auth)
+                            .header("Content-Type", "application/json")
+                            .body(bytes),
+                    )
+                    .send()
+                    .await?;
+                self.handle_response(resp).await
+            }
+        })
+        .await
+    }
+
     /// Submit an existing authenticated bootstrap operation once.
     /// A missing reply is unknown, never automatically retried.
     pub(crate) async fn post_bootstrap(
