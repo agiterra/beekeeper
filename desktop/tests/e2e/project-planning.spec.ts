@@ -553,10 +553,10 @@ test("a status the relay refuses is reported as a partial change, and the issue 
   await page.getByTestId("planning-status-option-canceled").click();
   const toast = page
     .locator("[data-sonner-toast]")
-    .filter({ hasText: "Only part of the change saved" });
+    .filter({ hasText: "Only part of the change was confirmed" });
   await expect(toast).toBeVisible({ timeout: 10_000 });
-  await expect(toast).toContainText("now reads “done” for everyone");
-  await expect(toast).toContainText("refused the status “canceled”");
+  await expect(toast).toContainText("the item is marked “done”");
+  await expect(toast).toContainText("did not confirm the status “canceled”");
   await expect(toast).toContainText("unknown project todo op");
   // Done, not Canceled and not a pretend rollback: item.done was accepted.
   await expect(page.getByTestId("planning-detail-status")).toContainText(
@@ -589,7 +589,7 @@ test("a field refused at create is reported once; the issue exists once and the 
     .locator("[data-sonner-toast]")
     .filter({ hasText: "but its priority" });
   await expect(toast).toBeVisible({ timeout: 10_000 });
-  await expect(toast).toContainText("did not save");
+  await expect(toast).toContainText("was not confirmed");
   const rows = page
     .getByTestId("planning-list")
     .locator("li", { hasText: "Created even though its priority is refused" });

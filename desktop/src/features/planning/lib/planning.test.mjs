@@ -144,7 +144,7 @@ test("a status write is always item.done with the status's closed-ness, then ite
   ]);
 });
 
-test("a refused item.status is a partial write that says what the item now reads", async () => {
+test("an unconfirmed item.status is a partial write that says how the item is marked", async () => {
   const L = "1".repeat(32);
   const I = "a".repeat(32);
   const sent = [];
@@ -160,8 +160,8 @@ test("a refused item.status is a partial write that says what the item now reads
       assert.ok(error instanceof TodoPartialWriteError);
       assert.deepEqual(error.saved, ["item.done"]);
       assert.equal(error.refused, "item.status");
-      assert.match(error.message, /now reads “done” for everyone/);
-      assert.match(error.message, /refused the status “canceled”/);
+      assert.match(error.message, /the item is marked “done”/);
+      assert.match(error.message, /did not confirm the status “canceled”/);
       assert.match(error.message, /unknown project todo op/);
       return true;
     },
@@ -171,7 +171,7 @@ test("a refused item.status is a partial write that says what the item now reads
   // Reopening into a started status: the saved half reads Todo.
   await assert.rejects(
     publishStatusOps(refuseStatus, L, I, "in_progress"),
-    /now reads “todo”/,
+    /is marked “todo”/,
   );
 
   // The first op refused: nothing saved, the relay's own error, no second op.

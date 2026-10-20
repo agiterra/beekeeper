@@ -287,7 +287,9 @@ export function PlanningScreen({
         toast.warning(
           `Created “${input.title}”, but ${result.failed
             .map((f) => `its ${f.field} (${f.message})`)
-            .join(", ")} did not save.`,
+            .join(
+              ", ",
+            )} ${result.failed.length === 1 ? "was" : "were"} not confirmed.`,
         );
       } else {
         toast.success(`Created “${input.title}”.`);

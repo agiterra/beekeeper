@@ -5595,8 +5595,8 @@ pub enum TodosCmd {
     /// listed among the completed. Publishes two events, `item.done` then
     /// `item.status`, so every client — including ones that predate
     /// `item.status` — agrees on whether the item is done. They are not
-    /// atomic: if the second is refused the command prints a `"partial"`
-    /// result naming what the item now reads and exits 4
+    /// atomic: if the second is not confirmed the command prints a
+    /// `"partial"` result saying how the item is marked and exits 4
     Status {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
         #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]

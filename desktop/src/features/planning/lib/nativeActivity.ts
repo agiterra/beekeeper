@@ -40,7 +40,7 @@ function describe(
     case "item.status":
       return { summary: `set status to ${nativeStatus(op.status).label}` };
     case "item.done":
-      return { summary: op.done ? "marked it done" : "reopened it" };
+      return { summary: op.done ? "marked it done" : "marked it not done" };
     case "item.priority":
       return {
         summary:

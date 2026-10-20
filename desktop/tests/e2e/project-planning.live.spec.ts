@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { promisify } from "node:util";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
 import { installRelayBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const exec = promisify(execFile);
@@ -197,6 +199,45 @@ test.describe("project planning (live relay)", () => {
       await expect(
         page.getByTestId(`planning-row-status-${issueId}`),
       ).toHaveAccessibleName(/In Progress/, { timeout: 30_000 });
+    });
+
+    await test.step("the CLI cancels it; the UI and a collaborator's fold both read Canceled", async () => {
+      const out = JSON.parse(
+        await runCli(
+          [
+            "todos",
+            "status",
+            "--project",
+            seed.coordinate,
+            issueId,
+            "canceled",
+          ],
+          TEST_IDENTITIES.tyler.privateKey,
+        ),
+      ) as { ops?: { op: string }[] };
+      // Two events, item.done then item.status, both accepted.
+      expect(out.ops?.map((op) => op.op)).toEqual(["item.done", "item.status"]);
+      await expect
+        .poll(
+          async () => {
+            const shown = await showAsAlice(seed);
+            return (
+              shown.completed.find((item) => item.id === issueId)?.status ??
+              null
+            );
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("canceled");
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(
+        page.getByTestId(`planning-row-status-${issueId}`),
+      ).toHaveAccessibleName(/Canceled/, { timeout: 60_000 });
+      mkdirSync("test-results/planning", { recursive: true });
+      await waitForAnimations(page);
+      await page.screenshot({
+        path: "test-results/planning/11-live-canceled.png",
+      });
     });
   });
 });

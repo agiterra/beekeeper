@@ -211,9 +211,10 @@ function reasonOf(error: unknown): string {
 }
 
 /**
- * Publish {@link statusOps} through `publish`. A refusal of the first op
- * saved nothing and is rethrown as is; a refusal of the second leaves the
- * item reading `done` or `todo` from the saved `item.done`, and says so.
+ * Publish {@link statusOps} through `publish`. A failure of the first op
+ * confirmed nothing and is rethrown as is. A failure of the second — a
+ * refusal, or a timeout after which the op may still land — leaves the item
+ * marked done or open by the confirmed `item.done`, and says only that.
  */
 export async function publishStatusOps(
   publish: (op: TodoOpContent) => Promise<unknown>,
@@ -231,7 +232,7 @@ export async function publishStatusOps(
   } catch (error) {
     const reads = isClosedTodoStatus(status) ? "done" : "todo";
     throw new TodoPartialWriteError(
-      `Only part of the change saved: the item now reads “${reads}” for everyone, but the relay refused the status “${status}”`,
+      `Only part of the change was confirmed: the item is marked “${reads}”, but the relay did not confirm the status “${status}”`,
       ["item.done"],
       "item.status",
       reasonOf(error),

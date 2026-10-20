@@ -267,16 +267,17 @@ fn status_ops(item_id: &str, status: TodoStatus) -> [ProjectTodoOpValue; 2] {
 }
 
 /// The outcome to print when `item.done` was accepted and `item.status`
-/// refused: the two are separate events with no transaction, so the item
-/// reads what `item.done` saved, and the command says exactly that.
+/// was not confirmed (refused, or lost in transit and possibly landed): the
+/// two are separate events with no transaction, so the item is marked done
+/// or open by the confirmed `item.done`, and the command says only that.
 fn partial_status_report(saved: &Value, status: TodoStatus, error: &CliError) -> Value {
     let reads = if status.is_closed() { "done" } else { "todo" };
     json!({
         "status": "partial",
         "requested": status.as_str(),
-        "reads": reads,
+        "marked": reads,
         "saved": [saved],
-        "refused": { "op": "item.status", "error": error.to_string() },
+        "unconfirmed": { "op": "item.status", "error": error.to_string() },
     })
 }
 
@@ -520,7 +521,7 @@ pub async fn dispatch(
                 )
                 .await?,
             ];
-            // The item exists from here on. A refused follow-up must not
+            // The item exists from here on. An unconfirmed follow-up must not
             // surface as a plain failure: a caller retrying `add` would mint
             // a second item. Report what saved and what did not instead.
             let follow_ups = [
@@ -533,7 +534,7 @@ pub async fn dispatch(
                     due: Some(due),
                 }),
             ];
-            let mut refused = Vec::new();
+            let mut unconfirmed = Vec::new();
             for value in follow_ups.into_iter().flatten() {
                 let op = ProjectTodoOp {
                     list_id: list_id.clone(),
@@ -543,23 +544,25 @@ pub async fn dispatch(
                 let kind = op.kind().as_str();
                 match publish(&mut snap, client, &op).await {
                     Ok(response) => published.push(response),
-                    Err(error) => refused.push(json!({ "op": kind, "error": error.to_string() })),
+                    Err(error) => {
+                        unconfirmed.push(json!({ "op": kind, "error": error.to_string() }))
+                    }
                 }
             }
-            if !refused.is_empty() {
+            if !unconfirmed.is_empty() {
                 println!(
                     "{}",
                     json!({
                         "status": "partial",
                         "item_id": item_id,
                         "saved": published,
-                        "refused": refused,
+                        "unconfirmed": unconfirmed,
                     })
                 );
                 return Err(CliError::Other(format!(
-                    "item {item_id} was added, but {} follow-up op(s) were refused; set them on \
-                     that item rather than re-running add, which would add a second item",
-                    refused.len()
+                    "item {item_id} was added, but {} follow-up op(s) were not confirmed; set \
+                     them on that item rather than re-running add, which would add a second item",
+                    unconfirmed.len()
                 )));
             }
             let first = published.first().cloned().unwrap_or(Value::Null);
@@ -653,8 +656,8 @@ pub async fn dispatch(
                 Err(error) => {
                     println!("{}", partial_status_report(&saved, status, &error));
                     Err(CliError::Other(format!(
-                        "only part of the status change saved: item.done was accepted, so the \
-                         item reads {:?} for everyone, but item.status {:?} was refused: {error}",
+                        "only part of the status change was confirmed: item.done was accepted, \
+                         so the item is marked {:?}, but item.status {:?} was not: {error}",
                         if status.is_closed() { "done" } else { "todo" },
                         status.as_str()
                     )))
@@ -942,15 +945,15 @@ mod tests {
         let report = partial_status_report(&saved, TodoStatus::Canceled, &error);
         assert_eq!(report["status"], "partial");
         assert_eq!(report["requested"], "canceled");
-        assert_eq!(report["reads"], "done");
+        assert_eq!(report["marked"], "done");
         assert_eq!(report["saved"][0]["op"], "item.done");
-        assert_eq!(report["refused"]["op"], "item.status");
-        assert!(report["refused"]["error"]
+        assert_eq!(report["unconfirmed"]["op"], "item.status");
+        assert!(report["unconfirmed"]["error"]
             .as_str()
             .unwrap()
             .contains("unknown project todo op"));
         let reopened = partial_status_report(&saved, TodoStatus::InProgress, &error);
-        assert_eq!(reopened["reads"], "todo");
+        assert_eq!(reopened["marked"], "todo");
     }
 
     #[test]
