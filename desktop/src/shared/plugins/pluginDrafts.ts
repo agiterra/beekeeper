@@ -9,6 +9,10 @@
  *   generic line), so a half-applied change is reported as half-applied.
  * - `skip-group` — the group is reported failed, the rest of it skipped, and
  *   the next group still runs.
+ * - **unconfirmed** — whatever the policy, a publish that timed out or lost
+ *   its connection may still land. The run stops there and says so
+ *   (`unconfirmed`, `notAttempted`) instead of reporting a refusal a caller
+ *   would retry, which could mint a duplicate.
  *
  * Nothing is signed until every draft has been checked: a kind this client
  * signs for plugins, and exactly one `a` tag naming the project the call
@@ -32,7 +36,22 @@ export type DraftEffects = {
 export type DraftRun = {
   published: { eventId: string; group: string }[];
   failed: { group: string; message: string }[];
+  /** A draft whose fate is unknown; the run stopped at it. */
+  unconfirmed: { group: string; message: string } | null;
+  /** Groups after an unconfirmed draft that were never attempted. */
+  notAttempted: string[];
 };
+
+/**
+ * Thrown by a `publish` effect when the relay did not answer in time or the
+ * connection dropped mid-publish: the event may or may not have landed.
+ */
+export class DraftUnconfirmedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DraftUnconfirmedError";
+  }
+}
 
 /** A write that landed in part; its message says what landed. */
 export class PluginPartialWriteError extends Error {
@@ -87,6 +106,26 @@ export async function executePluginDrafts(
       savedGroups.add(draft.group);
     } catch (error) {
       const reason = reasonOf(error);
+      if (error instanceof DraftUnconfirmedError) {
+        const index = drafts.indexOf(draft);
+        const notAttempted = [
+          ...new Set(
+            drafts
+              .slice(index + 1)
+              .map((d) => d.group)
+              .filter((g) => g !== draft.group && !skipped.has(g)),
+          ),
+        ];
+        return {
+          published,
+          failed,
+          unconfirmed: {
+            group: draft.group,
+            message: `${reason} It may still land; refresh before trying again.`,
+          },
+          notAttempted,
+        };
+      }
       if (draft.ifRefused === "skip-group") {
         failed.push({
           group: draft.group,
@@ -108,5 +147,5 @@ export async function executePluginDrafts(
       );
     }
   }
-  return { published, failed };
+  return { published, failed, unconfirmed: null, notAttempted: [] };
 }

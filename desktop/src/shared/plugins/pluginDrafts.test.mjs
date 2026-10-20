@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DraftUnconfirmedError,
   PluginPartialWriteError,
   executePluginDrafts,
 } from "./pluginDrafts.ts";
@@ -50,6 +51,7 @@ test("every draft lands in order and each is reported with its group", async () 
     { eventId: "id-2", group: "status" },
   ]);
   assert.deepEqual(run.failed, []);
+  assert.equal(run.unconfirmed, null);
 });
 
 test("an abort refusal before anything landed is the relay's own error, nothing more", async () => {
@@ -152,4 +154,31 @@ test("nothing is signed when any draft is a foreign kind or outside the project"
     );
     assert.equal(r.seen.length, 0, "not even the good draft before it");
   }
+});
+
+test("a publish that may still land stops the run and is reported as unconfirmed, never refused", async () => {
+  const seen = [];
+  const effects = {
+    publish: async (d) => {
+      seen.push(d.content);
+      if (d.content === "add")
+        throw new DraftUnconfirmedError("no answer in time");
+      return { id: `id-${seen.length}` };
+    },
+  };
+  const run = await executePluginDrafts(
+    [
+      draft("issue", "abort", { content: "list" }),
+      draft("issue", "abort", { content: "add" }),
+      draft("status", "skip-group", { content: "done" }),
+      draft("priority", "skip-group", { content: "priority" }),
+    ],
+    PROJECT,
+    effects,
+  );
+  assert.deepEqual(seen, ["list", "add"], "nothing after the uncertain draft");
+  assert.equal(run.unconfirmed?.group, "issue");
+  assert.match(run.unconfirmed?.message ?? "", /may still land/);
+  assert.deepEqual(run.notAttempted, ["status", "priority"]);
+  assert.deepEqual(run.failed, []);
 });

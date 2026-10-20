@@ -54,19 +54,26 @@ impl StoredRecord {
 pub enum SourceError {
     #[error("{0}")]
     Unavailable(String),
+    /// The plugin's request was malformed (a cursor this source never issued).
+    #[error("{0}")]
+    Invalid(String),
 }
 
 /// The embedder's scoped read: records of `kinds` in the scope the embedder
 /// authorized, visible to the caller it authenticated, newest first, at most
-/// `limit`. The host has already checked `kinds` against the plugin's grants
-/// and charged the call to the invocation's budget before calling this.
+/// `limit`, starting at `cursor` (a previous page's `next`) or else at
+/// `until`. Returns the records and the next page's cursor, `None` only when
+/// no older readable record can exist. The host has already checked `kinds`
+/// against the plugin's grants and charged the call to the invocation's
+/// budget before calling this.
 pub trait RecordSource: Send + Sync {
     fn query(
         &self,
         kinds: &[u32],
         until: Option<u64>,
+        cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<StoredRecord>, bool), SourceError>;
+    ) -> Result<(Vec<StoredRecord>, Option<String>), SourceError>;
 }
 
 /// What an operation acts on.

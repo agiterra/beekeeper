@@ -114,10 +114,15 @@ pub struct Context {
     pub entropy: [u8; 32],
 }
 
-/// The host's scoped read: newest first, at most `limit`.
+/// The host's scoped read: newest first, at most `limit`, continuing from a
+/// previous page's cursor. Returns the next cursor while older records may
+/// exist.
 pub trait Records {
-    fn page(&mut self, until: Option<u64>, limit: u32)
-        -> Result<(Vec<TodoFoldEvent>, bool), Error>;
+    fn page(
+        &mut self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(Vec<TodoFoldEvent>, Option<String>), Error>;
 }
 
 /// Mirrors the WIT `if-refused`.
@@ -310,25 +315,21 @@ fn target_key(list_id: &str, item_id: Option<&str>) -> String {
 fn load(ctx: &Context, records: &mut dyn Records) -> Result<Snapshot, Error> {
     let mut events = Vec::new();
     let mut seen = HashSet::new();
-    let mut until = None;
+    let mut cursor: Option<String> = None;
     let mut truncated = false;
     for page in 0..MAX_PAGES {
-        let (batch, more) = records.page(until, PAGE)?;
-        let oldest = batch.iter().map(|e| e.created_at).min();
-        let full = batch.len() as u32 >= PAGE;
+        let (batch, next) = records.page(cursor.as_deref(), PAGE)?;
         for event in batch {
             if seen.insert(event.id.clone()) {
                 events.push(event);
             }
         }
-        if !(more || full) {
-            break;
+        match next {
+            None => break,
+            // Older history exists and this read will not fetch it: say so.
+            Some(_) if page + 1 == MAX_PAGES => truncated = true,
+            Some(next) => cursor = Some(next),
         }
-        if page + 1 == MAX_PAGES {
-            truncated = true;
-            break;
-        }
-        until = oldest;
     }
     let mut legacy = 0usize;
     let mut latest = BTreeMap::new();

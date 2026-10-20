@@ -11,8 +11,8 @@ use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 use crate::registry::{PluginEntry, Registry};
 use crate::{
     sha256_hex, Access, Draft, IfRefused, Invocation, InvokeError, InvokeOutcome, LoadError,
-    LogLevel, Manifest, OpEffect, OpError, OperationDecl, RecordSource, Scope, StoredRecord,
-    TrapKind,
+    LogLevel, Manifest, OpEffect, OpError, OperationDecl, RecordSource, Scope, SourceError,
+    StoredRecord, TrapKind,
 };
 
 mod bindings {
@@ -35,6 +35,8 @@ const ALLOWED_IMPORTS: &[&str] = &[
 
 /// The largest page one `records.query` may ask for.
 pub const MAX_QUERY_PAGE: u32 = 1_000;
+/// The longest cursor a plugin may hand back.
+const MAX_CURSOR_BYTES: usize = 256;
 /// How often the epoch ticks; deadlines are whole ticks.
 const EPOCH_TICK: Duration = Duration::from_millis(10);
 /// Fuel for `describe()`, which should do almost nothing.
@@ -102,23 +104,48 @@ impl Drop for PluginHost {
     }
 }
 
+/// Limits one call's resources. `memory_bytes` is the total across every
+/// linear memory the call's instances hold — a component can contain several
+/// core instances, each with its own memory — not a per-memory cap.
 struct CallLimiter {
     memory_bytes: usize,
+    /// Bytes of linear memory granted so far in this call.
+    granted: usize,
     denied: bool,
 }
+
+/// Core instances, memories and tables one call may create. A packed Rust
+/// component needs a handful of each; these are ceilings, not targets.
+const MAX_INSTANCES: usize = 32;
+const MAX_MEMORIES: usize = 8;
+const MAX_TABLES: usize = 32;
 
 impl ResourceLimiter for CallLimiter {
     fn memory_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        if desired > self.memory_bytes {
+        let total = self.granted.saturating_sub(current).saturating_add(desired);
+        if total > self.memory_bytes {
             self.denied = true;
             return Ok(false);
         }
+        self.granted = total;
         Ok(true)
+    }
+
+    fn instances(&self) -> usize {
+        MAX_INSTANCES
+    }
+
+    fn memories(&self) -> usize {
+        MAX_MEMORIES
+    }
+
+    fn tables(&self) -> usize {
+        MAX_TABLES
     }
 
     fn table_growing(
@@ -180,11 +207,23 @@ impl wit_records::Host for CallState {
                 "this call has read all the records it may".to_owned(),
             ));
         }
+        if query
+            .cursor
+            .as_ref()
+            .is_some_and(|c| c.len() > MAX_CURSOR_BYTES)
+        {
+            return Err(wit::HostError::Invalid(format!(
+                "a cursor is at most {MAX_CURSOR_BYTES} bytes"
+            )));
+        }
         self.budget.queries_left -= 1;
         let limit = query.limit.min(self.budget.records_left);
-        let (records, more) = source
-            .query(&query.kinds, query.until, limit)
-            .map_err(|error| wit::HostError::Unavailable(error.to_string()))?;
+        let (records, next) = source
+            .query(&query.kinds, query.until, query.cursor.as_deref(), limit)
+            .map_err(|error| match error {
+                SourceError::Invalid(message) => wit::HostError::Invalid(message),
+                other => wit::HostError::Unavailable(other.to_string()),
+            })?;
         if records.len() > limit as usize || records.iter().any(|r| !query.kinds.contains(&r.kind))
         {
             // The embedder broke its own promise; say so rather than pass
@@ -202,9 +241,8 @@ impl wit_records::Host for CallState {
         }
         self.budget.bytes_left -= cost;
         self.budget.records_left -= records.len() as u32;
-        let budget_cut = limit < query.limit && records.len() as u32 == limit;
         Ok(wit::RecordPage {
-            more: more || budget_cut,
+            next,
             records: records
                 .into_iter()
                 .map(|r| wit::StoredRecord {
@@ -253,10 +291,12 @@ fn engine() -> Result<Engine, LoadError> {
     Engine::new(&config).map_err(|error| LoadError::Registry(format!("wasm engine: {error}")))
 }
 
-fn spawn_ticker(engine: &Engine) -> Arc<AtomicBool> {
+fn spawn_ticker(engine: &Engine) -> Result<Arc<AtomicBool>, LoadError> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     let weak = engine.weak();
+    // Without the ticker no deadline would ever fire, so failing to start it
+    // fails the load rather than running plugins unbounded in time.
     std::thread::Builder::new()
         .name("plugin-epoch".to_owned())
         .spawn(move || {
@@ -268,8 +308,8 @@ fn spawn_ticker(engine: &Engine) -> Arc<AtomicBool> {
                 }
             }
         })
-        .ok();
-    stop
+        .map_err(|error| LoadError::Registry(format!("plugin deadline clock: {error}")))?;
+    Ok(stop)
 }
 
 fn deadline_ticks(deadline_ms: u64) -> u64 {
@@ -289,6 +329,7 @@ fn new_store(
         CallState {
             limiter: CallLimiter {
                 memory_bytes: limits.memory_bytes as usize,
+                granted: 0,
                 denied: false,
             },
             source,
@@ -308,6 +349,10 @@ fn new_store(
 }
 
 fn classify(error: &wasmtime::Error, memory_denied: bool) -> InvokeError {
+    // `Memory` means a growth was refused during the call and it then
+    // trapped — almost always the guest aborting on allocation failure, but a
+    // guest that survived the refusal and trapped for another reason is
+    // reported the same way.
     let kind = match error.downcast_ref::<Trap>() {
         Some(Trap::OutOfFuel) => TrapKind::Fuel,
         Some(Trap::Interrupt) => TrapKind::Deadline,
@@ -436,7 +481,7 @@ impl PluginHost {
         let ticker_stop = if registry.entries.is_empty() {
             Arc::new(AtomicBool::new(true))
         } else {
-            spawn_ticker(&engine)
+            spawn_ticker(&engine)?
         };
         let mut host = Self {
             engine,
@@ -663,7 +708,9 @@ impl PluginHost {
             .get(draft.kind)
             .ok_or_else(|| format!("this host has no validator for kind {}", draft.kind))?;
         let now = invocation.now;
-        if draft.created_at + DRAFT_PAST_SECS < now || draft.created_at > now + DRAFT_FUTURE_SECS {
+        if draft.created_at.saturating_add(DRAFT_PAST_SECS) < now
+            || draft.created_at > now.saturating_add(DRAFT_FUTURE_SECS)
+        {
             return Err(format!(
                 "created_at {} is outside {}..={} of the host clock",
                 draft.created_at, DRAFT_PAST_SECS, DRAFT_FUTURE_SECS
@@ -738,5 +785,28 @@ impl<'a> Permit<'a> {
 impl Drop for Permit<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_memory_limit_is_a_total_across_every_memory_of_a_call() {
+        let mut limiter = CallLimiter {
+            memory_bytes: 1_000_000,
+            granted: 0,
+            denied: false,
+        };
+        // Two memories of 600 kB each: the second would take the call past
+        // its limit even though neither is over it alone.
+        assert!(limiter.memory_growing(0, 600_000, None).unwrap());
+        assert!(!limiter.memory_growing(0, 600_000, None).unwrap());
+        assert!(limiter.denied);
+        // Growing an existing memory counts only the difference.
+        assert!(limiter.memory_growing(600_000, 900_000, None).unwrap());
+        assert!(!limiter.memory_growing(900_000, 1_100_000, None).unwrap());
+        assert_eq!(limiter.memories(), MAX_MEMORIES);
     }
 }

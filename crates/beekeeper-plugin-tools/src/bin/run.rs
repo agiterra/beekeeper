@@ -55,13 +55,20 @@ impl RecordSource for FileSource {
         &self,
         kinds: &[u32],
         until: Option<u64>,
+        cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<StoredRecord>, bool), SourceError> {
+    ) -> Result<(Vec<StoredRecord>, Option<String>), SourceError> {
+        // The cursor is `<until or ->:<offset>` into this fixed ordering; the
+        // file never changes during a call.
+        let (bound, skip) = match cursor.and_then(|c| c.split_once(':')) {
+            Some((u, offset)) => (u.parse().ok(), offset.parse().unwrap_or(0)),
+            None => (until, 0usize),
+        };
         let mut matching: Vec<&StoredRecord> = self
             .records
             .iter()
             .filter(|r| kinds.contains(&r.kind))
-            .filter(|r| until.is_none_or(|u| r.created_at <= u))
+            .filter(|r| bound.is_none_or(|u| r.created_at <= u))
             .filter(|r| {
                 let a: Vec<&Vec<String>> = r
                     .tags
@@ -72,11 +79,19 @@ impl RecordSource for FileSource {
             })
             .collect();
         matching.sort_by(|x, y| (y.created_at, &y.id).cmp(&(x.created_at, &x.id)));
-        let more = matching.len() > limit as usize;
-        Ok((
-            matching.into_iter().take(limit as usize).cloned().collect(),
-            more,
-        ))
+        let page: Vec<StoredRecord> = matching
+            .into_iter()
+            .skip(skip)
+            .take(limit as usize + 1)
+            .cloned()
+            .collect();
+        let more = page.len() > limit as usize;
+        let page: Vec<StoredRecord> = page.into_iter().take(limit as usize).collect();
+        let next = more.then(|| {
+            let u = bound.map_or_else(|| "-".to_owned(), |u| u.to_string());
+            format!("{u}:{}", skip + page.len())
+        });
+        Ok((page, next))
     }
 }
 

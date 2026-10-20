@@ -254,51 +254,88 @@ struct ProjectRecords {
     coordinate: String,
     reader: Vec<u8>,
     hidden: Arc<beekeeper_db::git_repo::HiddenRepos>,
+    /// The call's wall-clock deadline. Guest code is interrupted by the
+    /// plugin host's epoch; a database read is bounded here, because no
+    /// epoch reaches a thread blocked on it.
+    deadline: std::time::Instant,
 }
 
-/// Database pages one plugin page may scan past rows the reader cannot see.
+/// Database pages one plugin page may scan past rows the reader cannot see
+/// before handing back a short page with a cursor.
 const MAX_SCAN_PAGES: usize = 5;
+
+/// `<created_at>:<id hex>` of the last row scanned — visible or not — so the
+/// next page starts exactly after it, with the same composite order the
+/// database uses (`created_at DESC, id ASC`).
+fn encode_cursor(event: &nostr::Event) -> String {
+    format!("{}:{}", event.created_at.as_secs(), event.id.to_hex())
+}
+
+fn decode_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, Vec<u8>), SourceError> {
+    let invalid = || SourceError::Invalid("not a cursor this relay issued".to_owned());
+    let (secs, id) = cursor.split_once(':').ok_or_else(invalid)?;
+    let secs: i64 = secs.parse().map_err(|_| invalid())?;
+    let id = hex::decode(id).map_err(|_| invalid())?;
+    if id.len() != 32 {
+        return Err(invalid());
+    }
+    let at = chrono::DateTime::from_timestamp(secs, 0).ok_or_else(invalid)?;
+    Ok((at, id))
+}
 
 impl RecordSource for ProjectRecords {
     fn query(
         &self,
         kinds: &[u32],
         until: Option<u64>,
+        cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<StoredRecord>, bool), SourceError> {
-        let mut out = Vec::new();
-        let mut cursor: Option<(chrono::DateTime<chrono::Utc>, Vec<u8>)> = None;
+    ) -> Result<(Vec<StoredRecord>, Option<String>), SourceError> {
+        let limit = limit as usize;
+        let mut out = Vec::with_capacity(limit);
+        let mut position = cursor.map(decode_cursor).transpose()?;
         let until = match until {
             Some(secs) => Some(
                 chrono::DateTime::from_timestamp(i64::try_from(secs).unwrap_or(i64::MAX), 0)
-                    .ok_or_else(|| SourceError::Unavailable("until is out of range".to_owned()))?,
+                    .ok_or_else(|| SourceError::Invalid("until is out of range".to_owned()))?,
             ),
             None => None,
         };
+        // One extra row says whether older rows exist. `max_limit` must allow
+        // it: the database clamps every page to 1000 otherwise, and a
+        // 1001-row probe would never see its 1001st row.
+        let page_limit = limit as i64 + 1;
         for _ in 0..MAX_SCAN_PAGES {
-            let page_limit = i64::from(limit) + 1;
             let query = beekeeper_db::EventQuery {
                 kinds: Some(kinds.iter().map(|k| *k as i32).collect()),
                 a_tags: Some(vec![self.coordinate.clone()]),
                 global_only: true,
-                until: cursor.as_ref().map(|(at, _)| *at).or(until),
-                before_id: cursor.as_ref().map(|(_, id)| id.clone()),
+                until: position.as_ref().map(|(at, _)| *at).or(until),
+                before_id: position.as_ref().map(|(_, id)| id.clone()),
                 limit: Some(page_limit),
+                max_limit: Some(page_limit),
                 ..beekeeper_db::EventQuery::for_community(self.community)
             };
+            let remaining = self
+                .deadline
+                .saturating_duration_since(std::time::Instant::now());
             let rows = self
                 .runtime
-                .block_on(self.state.db.query_events(&query))
+                .block_on(tokio::time::timeout(
+                    remaining,
+                    self.state.db.query_events(&query),
+                ))
+                .map_err(|_| {
+                    SourceError::Unavailable("record read ran past the call's deadline".to_owned())
+                })?
                 .map_err(|e| SourceError::Unavailable(format!("record read failed: {e}")))?;
-            let db_more = rows.len() as i64 >= page_limit;
-            for row in rows.iter().take(limit as usize) {
+            let db_more = rows.len() > limit;
+            let scanned = &rows[..rows.len().min(limit)];
+            for (index, row) in scanned.iter().enumerate() {
                 let event = &row.event;
                 if !crate::handlers::req::event_visible_to_reader(event, &self.reader, &self.hidden)
                 {
                     continue;
-                }
-                if out.len() == limit as usize {
-                    return Ok((out, true));
                 }
                 out.push(StoredRecord {
                     id: event.id.to_hex(),
@@ -308,26 +345,32 @@ impl RecordSource for ProjectRecords {
                     tags: event.tags.iter().map(|t| t.as_slice().to_vec()).collect(),
                     content: event.content.clone(),
                 });
+                if out.len() == limit {
+                    let at_end = index + 1 == scanned.len() && !db_more;
+                    return Ok((out, (!at_end).then(|| encode_cursor(event))));
+                }
             }
-            if out.len() == limit as usize {
-                return Ok((out, db_more));
-            }
+            let Some(last) = scanned.last() else {
+                return Ok((out, None));
+            };
             if !db_more {
-                return Ok((out, false));
+                return Ok((out, None));
             }
-            let last = &rows[limit as usize - 1].event;
-            cursor = Some((
-                chrono::DateTime::from_timestamp(
-                    i64::try_from(last.created_at.as_secs()).unwrap_or(i64::MAX),
-                    0,
-                )
-                .unwrap_or_default(),
-                last.id.to_bytes().to_vec(),
-            ));
+            position = Some(decode_cursor(&encode_cursor(&last.event))?);
         }
-        // Scanned its bound of hidden rows without filling the page: say
-        // there may be more rather than claim the history ends here.
-        Ok((out, true))
+        // Scanned its bound of rows the reader cannot see without filling the
+        // page: hand back what it has and where to continue, never an end.
+        let position = position.ok_or_else(|| {
+            SourceError::Unavailable("record scan ended without a position".to_owned())
+        })?;
+        Ok((
+            out,
+            Some(format!(
+                "{}:{}",
+                position.0.timestamp(),
+                hex::encode(position.1)
+            )),
+        ))
     }
 }
 
@@ -446,6 +489,10 @@ pub async fn invoke_plugin(
         now: nostr::Timestamp::now().as_secs(),
         entropy,
     };
+    let deadline_ms = state
+        .plugins
+        .get(&name)
+        .map_or(0, |p| p.entry.limits.deadline_ms);
     let source = Arc::new(ProjectRecords {
         state: state.clone(),
         runtime: tokio::runtime::Handle::current(),
@@ -453,6 +500,7 @@ pub async fn invoke_plugin(
         coordinate,
         reader: caller_bytes,
         hidden,
+        deadline: std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms),
     });
     let started = std::time::Instant::now();
     let host = state.clone();

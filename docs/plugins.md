@@ -61,9 +61,9 @@ sha256 = "<64 lowercase hex>"       # required; a mismatch refuses to start
 read_kinds  = [44248]
 draft_kinds = [44248]
 [plugin.limits]                     # all optional; defaults shown
-memory_bytes     = 67108864         # linear memory per call
+memory_bytes     = 67108864         # linear memory per call, summed over every memory
 fuel             = 4000000000       # instructions per call
-deadline_ms      = 5000             # wall clock per call, host reads included
+deadline_ms      = 5000             # wall clock per call; also bounds each host read
 max_concurrent   = 8                # more calls at once are refused as busy
 max_queries      = 32               # records.query calls per call
 max_records      = 20000
@@ -122,12 +122,17 @@ are gated like any other.
 
 ### Reads
 
-`records.query({kinds, until, limit})` has no scope parameter: the host
+`records.query({kinds, until, cursor, limit})` has no scope parameter: the host
 applies the invocation's project (`a` tag) and the reader's visibility
 (`event_visible_to_reader` — a personal to-do op reaches a plugin only when
 the caller is its author). Kinds must be granted; each call, record and byte
 counts against the invocation's budget, and a spent budget is an error the
-plugin sees.
+plugin sees. Pages follow an opaque `cursor`: the host returns `next` while
+older readable records may exist, and a page may come back short — even
+empty — with a `next`, because the host skipped records the caller may not
+see. A plugin pages by `next`, never by stopping at a short page. Each host
+read is bounded by the call's deadline (a guest is interrupted by the epoch;
+a thread blocked on the database is not, so the relay times the read out).
 
 ### Drafts
 
@@ -147,6 +152,16 @@ and both re-check kind and scope before signing anything:
   or as success.
 - `skip-group` — report the group failed (using `partialSummary` when part of
   the group landed), skip the rest of it, continue with the next group.
+- **unconfirmed** — whatever the policy, a publish with no answer (a timeout,
+  a connection lost mid-publish) may still land. The run stops there and
+  reports it as unconfirmed, never as refused, so nobody retries into a
+  duplicate. A create still returns its issue key.
+
+A client signs what a write operation returns within those checks; it does
+not narrow drafts to what the operation's name suggests (a `set-title` could
+draft any NIP-TD op in the project). The plugin owns what an operation
+means — that is the point — so registering a plugin is trusting it with the
+caller's writes in that kind and project.
 
 ## Planning: `beekeeper.planning/1`
 
@@ -184,8 +199,9 @@ the sha256 to pin. `beekeeper-plugin-run` runs one operation through the real
 host over a JSON record file — the desktop's mock Planning specs use it, so
 they drive the real component. `plugins/test-planning-fixture` (a second,
 independently built `beekeeper.planning/1` provider sharing no code with the
-first) and `plugins/test-faults` are the replaceability and containment
-fixtures. `scripts/planning-plugin-check.sh [--desktop]` runs the relay, CLI
+first: it reads a fixed issue and drafts its own hand-written NIP-TD ops on
+create, refusing other writes as `unsupported`) and `plugins/test-faults` are
+the replaceability and containment fixtures. `scripts/planning-plugin-check.sh [--desktop]` runs the relay, CLI
 and live UI gates against a scratch database with two tenants.
 
 ## Shipping
@@ -219,7 +235,14 @@ and live UI gates against a scratch database with two tenants.
   credential custody or outbound client is built.
 - **One instance per call.** Each call instantiates the component afresh
   (no state survives a call); compilation happens once, at startup.
-- **The deadline counts host reads**, so a slow database can trap a call.
+- **The deadline counts host reads**: a slow database fails the call
+  (`host-refused`) rather than holding it open.
+- **Concurrency is per plugin, not per community.** `max_concurrent` is one
+  counter for the whole relay, so one busy community can make others see
+  `busy`.
+- **The desktop's mock specs grant write** to every call; the gate's
+  `scope-forbidden` / `write-not-allowed` paths are proven by `e2e_plugins`
+  and the live CLI check, not by the mock.
 - **The To-Do tab, the mobile app and `bee todos`** still fold NIP-TD
   themselves; they are the to-do surfaces, not Planning.
 - **Relay-mode desktop e2e** calls the route with the dev `X-Pubkey` header,

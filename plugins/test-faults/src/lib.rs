@@ -99,6 +99,7 @@ impl Guest for Faults {
                 let page = records::query(&types::RecordQuery {
                     kinds: vec![KIND],
                     until: None,
+                    cursor: None,
                     limit: 1000,
                 })
                 .map_err(types::OpError::Host)?;
@@ -142,6 +143,7 @@ impl Guest for Faults {
                 let error = records::query(&types::RecordQuery {
                     kinds: vec![1],
                     until: None,
+                    cursor: None,
                     limit: 10,
                 })
                 .err();
@@ -153,6 +155,7 @@ impl Guest for Faults {
                     match records::query(&types::RecordQuery {
                         kinds: vec![KIND],
                         until: None,
+                        cursor: None,
                         limit: 1,
                     }) {
                         Ok(_) => served += 1,

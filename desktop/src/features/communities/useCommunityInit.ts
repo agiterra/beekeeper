@@ -163,6 +163,12 @@ async function resetCommunityState({
   // 44224 and 44226 events, so it must not survive a switch to a relay whose
   // events it never read.
   queryClient.removeQueries({ queryKey: ["role-pack-provenance"] });
+  // Which plugins a relay runs, and every Planning read made through one,
+  // are facts about that relay. A coordinate names no relay, so a cached
+  // read would paint one community's issues (and its access verdict) under
+  // another community's project.
+  queryClient.removeQueries({ queryKey: ["relay-plugins"] });
+  queryClient.removeQueries({ queryKey: ["planning"] });
   // Folded Pulse digests are keyed by project coordinate, and a coordinate
   // names no relay: carrying them across a switch would paint one community's
   // claims and observed commits under another community's project.

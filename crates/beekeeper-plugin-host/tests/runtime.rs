@@ -76,8 +76,9 @@ impl RecordSource for Source {
         &self,
         kinds: &[u32],
         until: Option<u64>,
+        cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<StoredRecord>, bool), SourceError> {
+    ) -> Result<(Vec<StoredRecord>, Option<String>), SourceError> {
         self.calls
             .lock()
             .expect("lock")
@@ -93,9 +94,15 @@ impl RecordSource for Source {
             .cloned()
             .collect();
         out.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
-        let more = out.len() > limit as usize;
-        out.truncate(limit as usize);
-        Ok((out, more))
+        let skip: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
+        let page: Vec<StoredRecord> = out
+            .iter()
+            .skip(skip)
+            .take(limit as usize)
+            .cloned()
+            .collect();
+        let end = skip + page.len();
+        Ok((page, (end < out.len()).then(|| end.to_string())))
     }
 }
 

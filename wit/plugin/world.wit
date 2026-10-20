@@ -36,16 +36,22 @@ interface types {
     record record-query {
         /// Must be a subset of the kinds the plugin was granted to read.
         kinds: list<u32>,
-        /// Newest first; only records with `created-at <= until`.
+        /// Newest first; only records with `created-at <= until`. Ignored
+        /// when `cursor` is given.
         until: option<u64>,
+        /// Continue exactly where a previous page's `next` left off. Opaque;
+        /// it also skips past records the caller may not see, so a page can
+        /// come back short and still have a `next`.
+        cursor: option<string>,
         /// At most the host's page size (1000).
         limit: u32,
     }
 
     record record-page {
         records: list<stored-record>,
-        /// Records older than the last one may exist.
-        more: bool,
+        /// Where the next page starts, when older records may exist. Absent
+        /// means this page reached the end of what the caller may read.
+        next: option<string>,
     }
 
     variant host-error {

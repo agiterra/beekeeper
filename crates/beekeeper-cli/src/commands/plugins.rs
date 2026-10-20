@@ -10,6 +10,8 @@
 //!   landed (the draft's `partialSummary`, or a generic line).
 //! - `skip-group` — record the group as failed, skip the rest of that group,
 //!   carry on with the next.
+//! - a submit with no answer (`DeliveryUnknown`, a timeout) stops the run as
+//!   unconfirmed, whatever the policy: the event may still land.
 //!
 //! Before signing anything the client checks each draft is a kind it is
 //! willing to sign for a plugin and that its only `a` tag is the project the
@@ -175,6 +177,18 @@ pub async fn execute_drafts(
             }
             Err(error) => {
                 let reason = error.to_string();
+                // No answer: the event may still land. Stop and say so —
+                // reporting it as refused would invite a retry that could
+                // mint a duplicate.
+                if matches!(error, CliError::DeliveryUnknown(_))
+                    || matches!(&error, CliError::Network(e) if e.is_timeout())
+                {
+                    return Err(CliError::DeliveryUnknown(format!(
+                        "the relay did not confirm the {group} change ({reason}); it may still \
+                         land — read before retrying. published: {}",
+                        Value::Array(published)
+                    )));
+                }
                 let summary = draft["partialSummary"].as_str();
                 if draft["ifRefused"] == "skip-group" {
                     let message = match summary {

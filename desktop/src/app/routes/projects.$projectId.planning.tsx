@@ -36,7 +36,14 @@ function PlanningRouteComponent() {
   const { issue } = Route.useSearch();
   return (
     <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
-      <PlanningScreen issueKey={issue ?? null} projectId={projectId} />
+      {/* Keyed by project: filters, selection, in-flight marks and the
+          viewer's provider pick belong to one project and must not leak
+          into the next. */}
+      <PlanningScreen
+        issueKey={issue ?? null}
+        key={projectId}
+        projectId={projectId}
+      />
     </React.Suspense>
   );
 }

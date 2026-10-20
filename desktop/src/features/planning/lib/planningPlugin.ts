@@ -23,6 +23,7 @@ import {
 } from "@/shared/plugins/pluginClient";
 import {
   type DraftRun,
+  DraftUnconfirmedError,
   PluginPartialWriteError,
   executePluginDrafts,
 } from "@/shared/plugins/pluginDrafts";
@@ -36,6 +37,11 @@ import type {
   PlanningRead,
   PlanningState,
 } from "./planningTypes";
+
+const PUBLISH_TIMEOUT = "Timed out saving the change.";
+
+/** One refetch per burst of live events. */
+const LIVE_REFETCH_DEBOUNCE_MS = 750;
 
 /** The operation API the Planning surface speaks. */
 export const PLANNING_API = "beekeeper.planning/1";
@@ -164,6 +170,7 @@ export function usePluginPlanning(
     if (!enabled || kindsKey === "") return;
     let disposed = false;
     let unsubscribe: (() => Promise<void>) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     void relayClient
       .subscribeLive(
         {
@@ -173,7 +180,19 @@ export function usePluginPlanning(
           limit: 100,
         },
         () => {
-          void queryClient.invalidateQueries({ queryKey: base });
+          // A burst of events is one refetch: each read re-folds the
+          // project's history, so per-event invalidation would rescan it
+          // once per op. Capabilities do not change with records.
+          if (timer !== null) return;
+          timer = setTimeout(() => {
+            timer = null;
+            void queryClient.invalidateQueries({
+              predicate: (query) =>
+                query.queryKey.length > base.length &&
+                base.every((part, i) => query.queryKey[i] === part) &&
+                query.queryKey[base.length] !== "capabilities",
+            });
+          }, LIVE_REFETCH_DEBOUNCE_MS);
         },
       )
       .then((handle) => {
@@ -186,6 +205,7 @@ export function usePluginPlanning(
       });
     return () => {
       disposed = true;
+      if (timer !== null) clearTimeout(timer);
       if (unsubscribe) void unsubscribe();
     };
   }, [base, coordinate, enabled, kindsKey, queryClient]);
@@ -246,11 +266,26 @@ export function usePluginPlanning(
         const run = await executePluginDrafts(reply.drafts, coordinate, {
           publish: async (draft) => {
             const event = await signRelayEvent(draft);
-            return relayClient.publishEvent(
-              event,
-              "Timed out saving the change.",
-              "The relay refused the change.",
-            );
+            try {
+              return await relayClient.publishEvent(
+                event,
+                PUBLISH_TIMEOUT,
+                "The relay refused the change.",
+              );
+            } catch (error) {
+              const text = message(error);
+              // No answer, or the connection went away with the event in
+              // flight: it may have landed. Never report that as refused.
+              if (
+                text === PUBLISH_TIMEOUT ||
+                /disconnected|superseded/i.test(text)
+              ) {
+                throw new DraftUnconfirmedError(
+                  `The relay did not confirm the change in time (${text}).`,
+                );
+              }
+              throw error;
+            }
           },
         });
         return { result: reply.result, run };
@@ -269,6 +304,9 @@ export function usePluginPlanning(
     });
     const strict = async (operation: string, input: unknown) => {
       const { run } = await write(operation, input);
+      if (run.unconfirmed) {
+        throw new PlanningPartialWriteError(run.unconfirmed.message);
+      }
       // A single-group write either lands or throws; a failed group here
       // would be a provider that drafted `skip-group` for a one-field edit.
       if (run.failed.length > 0) {
@@ -286,10 +324,25 @@ export function usePluginPlanning(
             "The Planning provider did not name the issue it created.",
           );
         }
-        const failed: PlanningCreateResult["failed"] = run.failed.map((f) => ({
-          field: f.group,
-          message: f.message,
-        }));
+        // The issue's key is the provider's answer before anything was
+        // published, so an uncertain create still closes the draft: a retry
+        // could mint a second issue, and the next read will show the first.
+        const failed: PlanningCreateResult["failed"] = [
+          ...run.failed.map((f) => ({ field: f.group, message: f.message })),
+          ...(run.unconfirmed
+            ? [
+                {
+                  field: run.unconfirmed.group,
+                  message: run.unconfirmed.message,
+                },
+              ]
+            : []),
+          ...run.notAttempted.map((group) => ({
+            field: group,
+            message:
+              "not attempted, because an earlier change was not confirmed",
+          })),
+        ];
         return { key, failed };
       },
       setTitle: (issue, title) =>

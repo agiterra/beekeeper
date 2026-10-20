@@ -41,7 +41,9 @@ The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `
 | `bee sessions` | `list`, `show`, `transcript`, `checkpoints`, `diff`, `close`, `delete`, `doctor`, `audit`, `tools`, `export`, `grant`, `grant-seat`, `revoke-seat`, `revoke`, `roster`, `assign`, `report`, `verdict`, `acknowledge`, `complete`, `block`, `note`, `decide`, `operation`, `observe`, `worktree`, `observations`, `handover`, `policy`, `send`, `model`, `create`, `stop`, `rewind`, `hire`, `seat-repair`, `inbox`, `status`, `catalog`, `registry`, `route`, `whoami`, `explain`, `work`, `measure` (coding sessions — see below) |
 | `bee terminals` | `list`, `invite`, `revoke`, `delete`, `roster`, `send-input` |
 | `bee pulse` | `update`, `list`, `sessions`, `digest`, `missions`, `prune-wip` |
-| `bee todos` | `lists`, `show`, `create-list`, `pin`, `unpin`, `rename-list`, `archive-list`, `add`, `edit`, `done`, `undone`, `assign`, `due`, `move`, `remove` |
+| `bee todos` | `lists`, `show`, `create-list`, `pin`, `unpin`, `rename-list`, `archive-list`, `add`, `edit`, `done`, `undone`, `assign`, `due`, `status`, `priority`, `describe`, `move`, `remove` |
+| `bee planning` | `providers`, `read`, `activity`, `create`, `title`, `describe`, `status`, `priority`, `assign` |
+| `bee plugins` | `list`, `invoke` |
 | `bee agents-repo` | `ls`, `show`, `drafts`, `draft`, `commit`, `check`, `commit-record` |
 | `bee plans` | `example`, `list`, `show`, `edit` |
 | `bee docs` | `list`, `show`, `edit`, `mv`, `rm`, `new-folder`, `image` |

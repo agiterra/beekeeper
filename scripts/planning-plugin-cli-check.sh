@@ -82,6 +82,12 @@ if out="$(as "${MEMBER_KEY}" planning title --project "${PROJECT}" --provider pl
 fi
 echo "${out}" | grep -q "read-only" || { echo "unexpected refusal: ${out}"; exit 1; }
 
+step "the replacement provider's own create drafts are signed by the member and accepted"
+as "${MEMBER_KEY}" planning create --project "${PROJECT}" --provider planning-fixture --title "Via the fixture" \
+  | py 'assert len(d["published"])==2, d; assert d["failed"]==[], d; print("fixture create published", len(d["published"]))'
+as "${OWNER_KEY}" planning read --project "${PROJECT}" --provider planning \
+  | py 'assert any(i["title"]=="Via the fixture" for i in d["result"]["issues"]), d; print("first-party plugin reads it")'
+
 step "generic invoke reaches the fault plugin and reports its trap"
 if out="$(as "${MEMBER_KEY}" plugins invoke test-faults spin --project "${PROJECT}" 2>&1)"; then
   echo "expected a trap, got: ${out}"; exit 1

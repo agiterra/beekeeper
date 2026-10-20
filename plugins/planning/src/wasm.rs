@@ -19,12 +19,13 @@ struct HostRecords;
 impl crate::Records for HostRecords {
     fn page(
         &mut self,
-        until: Option<u64>,
+        cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<TodoFoldEvent>, bool), crate::Error> {
+    ) -> Result<(Vec<TodoFoldEvent>, Option<String>), crate::Error> {
         let page = records::query(&types::RecordQuery {
             kinds: vec![KIND_PROJECT_TODO_OP],
-            until,
+            until: None,
+            cursor: cursor.map(str::to_owned),
             limit,
         })
         .map_err(|error| crate::Error::Host(host_message(error)))?;
@@ -40,7 +41,7 @@ impl crate::Records for HostRecords {
                     content: r.content,
                 })
                 .collect(),
-            page.more,
+            page.next,
         ))
     }
 }

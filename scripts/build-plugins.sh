@@ -64,7 +64,7 @@ for spec in "${plugins[@]}"; do
       limits=""
       ;;
     planning-fixture)
-      grants=$'[plugin.grants]\nread_kinds = []\ndraft_kinds = []'
+      grants=$'[plugin.grants]\nread_kinds = []\ndraft_kinds = [44248]'
       limits=""
       ;;
     test-faults)

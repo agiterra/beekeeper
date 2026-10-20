@@ -35,7 +35,8 @@ pub const SUPPORTED_WORLDS: &[&str] = &["operation-provider@1"];
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Limits {
-    /// Linear memory a call may grow to.
+    /// Linear memory one call may hold, summed over every memory its core
+    /// instances create.
     pub memory_bytes: u64,
     /// Instructions a call may execute (wasmtime fuel).
     pub fuel: u64,

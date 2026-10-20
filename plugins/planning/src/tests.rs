@@ -25,21 +25,21 @@ impl Mem {
 impl Records for Mem {
     fn page(
         &mut self,
-        until: Option<u64>,
+        cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<TodoFoldEvent>, bool), Error> {
+    ) -> Result<(Vec<TodoFoldEvent>, Option<String>), Error> {
         self.pages += 1;
-        let mut matching: Vec<&TodoFoldEvent> = self
-            .events
+        let mut ordered: Vec<&TodoFoldEvent> = self.events.iter().collect();
+        ordered.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
+        let skip: usize = cursor.map_or(0, |c| c.parse().unwrap());
+        let page: Vec<TodoFoldEvent> = ordered
             .iter()
-            .filter(|e| until.is_none_or(|u| e.created_at <= u))
+            .skip(skip)
+            .take(limit as usize)
+            .map(|e| (*e).clone())
             .collect();
-        matching.sort_by(|a, b| (b.created_at, &b.id).cmp(&(a.created_at, &a.id)));
-        let more = matching.len() > limit as usize;
-        Ok((
-            matching.into_iter().take(limit as usize).cloned().collect(),
-            more,
-        ))
+        let end = skip + page.len();
+        Ok((page, (end < ordered.len()).then(|| end.to_string())))
     }
 }
 
@@ -625,6 +625,34 @@ fn activity_lists_each_op_on_the_issue_oldest_first() {
     );
     assert_eq!(entries[2]["subject"], ALICE);
     assert_eq!(entries[1]["actor"], BOB);
+}
+
+/// A host that hides rows returns short pages, even empty ones, with a
+/// cursor; the read must follow the cursor, not stop at a short page.
+struct Sparse {
+    events: Vec<TodoFoldEvent>,
+}
+
+impl Records for Sparse {
+    fn page(
+        &mut self,
+        cursor: Option<&str>,
+        _limit: u32,
+    ) -> Result<(Vec<TodoFoldEvent>, Option<String>), Error> {
+        // Pages "0" and "1" are all hidden rows; the last holds the issue.
+        match cursor {
+            None => Ok((vec![], Some("1".into()))),
+            Some("1") => Ok((vec![], Some("2".into()))),
+            _ => Ok((self.events.clone(), None)),
+        }
+    }
+}
+
+#[test]
+fn short_and_empty_pages_with_a_cursor_are_followed_to_the_end() {
+    let out = invoke("read", &json!({}), &ctx(), &mut Sparse { events: base() }).unwrap();
+    assert_eq!(issues(&out).len(), 1);
+    assert_eq!(out.result["truncated"], false);
 }
 
 #[test]

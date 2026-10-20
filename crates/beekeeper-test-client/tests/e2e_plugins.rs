@@ -597,3 +597,111 @@ async fn a_replacement_provider_answers_through_the_same_route() {
     assert_eq!(body["code"], "unsupported");
     assert!(body["error"].as_str().unwrap().contains("read-only"));
 }
+
+/// More than a page of history, with the newest thousand-odd ops all hidden
+/// from the reader (other people's personal lists): the read must still
+/// reach the shared issue behind them, and must not claim to be complete
+/// when it is not.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn a_read_reaches_history_behind_more_than_a_page_of_hidden_ops() {
+    let owner = Keys::generate();
+    let member = Keys::generate();
+    let project = create_project(&relay_url(), &owner, None, &[]).await;
+
+    let shared = ok(
+        &member,
+        "planning",
+        "create-issue",
+        &project,
+        json!({ "title": "Older than a page", "description": null, "statusId": "todo",
+                "priorityId": "none", "assignee": null, "containerId": null }),
+    )
+    .await;
+    publish_drafts(&relay_url(), &member, &shared["drafts"]).await;
+
+    // 1,120 ops on 28 people's personal lists (40 each, under the relay's
+    // per-key message quota), all newer than the issue and all withheld from
+    // the member.
+    let base = nostr::Timestamp::now().as_secs();
+
+    for author_n in 0..28u64 {
+        let author = if author_n == 0 {
+            owner.clone()
+        } else {
+            Keys::generate()
+        };
+        let list = uuid::Uuid::new_v4().simple().to_string();
+        let mut client = BeekeeperTestClient::connect(&relay_url(), &author)
+            .await
+            .expect("connect");
+        for n in 0..40u64 {
+            let (op, content) = if n == 0 {
+                (
+                    "list.create",
+                    json!({ "schema": "buzz-project-todo/v1", "op": "list.create",
+                                        "listId": list, "title": "Mine", "visibility": "personal" }),
+                )
+            } else {
+                (
+                    "list.title",
+                    json!({ "schema": "buzz-project-todo/v1", "op": "list.title",
+                                       "listId": list, "title": format!("Mine {n}") }),
+                )
+            };
+            let event = EventBuilder::new(Kind::Custom(44248), content.to_string())
+                .tags([
+                    Tag::parse(["a", &project]).unwrap(),
+                    Tag::parse(["td-v", "td1-1"]).unwrap(),
+                    Tag::parse(["td-op", op]).unwrap(),
+                    Tag::parse(["td-list", &list]).unwrap(),
+                    Tag::parse(["td-vis", "personal"]).unwrap(),
+                ])
+                .custom_created_at(nostr::Timestamp::from(base + 2 + n / 10))
+                .sign_with_keys(&author)
+                .unwrap();
+            let sent = client.send_event(event).await.expect("send");
+            assert!(sent.accepted, "op {author_n}/{n} refused: {}", sent.message);
+        }
+    }
+
+    let read = ok(&member, "planning", "read", &project, json!({})).await;
+    let titles: Vec<&str> = read["result"]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Older than a page"], "{read}");
+    assert_eq!(read["result"]["truncated"], false);
+
+    // The owner's read sees their own personal ops too, and still one issue:
+    // personal lists are not Planning containers.
+    let read = ok(&owner, "planning", "read", &project, json!({})).await;
+    assert_eq!(issues(&read).len(), 1);
+    assert_eq!(read["result"]["truncated"], false);
+}
+
+/// The replacement provider drafts its own ops; the member signs them and
+/// ingest accepts them, and the first-party provider reads them back — two
+/// independently built plugins, one record format.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn a_replacement_providers_drafts_are_member_signed_and_accepted() {
+    let owner = Keys::generate();
+    let project = create_project(&relay_url(), &owner, None, &[]).await;
+    let created = ok(
+        &owner,
+        "planning-fixture",
+        "create-issue",
+        &project,
+        json!({ "title": "Filed via the fixture" }),
+    )
+    .await;
+    assert_eq!(created["drafts"].as_array().unwrap().len(), 2);
+    let published = publish_drafts(&relay_url(), &owner, &created["drafts"]).await;
+    assert!(published.iter().all(|e| e.pubkey == owner.public_key()));
+    let read = ok(&owner, "planning", "read", &project, json!({})).await;
+    assert_eq!(issues(&read)[0]["title"], "Filed via the fixture");
+    assert_eq!(issues(&read)[0]["key"], created["result"]["key"]);
+}
