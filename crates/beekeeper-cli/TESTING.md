@@ -1285,6 +1285,36 @@ Verified live 2026-09-17 against a local relay on :3010 with two keys
 all of it. The e2e file `crates/beekeeper-test-client/tests/e2e_project_todos.rs`
 covers the relay surfaces.
 
+### 6.13a Planning through the relay's plugin (`bee planning`, `bee plugins`)
+
+`bee planning` calls whichever relay plugin implements `beekeeper.planning/1`
+(`docs/plugins.md`); it holds no planning logic. Writes come back as unsigned
+drafts that `bee` checks (signable kind, the named project as the only `a`
+tag) and then signs with **your** key and publishes in order.
+
+```bash
+bee plugins list                                            # name, version, sha256, api, operations
+bee planning providers --project $P
+bee planning read --project $P [--provider planning]        # --provider required when >1
+bee planning create --project $P --title "…" --status in_progress --priority high --description "…"
+bee planning status --project $P --issue <container>/<issue> --status canceled
+bee planning priority|title|describe|assign --project $P --issue <key> …
+bee planning activity --project $P --issue <key>
+bee plugins invoke planning read --project $P               # generic; --publish signs a write's drafts
+```
+
+| Case | Expected |
+| --- | --- |
+| relay with no Planning plugin | `this relay runs no plugin implementing beekeeper.planning/1`, exit 4 |
+| two providers, no `--provider` | usage error naming both, exit 1, nothing called |
+| `create` with status/priority/description | `published` lists every draft by group (`issue`, `status`×2, …), `failed` empty; the issue's `createdBy` is your pubkey |
+| `status … canceled` | two drafts, group `status`, item.done then item.status; `bee todos show` folds `canceled` |
+| a stranger to a private project | relay 403 `you cannot read this project`, exit 3 |
+| a read-only provider asked to write | relay 501 `unsupported` with the provider's reason |
+
+`scripts/planning-plugin-cli-check.sh` runs these against a relay; it is
+step 3 of `scripts/planning-plugin-check.sh` (verified 2026-10-20).
+
 ### 6.13b The agents repository and its drafts (`bee agents-repo`, `bee plans`, kind 44250)
 
 A project's roles, plans, team manifest, actions and skills live in

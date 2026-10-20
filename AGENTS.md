@@ -145,6 +145,9 @@ crates/
   # Relay + core
   beekeeper-relay        # WebSocket relay server — main entry point; also hosts git + huddle audio
   beekeeper-core         # Core types, event verification, filter matching, kind registry
+  beekeeper-nip-td       # NIP-TD to-do codec + fold, pure (also builds for wasm32)
+  beekeeper-plugin-host  # In-process WASM component host for relay plugins (docs/plugins.md)
+  beekeeper-plugin-tools # beekeeper-plugin-pack / beekeeper-plugin-run
   beekeeper-db           # Postgres event store and data access layer
   beekeeper-auth         # Authentication and authorization
   beekeeper-pubsub       # Redis pub/sub fan-out, presence, typing indicators
@@ -174,6 +177,8 @@ crates/
   beekeeper-test-client  # Integration test client and E2E test suite
   sprig                  # All-in-one harness bundling ACP, agent, and dev MCP
 
+plugins/              # Relay plugins, each its own Cargo workspace (planning = first-party)
+wit/plugin/           # beekeeper:plugin@1, the plugin interface
 desktop/              # Tauri 2 + React 19 desktop app
 web/                  # Browser web client (repo browser, served by the relay)
 mobile/               # Flutter mobile app

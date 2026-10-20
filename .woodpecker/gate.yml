@@ -164,6 +164,13 @@ steps:
       - cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1
       - cargo build -p beekeeper-cli --bin bee
       - BEEKEEPER_TEST_BEE_BIN="$CARGO_TARGET_DIR/debug/bee" cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
+      # Plugins (docs/plugins.md): each plugin is its own Cargo workspace, so
+      # `cargo test --workspace` never sees it, and the host's containment
+      # tests need the built components. rust-toolchain.toml installs the
+      # wasm32-unknown-unknown target.
+      - ./scripts/build-plugins.sh "$CARGO_TARGET_DIR/plugins"
+      - cargo test --manifest-path plugins/planning/Cargo.toml
+      - BEEKEEPER_PLUGIN_ARTIFACTS="$CARGO_TARGET_DIR/plugins" cargo test -p beekeeper-plugin-host -- --include-ignored
 
   desktop:
     image: buzz-ci:1

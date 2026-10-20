@@ -94,6 +94,16 @@ RUN cargo build --release --locked -p beekeeper-relay --bin beekeeper-relay \
                                    -p beekeeper-admin --bin beekeeper-admin \
                                    -p beekeeper-pair-relay --bin beekeeper-pair-relay
 
+# First-party plugins (docs/plugins.md): WebAssembly components the relay
+# loads through the same sha256-pinned registry as any other plugin. Built
+# here and baked into the image with that registry, so Planning is on by
+# default; an operator can point BEEKEEPER_PLUGINS_FILE at their own registry
+# instead. rust-toolchain.toml makes rustup add the wasm32 target.
+FROM builder AS plugins
+RUN cargo build --release --locked -p beekeeper-plugin-tools --bin beekeeper-plugin-pack \
+    && BEEKEEPER_PLUGIN_PACK=/build/target/release/beekeeper-plugin-pack \
+       ./scripts/build-plugins.sh /build/plugins-out --first-party-only
+
 # Derive the normal release binaries from the same optimized ELF files as the
 # debug image so the two variants cannot drift at code-generation time.
 FROM builder AS stripped-binaries
@@ -179,6 +189,11 @@ COPY --from=web-builder /build/admin-web/dist           /srv/buzz/admin-web
 # BEEKEEPER_WEB_DIR when nothing else is set.
 ENV BUZZ_WEB_DIR=/srv/buzz/web \
     BUZZ_ADMIN_WEB_DIR=/srv/buzz/admin-web
+
+# The first-party plugins and their pinned registry. An operator's own
+# BEEKEEPER_PLUGINS_FILE replaces this registry wholesale.
+COPY --from=plugins /build/plugins-out/registry.toml /build/plugins-out/planning.wasm /usr/lib/beekeeper/plugins/
+ENV BEEKEEPER_PLUGINS_FILE=/usr/lib/beekeeper/plugins/registry.toml
 
 # 3000: app (WS + REST)  ·  8080: /_liveness, /_readiness  ·  9102: /metrics
 EXPOSE 3000 8080 9102

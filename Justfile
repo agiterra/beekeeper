@@ -945,13 +945,16 @@ desktop-screenshot *ARGS:
 # ─── Run ──────────────────────────────────────────────────────────────────────
 
 # Start the relay server (auto-starts Docker services if needed)
-relay: bootstrap _ensure-migrations
+relay: bootstrap _ensure-migrations plugins-build
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
     set -o allexport
     source .env
     set +o allexport
+    # Planning is a plugin; run the first-party ones unless .env names a
+    # registry of its own (docs/plugins.md).
+    export BEEKEEPER_PLUGINS_FILE="${BEEKEEPER_PLUGINS_FILE:-{{justfile_directory()}}/target/plugins/registry.toml}"
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
     cargo run -p beekeeper-relay
 

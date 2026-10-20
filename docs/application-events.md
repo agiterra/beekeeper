@@ -41,6 +41,10 @@ Live subscriptions use standard NIP-01 filter matching.
 
 ## Webhook plugin surface
 
+> WebAssembly operation plugins (Planning) are a separate, sandboxed surface:
+> see `docs/plugins.md`. A WebAssembly webhook world on the same runtime is
+> planned there, not built.
+
 Compiled-in Rust plugins register an Axum router under
 `/webhooks/<plugin_name>/`. Names are lowercase ASCII letters, digits, or
 internal hyphens, at most 63 bytes. Registration rejects invalid and duplicate
