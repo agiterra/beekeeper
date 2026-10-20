@@ -1,0 +1,15 @@
+[package]
+name = "beekeeper-nip-td"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NIP-TD project to-do ops: codec, validator and fold, with no I/O and no Nostr runtime"
+
+# Pure on purpose: this crate builds for wasm32-unknown-unknown, so the
+# Planning plugin folds records with the same code the relay and the CLI use.
+# Adding `nostr`, `rand`, `uuid` or anything that needs an OS breaks that.
+[dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"

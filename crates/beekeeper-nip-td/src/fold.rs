@@ -1,0 +1,576 @@
+//! The project to-do fold: from a bag of kind 44248 ops to the lists and
+//! items a reader sees.
+//!
+//! The fold is pure and total: any set of events in, one digest out, the same
+//! digest from every client. Its rules are the contract in
+//! `conformance/project-todo-fold/CONTRACT.md` and are pinned by the vectors
+//! beside it, which the TypeScript fold in Desktop and the Dart fold in
+//! Mobile bind to as well. A rule implemented in only one fold is a defect.
+//!
+//! Rules, in the order the fold applies them:
+//!
+//! 1. **Decode.** An event that is not a 44248, whose single `a` tag is not
+//!    this project, or whose content fails [`crate::project_todo`] is
+//!    counted in `ignored` and dropped. Duplicate ids keep the first.
+//! 2. **Order.** Ops sort by `(created_at, id)` ascending. That pair is the
+//!    only clock; there is no per-author sequence.
+//! 3. **Create.** The earliest `list.create` per list id and the earliest
+//!    `item.add` per `(list, item)` bring the target into existence with the
+//!    op's values; later creates for the same id are ignored. An `item.add`
+//!    for a list that was never created is ignored. A list's visibility is
+//!    its create's; every later op must carry the same `td-vis` tag or it is
+//!    ignored, and on a **personal** list every op not signed by the list's
+//!    creator is ignored — the relay already withholds those from everyone
+//!    else, and this keeps the owner's own fold honest against a stray op.
+//! 4. **Remove.** Any `item.remove` on an existing item is terminal: the
+//!    item is dropped from the digest and every other op on it is
+//!    disregarded. There is no un-remove; a client that wants the item back
+//!    adds a new one.
+//! 5. **Fields.** Each remaining op sets one field. Per field, the write with
+//!    the greatest `(created_at, id)` wins, and the create op's values take
+//!    part with the create's own key — so a `text` op stamped *before* the
+//!    `add` (a skewed clock) loses to the add. Ops naming a list or item that
+//!    does not exist are ignored.
+//! 6. **State.** Whether an item is done is decided by `item.done` alone,
+//!    exactly as a reader that predates `item.status` decides it: the
+//!    winning `item.done` (or the `add`'s implicit `false`) sets `done`,
+//!    `completedAt` and `completedBy`. `item.status` only refines that: the
+//!    winning `item.status` is the item's status when its key is greater
+//!    than the winning `item.done`'s and it agrees on closed-ness (`done`
+//!    and `canceled` are closed); otherwise the status is `done` or `todo`
+//!    from `item.done`. So no interleaving of the two ops, and no writer
+//!    whose second op was refused, can make two readers of different ages
+//!    disagree on whether an item is done. An untouched item is `todo`,
+//!    priority `none`, description null.
+//! 7. **Order out.** Lists sort by `(createdAt, id)`. Within a list, open
+//!    items sort by `(rank, id)` and completed items by
+//!    `(completedAt, doneOpId)` descending — most recently completed first.
+//!    `updatedAt` on an item is the greatest applied op key; on a list, the
+//!    greatest over its own ops and its items' (removes included).
+
+use std::collections::{HashMap, HashSet};
+
+use serde::{Deserialize, Serialize};
+
+use std::str::FromStr;
+
+use crate::project_todo::{
+    decode_project_todo_op, ProjectTodoOp, ProjectTodoOpValue, TodoPriority, TodoStatus,
+    TodoVisibility,
+};
+use crate::{normalize_project_coordinate, KIND_PROJECT_TODO_OP};
+
+/// Exact `schema` value carried by a digest.
+pub const PROJECT_TODO_DIGEST_SCHEMA: &str = "buzz-project-todo-digest/v1";
+
+/// One stored event as the fold sees it — the subset of a Nostr event the
+/// rules read. A relay-stored event converts losslessly; the conformance
+/// vectors are written in this shape directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoFoldEvent {
+    /// Event id (64 hex).
+    pub id: String,
+    /// Author (64 hex).
+    pub pubkey: String,
+    /// Seconds since the epoch.
+    pub created_at: u64,
+    /// Event kind; anything but 44248 is ignored.
+    pub kind: u32,
+    /// Tags; only the single `a` tag is read.
+    pub tags: Vec<Vec<String>>,
+    /// Op content JSON.
+    pub content: String,
+}
+
+/// One item in the digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    /// Item id.
+    pub id: String,
+    /// The list it belongs to.
+    pub list_id: String,
+    /// Text.
+    pub text: String,
+    /// Done or not.
+    pub done: bool,
+    /// Rank among the open items.
+    pub rank: String,
+    /// Assignee pubkey, if any.
+    pub assignee: Option<String>,
+    /// Due date `YYYY-MM-DD`, if any.
+    pub due: Option<String>,
+    /// Workflow status (`TodoStatus` wire spelling); `done` is `true`
+    /// exactly when this is `done` or `canceled`.
+    pub status: String,
+    /// Priority (`TodoPriority` wire spelling).
+    pub priority: String,
+    /// Longer description, if any.
+    pub description: Option<String>,
+    /// The winning `item.add`'s `created_at`.
+    pub created_at: u64,
+    /// The winning `item.add`'s author.
+    pub created_by: String,
+    /// The greatest applied op `created_at`.
+    pub updated_at: u64,
+    /// When the winning `item.done{true}` was stamped, if done.
+    pub completed_at: Option<u64>,
+    /// Who stamped it, if done.
+    pub completed_by: Option<String>,
+}
+
+/// One list in the digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoList {
+    /// List id.
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// `"project"` or `"personal"`, fixed at creation.
+    pub visibility: String,
+    /// Archived or not.
+    pub archived: bool,
+    /// Shown in the project sidebar (shared; a personal list's pin is only
+    /// ever seen by its owner).
+    pub pinned: bool,
+    /// The winning `list.create`'s `created_at`.
+    pub created_at: u64,
+    /// The winning `list.create`'s author.
+    pub created_by: String,
+    /// The greatest applied op `created_at` over the list and its items.
+    pub updated_at: u64,
+    /// Not-done items, by rank.
+    pub open: Vec<TodoItem>,
+    /// Done items, most recently completed first.
+    pub completed: Vec<TodoItem>,
+}
+
+/// The fold's output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTodoDigest {
+    /// Always [`PROJECT_TODO_DIGEST_SCHEMA`].
+    pub schema: String,
+    /// The project coordinate the ops were folded for.
+    pub project: String,
+    /// Events that did not decode or named no existing target.
+    pub ignored: usize,
+    /// Lists, by `(createdAt, id)`.
+    pub lists: Vec<TodoList>,
+}
+
+/// `(created_at, id)` — the fold's only clock.
+type OpKey = (u64, String);
+
+struct ListState {
+    title: (OpKey, String),
+    visibility: TodoVisibility,
+    archived: (OpKey, bool),
+    pinned: (OpKey, bool),
+    created_at: u64,
+    created_by: String,
+    updated_at: u64,
+}
+
+struct ItemState {
+    text: (OpKey, String),
+    rank: (OpKey, String),
+    /// The winning `item.done` (the add's implicit `false` at first) and
+    /// its author: the only source of done-ness.
+    done: (OpKey, bool, String),
+    /// The winning `item.status`, if any — a refinement of `done`, never a
+    /// rival to it (rule 6).
+    status: Option<(OpKey, TodoStatus)>,
+    assignee: (OpKey, Option<String>),
+    due: (OpKey, Option<String>),
+    priority: (OpKey, TodoPriority),
+    description: (OpKey, Option<String>),
+    created_at: u64,
+    created_by: String,
+    updated_at: u64,
+}
+
+struct Decoded<'a> {
+    key: OpKey,
+    pubkey: &'a str,
+    op: ProjectTodoOp,
+}
+
+fn decode(project: &str, event: &TodoFoldEvent) -> Option<ProjectTodoOp> {
+    if event.kind != KIND_PROJECT_TODO_OP {
+        return None;
+    }
+    let mut a_tags = event
+        .tags
+        .iter()
+        .filter(|t| t.first().map(String::as_str) == Some("a"))
+        .filter_map(|t| t.get(1));
+    let coordinate = a_tags.next()?;
+    if a_tags.next().is_some() {
+        return None;
+    }
+    if normalize_project_coordinate(coordinate).as_deref() != Some(project) {
+        return None;
+    }
+    let mut vis_tags = event
+        .tags
+        .iter()
+        .filter(|t| t.first().map(String::as_str) == Some("td-vis"))
+        .filter_map(|t| t.get(1));
+    let visibility = TodoVisibility::from_str(vis_tags.next()?).ok()?;
+    if vis_tags.next().is_some() {
+        return None;
+    }
+    decode_project_todo_op(&event.content, visibility).ok()
+}
+
+fn set_field<T>(slot: &mut (OpKey, T), key: &OpKey, value: T) {
+    if *key > slot.0 {
+        *slot = (key.clone(), value);
+    }
+}
+
+/// [`set_field`] for a field that also records who wrote the winning op.
+fn set_field_by<T>(slot: &mut (OpKey, T, String), key: &OpKey, value: T, by: &str) {
+    if *key > slot.0 {
+        *slot = (key.clone(), value, by.to_owned());
+    }
+}
+
+/// Rule 6: the status a reader shows, given the winning `item.done` and the
+/// winning `item.status`. Done-ness is `done`'s alone; a status applies only
+/// when it is later than `done` and on the same side of the closed boundary.
+fn effective_status(
+    done: &(OpKey, bool, String),
+    status: Option<&(OpKey, TodoStatus)>,
+) -> TodoStatus {
+    match status {
+        Some((key, status)) if *key > done.0 && status.is_closed() == done.1 => *status,
+        _ if done.1 => TodoStatus::Done,
+        _ => TodoStatus::Todo,
+    }
+}
+
+/// Fold `events` for `project` into a digest. See the module doc for the
+/// rules. `project` must already be a canonical coordinate; events naming
+/// any other coordinate are ignored.
+pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTodoDigest {
+    let mut ignored = 0usize;
+    let mut seen = HashSet::new();
+    let mut ops: Vec<Decoded<'_>> = Vec::new();
+    for event in events {
+        if !seen.insert(event.id.as_str()) {
+            continue;
+        }
+        match decode(project, event) {
+            Some(op) => ops.push(Decoded {
+                key: (event.created_at, event.id.clone()),
+                pubkey: &event.pubkey,
+                op,
+            }),
+            None => ignored += 1,
+        }
+    }
+    ops.sort_by(|a, b| a.key.cmp(&b.key));
+
+    // Creates, earliest first.
+    let mut lists: HashMap<String, ListState> = HashMap::new();
+    for d in &ops {
+        if let ProjectTodoOpValue::ListCreate { title, visibility } = &d.op.value {
+            if lists.contains_key(d.op.list_id.as_str()) {
+                ignored += 1;
+                continue;
+            }
+            lists.insert(
+                d.op.list_id.clone(),
+                ListState {
+                    title: (d.key.clone(), title.clone()),
+                    visibility: *visibility,
+                    archived: (d.key.clone(), false),
+                    pinned: (d.key.clone(), false),
+                    created_at: d.key.0,
+                    created_by: d.pubkey.to_owned(),
+                    updated_at: d.key.0,
+                },
+            );
+        }
+    }
+    // Every other op must agree with its list's visibility, and a personal
+    // list takes ops from its creator only. Ops on a list that does not
+    // exist are counted where they are handled below; these are the ops on
+    // existing lists that are refused on visibility grounds.
+    ops.retain(|d| {
+        if matches!(d.op.value, ProjectTodoOpValue::ListCreate { .. }) {
+            return true;
+        }
+        let Some(list) = lists.get(d.op.list_id.as_str()) else {
+            return true;
+        };
+        let admitted = d.op.visibility == list.visibility
+            && (list.visibility == TodoVisibility::Project || d.pubkey == list.created_by);
+        if !admitted {
+            ignored += 1;
+        }
+        admitted
+    });
+    let mut items: HashMap<(&str, &str), ItemState> = HashMap::new();
+    let mut removed: HashSet<(&str, &str)> = HashSet::new();
+    for d in &ops {
+        if let ProjectTodoOpValue::ItemAdd {
+            item_id,
+            text,
+            rank,
+        } = &d.op.value
+        {
+            let Some(list) = lists.get_mut(d.op.list_id.as_str()) else {
+                ignored += 1;
+                continue;
+            };
+            if items.contains_key(&(d.op.list_id.as_str(), item_id.as_str())) {
+                ignored += 1;
+                continue;
+            }
+            list.updated_at = list.updated_at.max(d.key.0);
+            items.insert(
+                (&d.op.list_id, item_id),
+                ItemState {
+                    text: (d.key.clone(), text.clone()),
+                    rank: (d.key.clone(), rank.clone()),
+                    done: (d.key.clone(), false, d.pubkey.to_owned()),
+                    status: None,
+                    assignee: (d.key.clone(), None),
+                    due: (d.key.clone(), None),
+                    priority: (d.key.clone(), TodoPriority::None),
+                    description: (d.key.clone(), None),
+                    created_at: d.key.0,
+                    created_by: d.pubkey.to_owned(),
+                    updated_at: d.key.0,
+                },
+            );
+        }
+    }
+    // Removes are terminal, whenever they were stamped.
+    for d in &ops {
+        if let ProjectTodoOpValue::ItemRemove { item_id } = &d.op.value {
+            let target = (d.op.list_id.as_str(), item_id.as_str());
+            if items.contains_key(&target) {
+                removed.insert(target);
+                if let Some(list) = lists.get_mut(d.op.list_id.as_str()) {
+                    list.updated_at = list.updated_at.max(d.key.0);
+                }
+            } else {
+                ignored += 1;
+            }
+        }
+    }
+
+    // Field writes, latest key per field.
+    for d in &ops {
+        let list_id = d.op.list_id.as_str();
+        let Some(list) = lists.get_mut(list_id) else {
+            // Creates and removes on a missing list were already counted in
+            // their own passes; every other op on a missing list is counted
+            // here.
+            if !matches!(
+                d.op.value,
+                ProjectTodoOpValue::ListCreate { .. }
+                    | ProjectTodoOpValue::ItemAdd { .. }
+                    | ProjectTodoOpValue::ItemRemove { .. }
+            ) {
+                ignored += 1;
+            }
+            continue;
+        };
+        match &d.op.value {
+            ProjectTodoOpValue::ListCreate { .. } | ProjectTodoOpValue::ItemAdd { .. } => {
+                // Already folded as creates; an ItemAdd for a missing list was
+                // counted there too.
+            }
+            ProjectTodoOpValue::ItemRemove { .. } => {}
+            ProjectTodoOpValue::ListTitle { title } => {
+                set_field(&mut list.title, &d.key, title.clone());
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ListArchived { archived } => {
+                set_field(&mut list.archived, &d.key, *archived);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ListPinned { pinned } => {
+                set_field(&mut list.pinned, &d.key, *pinned);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemText { item_id, text } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.text, &d.key, text.clone());
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemDone { item_id, done } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field_by(&mut item.done, &d.key, *done, d.pubkey);
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemAssignee { item_id, assignee } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.assignee, &d.key, assignee.clone());
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemDue { item_id, due } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.due, &d.key, due.clone());
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemStatus { item_id, status } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                if item.status.as_ref().is_none_or(|(key, _)| d.key > *key) {
+                    item.status = Some((d.key.clone(), *status));
+                }
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemPriority { item_id, priority } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.priority, &d.key, *priority);
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemDescription {
+                item_id,
+                description,
+            } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.description, &d.key, description.clone());
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemRank { item_id, rank } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.rank, &d.key, rank.clone());
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+        }
+    }
+
+    // Assemble.
+    let mut out_lists: Vec<TodoList> = lists
+        .iter()
+        .map(|(list_id, state)| {
+            let mut open: Vec<(String, TodoItem)> = Vec::new();
+            let mut completed: Vec<(OpKey, TodoItem)> = Vec::new();
+            for ((owner, item_id), item) in &items {
+                if owner != list_id || removed.contains(&(owner, item_id)) {
+                    continue;
+                }
+                let done = item.done.1;
+                let status = effective_status(&item.done, item.status.as_ref());
+                let row = TodoItem {
+                    id: (*item_id).to_owned(),
+                    list_id: (*list_id).to_owned(),
+                    text: item.text.1.clone(),
+                    done,
+                    rank: item.rank.1.clone(),
+                    assignee: item.assignee.1.clone(),
+                    due: item.due.1.clone(),
+                    status: status.as_str().to_owned(),
+                    priority: item.priority.1.as_str().to_owned(),
+                    description: item.description.1.clone(),
+                    created_at: item.created_at,
+                    created_by: item.created_by.clone(),
+                    updated_at: item.updated_at,
+                    completed_at: done.then_some(item.done.0 .0),
+                    completed_by: done.then(|| item.done.2.clone()),
+                };
+                if done {
+                    completed.push((item.done.0.clone(), row));
+                } else {
+                    open.push((item.rank.1.clone(), row));
+                }
+            }
+            open.sort_by(|a, b| {
+                (a.0.as_str(), a.1.id.as_str()).cmp(&(b.0.as_str(), b.1.id.as_str()))
+            });
+            completed.sort_by(|a, b| b.0.cmp(&a.0));
+            TodoList {
+                id: (*list_id).to_owned(),
+                title: state.title.1.clone(),
+                visibility: state.visibility.as_str().to_owned(),
+                archived: state.archived.1,
+                pinned: state.pinned.1,
+                created_at: state.created_at,
+                created_by: state.created_by.clone(),
+                updated_at: state.updated_at,
+                open: open.into_iter().map(|(_, row)| row).collect(),
+                completed: completed.into_iter().map(|(_, row)| row).collect(),
+            }
+        })
+        .collect();
+    out_lists.sort_by(|a, b| (a.created_at, a.id.as_str()).cmp(&(b.created_at, b.id.as_str())));
+
+    ProjectTodoDigest {
+        schema: PROJECT_TODO_DIGEST_SCHEMA.to_owned(),
+        project: project.to_owned(),
+        ignored,
+        lists: out_lists,
+    }
+}

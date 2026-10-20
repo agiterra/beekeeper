@@ -11,6 +11,7 @@ description = "Core types, event verification, and filter matching for Beekeeper
 test-utils = []
 
 [dependencies]
+beekeeper-nip-td = { path = "../beekeeper-nip-td" }
 base64     = { workspace = true }
 nostr      = { workspace = true }
 serde      = { workspace = true }

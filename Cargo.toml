@@ -2,6 +2,7 @@
 members = [
     "crates/beekeeper-relay",
     "crates/beekeeper-core",
+    "crates/beekeeper-nip-td",
     "crates/beekeeper-conformance",
     "crates/beekeeper-push-gateway",
     "crates/beekeeper-db",

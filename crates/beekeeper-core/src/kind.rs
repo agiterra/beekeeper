@@ -931,7 +931,7 @@ pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 /// inside `uv.lock` files.
 ///
 /// The wire contract is `docs/nips/NIP-TD.md`.
-pub const KIND_PROJECT_TODO_OP: u32 = 44248;
+pub const KIND_PROJECT_TODO_OP: u32 = beekeeper_nip_td::KIND_PROJECT_TODO_OP;
 
 /// NIP-PW: Project work record — the signed join between a committed plan
 /// file and the work that delivers it.
@@ -1751,22 +1751,7 @@ pub fn repo_project_ref(event: &nostr::Event) -> Option<String> {
 /// Only the live project kind is accepted: this relay never stored the
 /// fork-era `30178:` project coordinates, and 30178 is the team-catalog kind
 /// here — accepting it would alias an unrelated kind into project refs.
-pub fn normalize_project_coordinate(value: &str) -> Option<String> {
-    let mut parts = value.splitn(3, ':');
-    let kind = parts.next()?;
-    let pubkey = parts.next()?;
-    let dtag = parts.next()?;
-    if kind != "30621" {
-        return None;
-    }
-    if pubkey.len() != 64 || !pubkey.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    if dtag.is_empty() || dtag.chars().count() > 64 || dtag.chars().any(char::is_control) {
-        return None;
-    }
-    Some(format!("30621:{}:{dtag}", pubkey.to_ascii_lowercase()))
-}
+pub use beekeeper_nip_td::normalize_project_coordinate;
 
 /// The community-unique repo names a git-gated event belongs to.
 ///

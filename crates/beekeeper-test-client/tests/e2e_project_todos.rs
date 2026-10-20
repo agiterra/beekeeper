@@ -36,7 +36,7 @@
 
 use std::time::Duration;
 
-use beekeeper_core::project_todo_fold::{fold_project_todos, TodoFoldEvent};
+use beekeeper_core::project_todo_fold::{fold_project_todos, todo_fold_event, TodoFoldEvent};
 use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
@@ -867,7 +867,7 @@ async fn test_two_writers_fold_to_one_list() {
         .expect("viewer connect");
     let events = query(&mut viewer_client, "viewer-fold", todo_filter(&coordinate)).await;
     assert_eq!(events.len(), 11, "the viewer reads every op");
-    let inputs: Vec<TodoFoldEvent> = events.iter().map(TodoFoldEvent::from).collect();
+    let inputs: Vec<TodoFoldEvent> = events.iter().map(todo_fold_event).collect();
     let digest = fold_project_todos(&coordinate, &inputs);
 
     assert_eq!(
@@ -1312,7 +1312,7 @@ async fn test_planning_ops_round_trip_and_fold() {
 
     let events = query(&mut owner_client, "planning-fold", todo_filter(&coordinate)).await;
     assert_eq!(events.len(), 11, "the two refused ops were not stored");
-    let inputs: Vec<TodoFoldEvent> = events.iter().map(TodoFoldEvent::from).collect();
+    let inputs: Vec<TodoFoldEvent> = events.iter().map(todo_fold_event).collect();
     let digest = fold_project_todos(&coordinate, &inputs);
     assert_eq!(digest.ignored, 0);
     assert_eq!(digest.lists.len(), 1);
