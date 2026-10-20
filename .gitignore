@@ -76,3 +76,6 @@ identity.key
 # Coding-session worktrees, when a repository opts into keeping them inside
 # itself rather than beside it. See beekeeper_core::worktree_placement.
 .worktrees/
+
+# Plugin workspaces build beside their sources when tested natively.
+/plugins/*/target/

@@ -1,0 +1,26 @@
+[package]
+name = "beekeeper-plugin-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process WebAssembly component host for Beekeeper plugins: sha256-pinned registry, no WASI, per-call limits"
+
+[dependencies]
+# Pinned exactly: 48.x is the newest line whose MSRV (1.95) matches
+# rust-toolchain.toml, and a plugin host is not a crate to float. No WASI:
+# the default features are off and nothing here links wasmtime-wasi.
+wasmtime   = { version = "=48.0.6", default-features = false, features = ["anyhow", "runtime", "cranelift", "component-model", "std"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+sha2       = { workspace = true }
+hex        = { workspace = true }
+thiserror  = { workspace = true }
+toml       = "1.0"
+tracing    = { workspace = true }
+
+[dev-dependencies]
+beekeeper-nip-td = { path = "../beekeeper-nip-td" }
+tempfile = "3"
+wat = "1"

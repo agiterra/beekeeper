@@ -1,0 +1,32 @@
+[package]
+name = "beekeeper-planning-plugin"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0"
+publish = false
+description = "Beekeeper's first-party Planning provider, as a WebAssembly component (beekeeper:plugin@1, operation-provider)"
+
+# Its own workspace: this package builds for wasm32-unknown-unknown and
+# tests natively, independently of the relay, the desktop app and the root
+# workspace. `just plugins-build` packs it; the relay only ever sees the
+# pinned component.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+beekeeper-nip-td = { path = "../../crates/beekeeper-nip-td" }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = { version = "0.63", default-features = false, features = ["macros", "realloc"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

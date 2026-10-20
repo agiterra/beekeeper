@@ -1,0 +1,180 @@
+/// The public contract between a Beekeeper relay and an operation-provider
+/// plugin: a WebAssembly component that implements a product capability's
+/// operations (Planning is the first) without holding a key, a secret, a
+/// socket or a database handle.
+///
+/// The same contract binds first-party and third-party plugins. A relay loads
+/// a plugin only through its registry (`docs/plugins.md`): a sha256-pinned
+/// file plus operator grants. Nothing here is native-only.
+///
+/// What the host owns, on every call: the caller's identity (NIP-98), the
+/// community the request's host names, whether the caller may read or write
+/// the scope, which records the caller may see, the time, the entropy, and
+/// every byte that is signed. What the plugin owns: what an operation means.
+///
+/// Versioning: a host accepts components built against any 1.x of this
+/// package. Additive changes (new host imports, new optional fields in the
+/// JSON a plugin defines) stay within 1.x; a changed or removed export is 2.0.
+package beekeeper:plugin@1.0.0;
+
+interface types {
+    /// A record as the relay stored it: a signed Nostr event without its
+    /// signature. The host verified the signature at ingest; `pubkey` is the
+    /// member who signed it.
+    record stored-record {
+        id: string,
+        pubkey: string,
+        created-at: u64,
+        kind: u32,
+        tags: list<list<string>>,
+        content: string,
+    }
+
+    /// A read the plugin asks for. There is no scope parameter on purpose:
+    /// the host applies the invocation's scope and the caller's visibility to
+    /// every query, so a plugin cannot name another project or tenant.
+    record record-query {
+        /// Must be a subset of the kinds the plugin was granted to read.
+        kinds: list<u32>,
+        /// Newest first; only records with `created-at <= until`.
+        until: option<u64>,
+        /// At most the host's page size (1000).
+        limit: u32,
+    }
+
+    record record-page {
+        records: list<stored-record>,
+        /// Records older than the last one may exist.
+        more: bool,
+    }
+
+    variant host-error {
+        /// Outside what the plugin was granted (a kind, an operation).
+        denied(string),
+        /// This invocation's query, record or byte budget is spent.
+        budget-exhausted(string),
+        /// The host could not serve the read (database unavailable).
+        unavailable(string),
+        /// The request itself was malformed (zero limit, empty kinds).
+        invalid(string),
+    }
+
+    /// What an operation acts on. The host resolved and authorized it.
+    variant scope {
+        /// A canonical `30621:<hex>:<d>` project coordinate.
+        project(string),
+    }
+
+    /// What the host authorized the caller to do in the scope.
+    enum access { read, write }
+
+    record invocation {
+        operation: string,
+        /// The operation's input, a JSON value the plugin defines.
+        input-json: string,
+        /// The caller's pubkey (64 lowercase hex), proven by NIP-98.
+        caller: string,
+        scope: scope,
+        access: access,
+        /// The host's clock, unix seconds.
+        now: u64,
+        /// 32 fresh random bytes for ids the plugin mints.
+        entropy: list<u8>,
+    }
+
+    /// What a client does when the relay refuses a draft.
+    enum if-refused {
+        /// Stop. If an earlier draft was accepted the write is partial and the
+        /// client reports `partial-summary` (or says so generically).
+        abort,
+        /// Report this draft's group as failed, skip the rest of that group,
+        /// and carry on with the next group.
+        skip-group,
+    }
+
+    /// An unsigned event the caller signs with their own key and publishes
+    /// through ordinary ingest. The plugin never signs and the relay never
+    /// signs a member's edit for them.
+    record event-draft {
+        kind: u32,
+        created-at: u64,
+        tags: list<list<string>>,
+        content: string,
+        /// A label for reporting ("issue", "status"); drafts sharing a group
+        /// stand or fall together under `skip-group`.
+        group: string,
+        if-refused: if-refused,
+        partial-summary: option<string>,
+    }
+
+    record op-output {
+        /// The operation's result, a JSON value the plugin defines.
+        result-json: string,
+        /// Ordered drafts; empty for a read.
+        drafts: list<event-draft>,
+    }
+
+    variant op-error {
+        invalid-input(string),
+        not-found(string),
+        conflict(string),
+        unsupported(string),
+        host(host-error),
+        internal(string),
+    }
+
+    enum op-effect {
+        /// Returns a result and no drafts. Needs read access.
+        read,
+        /// May return drafts. Needs write access.
+        draft,
+    }
+
+    record operation-decl {
+        name: string,
+        effect: op-effect,
+        summary: string,
+    }
+
+    record manifest {
+        /// Must equal the name the plugin is registered under.
+        name: string,
+        version: string,
+        /// The operation APIs this plugin implements, e.g.
+        /// `beekeeper.planning/1`. Clients pick a provider by API, not name.
+        api: list<string>,
+        operations: list<operation-decl>,
+        /// Kinds the plugin reads; each must be granted by the registry.
+        read-kinds: list<u32>,
+        /// Kinds the plugin drafts; each must be granted by the registry and
+        /// have a validator in the host.
+        draft-kinds: list<u32>,
+    }
+}
+
+interface records {
+    use types.{record-query, record-page, host-error};
+
+    /// Read records in the invocation's scope that the caller may see.
+    query: func(query: record-query) -> result<record-page, host-error>;
+}
+
+interface log {
+    enum level { debug, info, warn }
+
+    /// The host truncates each message and caps how many it keeps.
+    log: func(level: level, message: string);
+}
+
+interface operations {
+    use types.{manifest, invocation, op-output, op-error};
+
+    describe: func() -> manifest;
+    invoke: func(invocation: invocation) -> result<op-output, op-error>;
+}
+
+world operation-provider {
+    import records;
+    import log;
+    export operations;
+}

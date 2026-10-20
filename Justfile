@@ -600,7 +600,7 @@ desktop-e2e-pre-push: _ensure-migrations
     cd {{desktop_dir}} && pnpm build:e2e && pnpm exec playwright test --only-changed=origin/main
 
 # Run all checks suitable for CI / pre-push (no infra needed)
-ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri-test web-test web-build mobile-test
+ci: check test-unit test-plugins desktop-test desktop-build desktop-tauri-check desktop-tauri-test web-test web-build mobile-test
 
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
@@ -852,6 +852,20 @@ test-unit:
     else
         ./scripts/run-tests.sh unit
     fi
+
+# Build every plugin under plugins/ into target/plugins/ (components plus
+# registry.toml and registry.test.toml, each entry pinned by sha256). See
+# docs/plugins.md. Needs the wasm32-unknown-unknown target, which
+# rust-toolchain.toml installs.
+plugins-build:
+    ./scripts/build-plugins.sh
+
+# Plugins, without any service: each plugin's own native tests (they are
+# separate Cargo workspaces, so `test-unit` never sees them), then the host's
+# containment tests against the freshly built components.
+test-plugins: plugins-build
+    cargo test --manifest-path plugins/planning/Cargo.toml
+    cargo test -p beekeeper-plugin-host -- --include-ignored
 
 # Run integration tests only (starts services if needed)
 test-integration:

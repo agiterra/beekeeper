@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.95.0"
 profile = "default"
+# Plugins under plugins/ build for wasm32-unknown-unknown (scripts/build-plugins.sh).
+targets = ["wasm32-unknown-unknown"]

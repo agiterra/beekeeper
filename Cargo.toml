@@ -3,6 +3,8 @@ members = [
     "crates/beekeeper-relay",
     "crates/beekeeper-core",
     "crates/beekeeper-nip-td",
+    "crates/beekeeper-plugin-host",
+    "crates/beekeeper-plugin-tools",
     "crates/beekeeper-conformance",
     "crates/beekeeper-push-gateway",
     "crates/beekeeper-db",

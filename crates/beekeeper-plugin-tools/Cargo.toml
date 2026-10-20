@@ -1,0 +1,23 @@
+[package]
+name = "beekeeper-plugin-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Build and run Beekeeper plugins outside a relay: pack a core module into a component, run an operation over a record file"
+
+[[bin]]
+name = "beekeeper-plugin-pack"
+path = "src/bin/pack.rs"
+
+[[bin]]
+name = "beekeeper-plugin-run"
+path = "src/bin/run.rs"
+
+[dependencies]
+beekeeper-plugin-host = { path = "../beekeeper-plugin-host" }
+beekeeper-nip-td      = { path = "../beekeeper-nip-td" }
+wit-component = "0.262"
+serde      = { workspace = true }
+serde_json = { workspace = true }
