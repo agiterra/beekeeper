@@ -26,6 +26,58 @@ const WORKSPACE_VOLUME: &str = "workspace";
 /// The container name. Fixed: log and exec tooling addresses it by name.
 const CONTAINER_NAME: &str = "agent";
 
+/// The initContainer that hands the workspace root to the run UID.
+const WORKSPACE_INIT_NAME: &str = "workspace-home";
+
+/// The only capabilities the workspace initContainer keeps: `CHOWN` for the
+/// owner change, `FOWNER` for the mode change on a root-owned directory.
+const WORKSPACE_INIT_CAPS: [&str; 2] = ["CHOWN", "FOWNER"];
+
+/// Build the initContainer that makes the workspace root `0755` and owned by
+/// the run UID/GID before the agent starts.
+///
+/// The kubelet creates an `emptyDir` `0777`, and `fsGroup` adds setgid, so
+/// without this `$HOME` is `2777 root:<gid>`: writable by every UID in the
+/// pod, and refused as a cache parent by tools that check (e.g. `@swc/core`
+/// 1.16's native-binding cache). The run UID cannot chmod a root-owned
+/// directory, and `emptyDir` has no mode field, so one root step is needed.
+///
+/// It is the pod's only root process: it gets no Secret, no `envFrom`, all
+/// capabilities dropped except [`WORKSPACE_INIT_CAPS`], no privilege
+/// escalation, and a fixed command built from constants. The agent container
+/// keeps the pod-level `runAsNonRoot: true`.
+fn workspace_init_container(cfg: &ProviderConfig, resources: ResourceRequirements) -> Container {
+    let script = format!(
+        "chown {uid}:{gid} {path} && chmod 0755 {path} && chmod g-s {path}",
+        uid = RUN_AS_UID,
+        gid = RUN_AS_GID,
+        path = WORKSPACE_PATH,
+    );
+    Container {
+        name: WORKSPACE_INIT_NAME.to_string(),
+        image: Some(cfg.image.as_str().to_string()),
+        command: Some(vec!["/bin/sh".to_string(), "-c".to_string(), script]),
+        resources: Some(resources),
+        volume_mounts: Some(vec![VolumeMount {
+            name: WORKSPACE_VOLUME.to_string(),
+            mount_path: WORKSPACE_PATH.to_string(),
+            ..Default::default()
+        }]),
+        security_context: Some(SecurityContext {
+            run_as_user: Some(0),
+            run_as_group: Some(0),
+            run_as_non_root: Some(false),
+            allow_privilege_escalation: Some(false),
+            capabilities: Some(Capabilities {
+                drop: Some(vec!["ALL".to_string()]),
+                add: Some(WORKSPACE_INIT_CAPS.iter().map(|c| c.to_string()).collect()),
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 /// Build the per-attempt Secret holding the resolved environment.
 ///
 /// `immutable: true` — the Secret is written once per attempt and never
@@ -104,6 +156,14 @@ pub fn build_pod(
     ]
     .into_iter()
     .collect();
+    let resources = ResourceRequirements {
+        requests: Some(requests),
+        limits: Some(limits),
+        ..Default::default()
+    };
+    // Same requests/limits as the agent: a pod's effective request is the
+    // max over init containers and the agent, so this adds nothing.
+    let init = workspace_init_container(cfg, resources.clone());
 
     let container = Container {
         name: CONTAINER_NAME.to_string(),
@@ -118,11 +178,7 @@ pub fn build_pod(
             }),
             ..Default::default()
         }]),
-        resources: Some(ResourceRequirements {
-            requests: Some(requests),
-            limits: Some(limits),
-            ..Default::default()
-        }),
+        resources: Some(resources),
         volume_mounts: Some(vec![VolumeMount {
             name: WORKSPACE_VOLUME.to_string(),
             mount_path: WORKSPACE_PATH.to_string(),
@@ -150,6 +206,7 @@ pub fn build_pod(
             ..Default::default()
         },
         spec: Some(PodSpec {
+            init_containers: Some(vec![init]),
             containers: vec![container],
             restart_policy: Some(RESTART_POLICY.to_string()),
             termination_grace_period_seconds: Some(TERMINATION_GRACE_SECONDS),
@@ -316,6 +373,60 @@ mod tests {
         let mount = &spec.containers[0].volume_mounts.as_ref().unwrap()[0];
         assert_eq!(mount.name, volume.name);
         assert_eq!(mount.mount_path, WORKSPACE_PATH);
+    }
+
+    /// The workspace root must end `0755 <uid>:<gid>`: an emptyDir is born
+    /// `2777 root` and the run UID cannot fix that itself.
+    #[test]
+    fn workspace_init_hands_home_to_the_run_uid() {
+        let pod = pod();
+        let spec = spec(&pod);
+        let inits = spec.init_containers.as_ref().expect("init containers");
+        assert_eq!(inits.len(), 1);
+        let init = &inits[0];
+        assert_eq!(init.name, WORKSPACE_INIT_NAME);
+        let mount = &init.volume_mounts.as_ref().unwrap()[0];
+        assert_eq!(mount.name, WORKSPACE_VOLUME);
+        assert_eq!(mount.mount_path, WORKSPACE_PATH);
+        let cmd = init.command.as_ref().unwrap();
+        assert_eq!(&cmd[..2], ["/bin/sh", "-c"]);
+        assert_eq!(
+            cmd[2],
+            "chown 10001:10001 /home/agent && chmod 0755 /home/agent && chmod g-s /home/agent"
+        );
+        assert!(init.args.is_none());
+    }
+
+    /// The init step is the pod's only root process. It must not see the
+    /// identity Secret, and it keeps only the two capabilities it uses.
+    #[test]
+    fn workspace_init_is_minimal_root_and_gets_no_secret() {
+        let pod = pod();
+        let spec = spec(&pod);
+        let init = &spec.init_containers.as_ref().unwrap()[0];
+        assert!(init.env_from.is_none(), "init container sees the Secret");
+        assert!(init.env.is_none());
+        let sc = init.security_context.as_ref().unwrap();
+        assert_eq!(sc.run_as_user, Some(0));
+        assert_eq!(sc.run_as_non_root, Some(false));
+        assert_eq!(sc.allow_privilege_escalation, Some(false));
+        assert_ne!(sc.privileged, Some(true));
+        let caps = sc.capabilities.as_ref().unwrap();
+        assert_eq!(caps.drop, Some(vec!["ALL".to_string()]));
+        assert_eq!(
+            caps.add,
+            Some(vec!["CHOWN".to_string(), "FOWNER".to_string()])
+        );
+
+        // The root override stays on the init container: the agent inherits
+        // the pod-level non-root identity.
+        let agent = &spec.containers[0];
+        assert_eq!(agent.name, CONTAINER_NAME);
+        let asc = agent.security_context.as_ref().unwrap();
+        assert!(asc.run_as_user.is_none() && asc.run_as_non_root.is_none());
+        let psc = spec.security_context.as_ref().unwrap();
+        assert_eq!(psc.run_as_non_root, Some(true));
+        assert_eq!(psc.run_as_user, Some(RUN_AS_UID));
     }
 
     #[test]

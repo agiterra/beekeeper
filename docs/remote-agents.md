@@ -1283,6 +1283,21 @@ regardless of `HOME`.
   purposes only; it MUST NOT silently re-enable token mounting — API-token
   access, if ever wanted, is a separate explicit opt-in, not a side effect
   of naming an SA.
+- **Workspace-home initContainer (the one root step).** The kubelet
+  creates an `emptyDir` `0777`, and `fsGroup` adds setgid, so the
+  workspace root (`$HOME`) would be `2777 root:<gid>`: writable by any UID
+  in the pod, and refused as a cache parent by tools that check (e.g.
+  `@swc/core` 1.16). `emptyDir` has no mode field, and the run UID cannot
+  chmod a root-owned directory. So the pod carries one initContainer,
+  `workspace-home`, which runs `chown <uid>:<gid>`, `chmod 0755` and
+  `chmod g-s` on the workspace root and exits. It is the pod's only root
+  process: same image, `runAsUser: 0` / `runAsNonRoot: false` on that
+  container only, drop-all plus `CHOWN` and `FOWNER`, no privilege
+  escalation, a fixed command, and no Secret or `envFrom`. The agent
+  container keeps the pod-level `runAsNonRoot: true`. A cluster that
+  enforces the Pod Security `restricted` profile on the namespace rejects
+  this pod; such a cluster needs the `baseline` profile for the agent
+  namespace.
 - **Resources**: requests 1 cpu / 2Gi, limits 2 cpu / 4Gi, all four
   configurable (`cargo build` in an agent workspace makes 500m/1Gi requests
   unrealistic).

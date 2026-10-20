@@ -86,7 +86,10 @@ pub struct IntentTemplate {
 }
 
 /// Current template schema version.
-pub const TEMPLATE_VERSION: u32 = 1;
+///
+/// 2: the workspace-home initContainer (`pod::build_pod`) — a never-started
+/// pod of the old shape is replaced; a started one is left alone.
+pub const TEMPLATE_VERSION: u32 = 2;
 
 impl IntentTemplate {
     /// Compute the fingerprint. `serde_json` on a struct with declared field
