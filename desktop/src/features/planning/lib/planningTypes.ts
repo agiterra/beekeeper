@@ -15,8 +15,12 @@
  * by; a priority likewise carries a level; neither is ever written back.
  */
 
-/** The providers this build knows about. */
-export type PlanningProviderId = "native" | "linear";
+/**
+ * A provider's id: the name of the relay plugin that implements
+ * `beekeeper.planning/1` (`planning` is Beekeeper's own), or `linear` for
+ * the provider this build lists but cannot connect.
+ */
+export type PlanningProviderId = string;
 
 /**
  * What a status means, independent of its provider's name for it. These are
@@ -134,7 +138,9 @@ export type PlanningState =
   | { kind: "loading" }
   | { kind: "ready"; read: PlanningRead; refreshing: boolean }
   /** The latest read failed; `read` is the last good one, if there was one. */
-  | { kind: "error"; read: PlanningRead | null; message: string };
+  | { kind: "error"; read: PlanningRead | null; message: string }
+  /** There is nothing this viewer can read here, and why. */
+  | { kind: "unavailable"; reason: string };
 
 export type PlanningCreateInput = {
   title: string;
@@ -177,6 +183,10 @@ export type PlanningCapabilities = {
   comments: boolean;
   /** Whether a create may name no container and get the default one. */
   createsDefaultContainer: boolean;
+  /** What that default container is called, when there is one. */
+  defaultContainerTitle: string | null;
+  /** How the provider describes itself. */
+  provider?: { label: string; description: string };
   /**
    * What a person id is: a Beekeeper pubkey (native), or the provider's own
    * id, resolved through {@link PlanningRead.people}. A provider of the

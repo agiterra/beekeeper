@@ -4,34 +4,43 @@ import * as React from "react";
 import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
-import { PLANNING_PROVIDERS } from "../lib/planningProviders";
-import type { PlanningProviderId } from "../lib/planningTypes";
+import type {
+  PlanningProviderDescriptor,
+  PlanningProviderId,
+} from "../lib/planningTypes";
 
 /**
- * Where this project's issues live, and what else could hold them. The
- * active provider is stated; an unavailable one is listed with why, and has
- * no control — choosing it would have nothing to connect to.
+ * Where this project's issues live, and what else could hold them: the
+ * Planning plugins this relay runs, then providers this build knows of but
+ * cannot connect. The provider in use is stated; an unavailable one is
+ * listed with why and has no control. With more than one available, the
+ * viewer may switch what they are looking at — for this view only.
  */
 export function PlanningProviderControl({
+  providers,
   active,
+  onChoose,
 }: {
-  active: PlanningProviderId;
+  providers: readonly PlanningProviderDescriptor[];
+  active: PlanningProviderId | null;
+  onChoose?: (id: PlanningProviderId) => void;
 }) {
   const [open, setOpen] = React.useState(false);
-  const current =
-    PLANNING_PROVIDERS.find((provider) => provider.id === active) ??
-    PLANNING_PROVIDERS[0];
+  const current = providers.find((provider) => provider.id === active) ?? null;
+  const available = providers.filter(
+    (p) => p.availability.kind === "available",
+  );
   return (
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>
         <Button
-          aria-label={`Planning provider: ${current?.label}`}
+          aria-label={`Planning provider: ${current?.label ?? "none"}`}
           data-testid="planning-provider"
           size="xs"
           variant="ghost"
         >
           <Database aria-hidden="true" />
-          {current?.label}
+          {current?.label ?? "No provider"}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -42,10 +51,22 @@ export function PlanningProviderControl({
         <p className="px-1 pb-2 text-xs font-medium text-foreground">
           Where this project's issues live
         </p>
+        {available.length > 1 ? (
+          <p
+            className="px-1 pb-2 text-2xs text-muted-foreground"
+            data-testid="planning-provider-several"
+          >
+            This relay runs {available.length} Planning providers. Choosing one
+            changes what you see here, not the project: a shared choice for
+            every member is not built yet.
+          </p>
+        ) : null}
         <ul className="flex flex-col gap-1">
-          {PLANNING_PROVIDERS.map((provider) => {
+          {providers.map((provider) => {
             const isActive = provider.id === active;
             const unavailable = provider.availability.kind === "unavailable";
+            const choosable =
+              !isActive && !unavailable && onChoose !== undefined;
             return (
               <li
                 aria-current={isActive ? "true" : undefined}
@@ -67,6 +88,18 @@ export function PlanningProviderControl({
                     <span className="text-2xs text-muted-foreground">
                       Unavailable
                     </span>
+                  ) : choosable ? (
+                    <Button
+                      data-testid={`planning-provider-${provider.id}-choose`}
+                      onClick={() => {
+                        onChoose?.(provider.id);
+                        setOpen(false);
+                      }}
+                      size="xs"
+                      variant="outline"
+                    >
+                      View
+                    </Button>
                   ) : null}
                 </div>
                 <p className="mt-0.5 text-2xs text-muted-foreground">

@@ -174,6 +174,9 @@ pub(crate) fn invoke_handler(
         relay_requires_membership,
         // Generic multi-filter read over POST /query (commands/relay_query.rs).
         query_relay_filters,
+        // The relay's plugin route (commands/relay_plugins.rs).
+        relay_plugins_list,
+        relay_plugin_invoke,
         list_relay_members,
         get_my_relay_membership,
         add_relay_member,

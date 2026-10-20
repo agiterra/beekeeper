@@ -663,3 +663,18 @@ fn a_long_history_is_paged_and_a_very_long_one_says_truncated() {
     assert_eq!(mem.pages, MAX_PAGES);
     assert_eq!(out.result["truncated"], true);
 }
+
+/// The desktop's view tests draw with the capabilities this plugin really
+/// returns, through a checked-in copy. This keeps the copy honest; set
+/// `UPDATE_PLANNING_FIXTURE=1` to rewrite it after a deliberate change.
+#[test]
+fn capabilities_match_the_desktop_test_fixture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../desktop/src/features/planning/lib/planningCapabilities.fixture.json");
+    let actual = serde_json::to_string_pretty(&capabilities()).unwrap() + "\n";
+    if std::env::var_os("UPDATE_PLANNING_FIXTURE").is_some() {
+        std::fs::write(&path, &actual).unwrap();
+    }
+    let expected = std::fs::read_to_string(&path).expect("fixture exists");
+    assert_eq!(expected, actual, "rerun with UPDATE_PLANNING_FIXTURE=1");
+}

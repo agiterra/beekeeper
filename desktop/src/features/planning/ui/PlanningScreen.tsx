@@ -13,16 +13,25 @@ import { ProjectPageTabs } from "@/features/projects-container/ui/ProjectPageTab
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled } from "@/shared/features";
 
-import { NATIVE_CAPABILITIES } from "../lib/nativePlanning";
 import { PlanningPartialWriteError } from "../lib/planningErrors";
 import {
   planningDisplayKey,
   readPlanningDisplay,
   writePlanningDisplay,
 } from "../lib/planningDisplayStorage";
-import { resolvePlanningProvider } from "../lib/planningProviders";
+import {
+  usePlanningActivity,
+  usePlanningProviders,
+  usePluginPlanning,
+} from "../lib/planningPlugin";
+import {
+  planningProviderList,
+  pluginProviderDescriptor,
+  resolvePlanningProvider,
+} from "../lib/planningProviders";
 import type {
   PlanningAccess,
+  PlanningCapabilities,
   PlanningCreateInput,
   PlanningIssue,
 } from "../lib/planningTypes";
@@ -37,7 +46,6 @@ import {
   stepSelection,
   viewerPersonId,
 } from "../lib/planningView";
-import { useNativePlanning } from "../lib/useNativePlanning";
 import { PlanningIssueDetail } from "./PlanningIssueDetail";
 import type { PlanningRowActions } from "./PlanningIssueList";
 import {
@@ -69,18 +77,27 @@ function keyBelongsElsewhere(event: KeyboardEvent): boolean {
   );
 }
 
-const DEFAULT_CREATE: QuickCreateDefaults = {
-  ...defaultCreateIds(NATIVE_CAPABILITIES),
-  assignee: null,
-  containerId: null,
+/**
+ * What the view draws with before a provider has described itself, or when
+ * there is none: no statuses, no priorities, nothing creatable.
+ */
+const NO_CAPABILITIES: PlanningCapabilities = {
+  statuses: [],
+  priorities: [],
+  comments: false,
+  createsDefaultContainer: false,
+  defaultContainerTitle: null,
+  personIds: "beekeeper-pubkey",
+  limits: { titleBytes: 0, descriptionBytes: 0 },
 };
 
 /**
  * `/projects/$projectId/planning` — the project's issues as a compact list
  * or a board over the same records, with filters, grouping, quick create
- * and a detail panel. Native planning is the provider: the issues are the
- * project's shared NIP-TD list items, so the To-Do tab, `bee todos` and this
- * page all read and write the same records.
+ * and a detail panel. Every read and write is an operation of a relay plugin
+ * implementing `beekeeper.planning/1`; Beekeeper's own (`planning`) keeps
+ * issues as the project's shared NIP-TD list items, so the To-Do tab,
+ * `bee todos`, `bee planning` and this page all read the same records.
  *
  * Keyboard: C new issue, / search, J/K or ↓/↑ move, Enter open, Esc close.
  */
@@ -101,9 +118,41 @@ export function PlanningScreen({
     project && project.id !== LOCAL_GENERAL_ID && project.owner.length > 0
       ? project.address
       : null;
-  const provider = resolvePlanningProvider();
-  const planning = useNativePlanning(coordinate);
-  const capabilities = NATIVE_CAPABILITIES;
+  const providerList = usePlanningProviders();
+  const [pickedProvider, setPickedProvider] = React.useState<string | null>(
+    null,
+  );
+  const registered =
+    providerList.kind === "ready" ? providerList.providers : [];
+  const provider = resolvePlanningProvider(registered, pickedProvider);
+  const unavailable =
+    providerList.kind === "unavailable"
+      ? providerList.reason
+      : providerList.kind === "error"
+        ? `Could not ask this relay which Planning providers it runs: ${providerList.message}`
+        : null;
+  const planning = usePluginPlanning(coordinate, provider, unavailable);
+  const capabilities = planning.capabilities ?? NO_CAPABILITIES;
+  const providers = React.useMemo(
+    () =>
+      planningProviderList(
+        registered.map((plugin) =>
+          pluginProviderDescriptor(
+            plugin,
+            plugin.name === provider?.name ? planning.capabilities : null,
+          ),
+        ),
+      ),
+    [planning.capabilities, provider?.name, registered],
+  );
+  const defaultCreate = React.useMemo<QuickCreateDefaults>(
+    () => ({
+      ...defaultCreateIds(capabilities),
+      assignee: null,
+      containerId: null,
+    }),
+    [capabilities],
+  );
 
   const projectCapabilities = useProjectCapabilities(project);
   const rosterQuery = useProjectRosterQuery(project);
@@ -120,12 +169,23 @@ export function PlanningScreen({
           reason:
             "This project has no published head yet, so it cannot hold issues. Publish it first.",
         }
-      : todoAccess;
+      : planning.state.kind === "unavailable"
+        ? { kind: "read-only", reason: planning.state.reason }
+        : planning.relayAccess === "read" && todoAccess.kind === "writable"
+          ? {
+              kind: "read-only",
+              reason:
+                "The relay lets you read this project's issues but not change them.",
+            }
+          : todoAccess;
   const canEdit = access.kind === "writable";
 
   // People: every person an issue names, resolved to Beekeeper profiles in
   // one batch. Person ids are the provider's; natively they are pubkeys.
-  const read = planning.state.kind === "loading" ? null : planning.state.read;
+  const read =
+    planning.state.kind === "loading" || planning.state.kind === "unavailable"
+      ? null
+      : planning.state.read;
   const viewerId = viewerPersonId(capabilities, read, self);
   const pubkeys = React.useMemo(() => {
     const set = new Set<string>();
@@ -137,7 +197,7 @@ export function PlanningScreen({
       }
     }
     return [...set];
-  }, [read]);
+  }, [capabilities, read]);
   const profiles = useUsersBatchQuery(pubkeys);
   const profileMap = profiles.data?.profiles;
   const personFor = React.useCallback(
@@ -146,7 +206,7 @@ export function PlanningScreen({
         personPubkey(capabilities, read, personId) ?? personId,
         profileMap,
       ),
-    [profileMap, read],
+    [capabilities, profileMap, read],
   );
 
   // Display options are personal and remembered; filters are not.
@@ -231,17 +291,17 @@ export function PlanningScreen({
   const { mutations } = planning;
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createDefaults, setCreateDefaults] =
-    React.useState<QuickCreateDefaults>(DEFAULT_CREATE);
+    React.useState<QuickCreateDefaults>(defaultCreate);
   const openCreate = React.useCallback(
     (defaults: Partial<QuickCreateDefaults> = {}) => {
       setCreateDefaults({
-        ...DEFAULT_CREATE,
+        ...defaultCreate,
         containerId: filters.containerId,
         ...defaults,
       });
       setCreateOpen(true);
     },
-    [filters.containerId],
+    [defaultCreate, filters.containerId],
   );
 
   const actions = React.useMemo<PlanningRowActions>(
@@ -366,6 +426,16 @@ export function PlanningScreen({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [canEdit, issueKey, openCreate, read, setOpenKey]);
 
+  const openIssue =
+    issueKey !== null
+      ? (read?.issues.find((issue) => issue.key === issueKey) ?? null)
+      : null;
+  const activity = usePlanningActivity(
+    coordinate,
+    provider?.name ?? null,
+    openIssue,
+  );
+
   if (!project) {
     return (
       <div
@@ -377,10 +447,6 @@ export function PlanningScreen({
     );
   }
 
-  const openIssue =
-    issueKey !== null
-      ? (read?.issues.find((issue) => issue.key === issueKey) ?? null)
-      : null;
   const containerTitle = (id: string) =>
     read?.containers.find((container) => container.id === id)?.title ?? null;
 
@@ -413,8 +479,10 @@ export function PlanningScreen({
           onVisibleOrder={onVisibleOrder}
           openKey={issueKey}
           personFor={personFor}
+          activeProvider={provider?.name ?? null}
+          onChooseProvider={setPickedProvider}
           project={project}
-          provider={provider}
+          providers={providers}
           searchRef={searchRef}
           selectedKey={selectedKey}
           self={viewerId}
@@ -435,7 +503,7 @@ export function PlanningScreen({
                 setPriority: actions.setPriority,
                 setAssignee: actions.setAssignee,
               }}
-              activity={planning.activityFor(openIssue)}
+              activity={activity}
               canEdit={canEdit}
               capabilities={capabilities}
               containerTitle={containerTitle(openIssue.containerId)}

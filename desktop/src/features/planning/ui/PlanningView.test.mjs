@@ -4,13 +4,41 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { NATIVE_CAPABILITIES } from "../lib/nativePlanning.ts";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DEFAULT_PLANNING_DISPLAY,
   DEFAULT_PLANNING_FILTERS,
 } from "../lib/planningView.ts";
 import { PlanningIssueDetail } from "./PlanningIssueDetail.tsx";
 import { PlanningView } from "./PlanningView.tsx";
+
+// The Planning plugin's real `capabilities` output, kept in step by the
+// plugin's own test (`capabilities_match_the_desktop_test_fixture`).
+const NATIVE_CAPABILITIES = JSON.parse(
+  readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../lib/planningCapabilities.fixture.json",
+    ),
+    "utf8",
+  ),
+);
+const PROVIDERS = [
+  {
+    id: "planning",
+    label: "Beekeeper",
+    description: "Issues live on this community's relay.",
+    availability: { kind: "available" },
+  },
+  {
+    id: "linear",
+    label: "Linear",
+    description: "Issues would stay in Linear.",
+    availability: { kind: "unavailable", reason: "No Linear plugin exists." },
+  },
+];
 
 const OWNER = "1".repeat(64);
 const AGENT = "5".repeat(64);
@@ -104,7 +132,8 @@ function render(props) {
       { client },
       React.createElement(PlanningView, {
         project: PROJECT,
-        provider: "native",
+        providers: PROVIDERS,
+        activeProvider: "planning",
         state: { kind: "ready", read: readOf(ISSUES), refreshing: false },
         access: { kind: "writable" },
         capabilities: NATIVE_CAPABILITIES,
@@ -217,6 +246,21 @@ test("hiding closed issues drops them from the list only", () => {
   assert.match(html, /2 of 3 issues/);
 });
 
+test("with no provider the view says why instead of drawing an empty project", () => {
+  const html = render({
+    state: {
+      kind: "unavailable",
+      reason: "This community's relay runs no Planning provider.",
+    },
+    activeProvider: null,
+    providers: PROVIDERS.slice(1),
+  });
+  assert.match(html, /data-testid="planning-unavailable"/);
+  assert.match(html, /runs no Planning provider/);
+  assert.doesNotMatch(html, /data-testid="planning-empty"/);
+  assert.match(html, /aria-label="Planning provider: none"/);
+});
+
 test("the detail shows every field, the real history, and says comments are unavailable", () => {
   const client = new QueryClient();
   const html = renderToStaticMarkup(
@@ -232,21 +276,24 @@ test("the detail shows every field, the real history, and says comments are unav
         readOnlyReason: null,
         pendingFields: new Set(["status"]),
         personFor,
-        activity: [
-          {
-            id: "e1",
-            actor: OWNER,
-            createdAt: 100,
-            summary: "created the issue",
-          },
-          {
-            id: "e2",
-            actor: OWNER,
-            createdAt: 110,
-            summary: "assigned",
-            subject: AGENT,
-          },
-        ],
+        activity: {
+          kind: "ready",
+          entries: [
+            {
+              id: "e1",
+              actor: OWNER,
+              createdAt: 100,
+              summary: "created the issue",
+            },
+            {
+              id: "e2",
+              actor: OWNER,
+              createdAt: 110,
+              summary: "assigned",
+              subject: AGENT,
+            },
+          ],
+        },
         actions: {
           close: () => {},
           setTitle: async () => {},

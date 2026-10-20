@@ -1,0 +1,78 @@
+{
+  "comments": false,
+  "createsDefaultContainer": true,
+  "defaultContainerTitle": "Issues",
+  "limits": {
+    "descriptionBytes": 3072,
+    "titleBytes": 1024
+  },
+  "personIds": "beekeeper-pubkey",
+  "priorities": [
+    {
+      "id": "urgent",
+      "label": "Urgent",
+      "level": "urgent",
+      "order": 0
+    },
+    {
+      "id": "high",
+      "label": "High",
+      "level": "high",
+      "order": 1
+    },
+    {
+      "id": "medium",
+      "label": "Medium",
+      "level": "medium",
+      "order": 2
+    },
+    {
+      "id": "low",
+      "label": "Low",
+      "level": "low",
+      "order": 3
+    },
+    {
+      "id": "none",
+      "label": "No priority",
+      "level": "none",
+      "order": 4
+    }
+  ],
+  "provider": {
+    "description": "Issues live on this community's relay as the project's shared lists. Every member and agent reads the same records; `bee planning` and `bee todos` operate them headless.",
+    "label": "Beekeeper"
+  },
+  "statuses": [
+    {
+      "category": "triage",
+      "id": "triage",
+      "label": "Triage"
+    },
+    {
+      "category": "backlog",
+      "id": "backlog",
+      "label": "Backlog"
+    },
+    {
+      "category": "unstarted",
+      "id": "todo",
+      "label": "Todo"
+    },
+    {
+      "category": "started",
+      "id": "in_progress",
+      "label": "In Progress"
+    },
+    {
+      "category": "completed",
+      "id": "done",
+      "label": "Done"
+    },
+    {
+      "category": "canceled",
+      "id": "canceled",
+      "label": "Canceled"
+    }
+  ]
+}

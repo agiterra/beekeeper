@@ -170,6 +170,10 @@ pub async fn list_plugins(
                 "sha256": p.sha256,
                 "api": p.manifest.api,
                 "operations": p.manifest.operations,
+                // What it reads and drafts, so a client can follow the
+                // records live without knowing the plugin's internals.
+                "readKinds": p.manifest.read_kinds,
+                "draftKinds": p.manifest.draft_kinds,
             })
         })
         .collect();

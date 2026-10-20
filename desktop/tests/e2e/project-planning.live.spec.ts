@@ -9,10 +9,13 @@ import { installRelayBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const exec = promisify(execFile);
 
-// Live gate for the project Planning tab against a REAL relay: the app (as
-// tyler, the project's creator) creates an issue with "New issue" and sets
-// its status in the detail; a reload must bring both back from the relay,
-// and `bee todos show` (as alice, a collaborator) must fold the same status.
+// Live gate for the project Planning tab against a REAL relay running the
+// Planning plugin: the app (as tyler, the project's creator) creates an
+// issue with "New issue" and sets its status in the detail — both through
+// the plugin route, signed as tyler; a reload must bring both back from the
+// relay, `bee todos show` (as alice, a collaborator, no plugin involved)
+// must fold the same status, and `bee planning status` must change it from
+// the CLI through the same plugin.
 // Proves what the mock spec (project-planning.spec.ts) cannot: the relay's
 // admission of the UI's item.status op, and persistence past the page.
 //
@@ -201,22 +204,43 @@ test.describe("project planning (live relay)", () => {
       ).toHaveAccessibleName(/In Progress/, { timeout: 30_000 });
     });
 
-    await test.step("the CLI cancels it; the UI and a collaborator's fold both read Canceled", async () => {
+    await test.step("the CLI cancels it through the Planning plugin; the UI and a collaborator's fold both read Canceled", async () => {
+      const read = JSON.parse(
+        await runCli(
+          [
+            "planning",
+            "read",
+            "--project",
+            seed.coordinate,
+            "--provider",
+            "planning",
+          ],
+          TEST_IDENTITIES.tyler.privateKey,
+        ),
+      ) as { result: { issues: { key: string; title: string }[] } };
+      const key = read.result.issues.find((i) => i.title === title)?.key;
+      expect(key).toBeTruthy();
       const out = JSON.parse(
         await runCli(
           [
-            "todos",
+            "planning",
             "status",
             "--project",
             seed.coordinate,
-            issueId,
+            "--provider",
+            "planning",
+            "--issue",
+            key as string,
+            "--status",
             "canceled",
           ],
           TEST_IDENTITIES.tyler.privateKey,
         ),
-      ) as { ops?: { op: string }[] };
-      // Two events, item.done then item.status, both accepted.
-      expect(out.ops?.map((op) => op.op)).toEqual(["item.done", "item.status"]);
+      ) as { published?: { group: string }[]; failed?: unknown[] };
+      // Two events drafted by the plugin, item.done then item.status, both
+      // signed by tyler's own key and accepted.
+      expect(out.published?.map((p) => p.group)).toEqual(["status", "status"]);
+      expect(out.failed).toEqual([]);
       await expect
         .poll(
           async () => {

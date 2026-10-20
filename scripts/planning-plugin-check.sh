@@ -136,8 +136,10 @@ fi
 if [[ "${DESKTOP}" == true ]]; then
   run desktop-live bash -c "cd desktop && pnpm build:e2e >/dev/null && \
     BEEKEEPER_E2E_PROJECT_PLANNING=1 BEEKEEPER_E2E_CLI_BIN='${ROOT}/target/debug/bee' \
-    BEEKEEPER_E2E_RELAY_URL='ws://localhost:${PORT}' \
+    BEEKEEPER_E2E_RELAY_URL='http://localhost:${PORT}' \
     pnpm exec playwright test --project=integration tests/e2e/project-planning.live.spec.ts"
+  mkdir -p "${OUT}/screenshots"
+  cp desktop/test-results/planning/*.png "${OUT}/screenshots/" 2>/dev/null || true
 fi
 
 exit ${status}

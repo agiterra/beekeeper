@@ -8,9 +8,13 @@ import { KIND_PROJECT, KIND_PROJECT_TODO_OP } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { installPluginRunner, TEST_REGISTRY } from "../helpers/pluginRunner";
 
 /**
- * Project Planning, end to end through the MOCK relay (not a live relay).
+ * Project Planning, end to end through the MOCK relay (not a live relay),
+ * with the REAL Planning plugin: every read and write the page makes is an
+ * operation of the WebAssembly component, run by the real plugin host
+ * (`installPluginRunner`) over the records in the mock store.
  *
  * The issues are real NIP-TD ops (kind 44248), signed with the bridge's
  * fixture identities and stored in the mock project store, which matches
@@ -224,8 +228,11 @@ async function openPlanning(
     hangKinds?: number[];
     rejectKinds?: number[];
     path?: string;
+    /** Which plugins the mock relay runs; the first-party registry by default. */
+    registry?: string;
   } = {},
 ) {
+  await installPluginRunner(page, options.registry);
   await page.addInitScript(
     ({ events, hangKinds, rejectKinds }) => {
       window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events as never;
@@ -462,16 +469,64 @@ test("the provider panel states Beekeeper is in use and Linear is unavailable", 
   await page.getByTestId("planning-provider").click();
   const panel = page.getByTestId("planning-provider-panel");
   await expect(panel).toBeVisible();
-  await expect(page.getByTestId("planning-provider-native")).toContainText(
-    "In use",
-  );
+  const native = page.getByTestId("planning-provider-planning");
+  await expect(native).toContainText("Beekeeper");
+  await expect(native).toContainText("In use");
+  await expect(native).toContainText("Plugin planning 1.0.0, sha256");
   await expect(page.getByTestId("planning-provider-linear")).toContainText(
     "Unavailable",
   );
   await expect(
     page.getByTestId("planning-provider-linear-reason"),
-  ).toContainText("cannot connect a project to a Linear workspace");
+  ).toContainText("no Linear plugin exists yet");
   await shot(page, "06-provider");
+});
+
+test("a second provider registered the same way is listed and can be viewed through the same page", async ({
+  page,
+}) => {
+  await openPlanning(page, { registry: TEST_REGISTRY });
+  await expect(page.getByTestId("planning-count")).toHaveText(/7 of 7 issues/, {
+    timeout: 15_000,
+  });
+  await page.getByTestId("planning-provider").click();
+  await expect(page.getByTestId("planning-provider-several")).toContainText(
+    "2 Planning providers",
+  );
+  await page.getByTestId("planning-provider-planning-fixture-choose").click();
+  await expect(page.getByTestId("planning-provider")).toContainText("Fixture", {
+    timeout: 15_000,
+  });
+  await expect(
+    page
+      .getByTestId("planning-list")
+      .getByText("Served by the fixture provider"),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("planning-count")).toHaveText(/1 of 1 issue/);
+  await shot(page, "12-replacement-provider");
+});
+
+test("a relay that runs no Planning provider says so instead of showing an empty project", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    ({ events }) => {
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events as never;
+    },
+    { events: [projectHead(), ...seededIssues()] as never },
+  );
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("project-group-general")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.goto(PLANNING_URL, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("planning-unavailable")).toContainText(
+    "runs no Planning provider",
+    { timeout: 15_000 },
+  );
+  await expect(page.getByTestId("planning-empty")).toHaveCount(0);
+  await shot(page, "13-no-provider");
 });
 
 test("an empty project offers the first issue; a failed read says so instead of showing nothing", async ({

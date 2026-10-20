@@ -864,6 +864,7 @@ name = "beekeeper-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "beekeeper-nip-td",
  "chrono",
  "hex",
  "hmac 0.13.0",
@@ -1121,6 +1122,14 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+]
+
+[[package]]
+name = "beekeeper-nip-td"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

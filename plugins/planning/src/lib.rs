@@ -268,6 +268,11 @@ fn capabilities() -> Value {
         // that cannot save.
         "comments": false,
         "createsDefaultContainer": true,
+        "defaultContainerTitle": DEFAULT_CONTAINER_TITLE,
+        "provider": {
+            "label": "Beekeeper",
+            "description": "Issues live on this community's relay as the project's shared lists. Every member and agent reads the same records; `bee planning` and `bee todos` operate them headless.",
+        },
         "personIds": "beekeeper-pubkey",
         "limits": {
             "titleBytes": MAX_PROJECT_TODO_TEXT_BYTES,

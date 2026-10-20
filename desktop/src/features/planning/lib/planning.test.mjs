@@ -4,22 +4,19 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { foldProjectTodos } from "../../project-todos/lib/todoFold.ts";
 import {
   TodoPartialWriteError,
   publishStatusOps,
   statusOps,
 } from "../../project-todos/lib/todoMutations.ts";
-import { createNativeIssue } from "./nativeCreate.ts";
-import { nativeIssueActivity } from "./nativeActivity.ts";
-import { NATIVE_CAPABILITIES, nativePlanningRead } from "./nativePlanning.ts";
 import {
   parsePlanningDisplay,
   planningDisplayKey,
 } from "./planningDisplayStorage.ts";
 import {
   LINEAR_PLANNING_PROVIDER,
-  PLANNING_PROVIDERS,
+  planningProviderList,
+  pluginProviderDescriptor,
   resolvePlanningProvider,
 } from "./planningProviders.ts";
 import {
@@ -35,14 +32,10 @@ import {
 } from "./planningView.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const VECTORS = JSON.parse(
-  readFileSync(
-    path.join(
-      HERE,
-      "../../../../../conformance/project-todo-fold/fixtures/fold-vectors.json",
-    ),
-    "utf8",
-  ),
+// The Planning plugin's real `capabilities` output, kept in step by the
+// plugin's own test (`capabilities_match_the_desktop_test_fixture`).
+const NATIVE_CAPABILITIES = JSON.parse(
+  readFileSync(path.join(HERE, "planningCapabilities.fixture.json"), "utf8"),
 );
 
 const ME = "1".repeat(64);
@@ -74,51 +67,6 @@ function issue(id, overrides = {}) {
     ...overrides,
   };
 }
-
-test("native planning reads the fold: project lists only, archived lists dropped, statuses mapped to categories", () => {
-  const vector = VECTORS.cases.find((c) =>
-    c.name.startsWith("item.done alone decides done"),
-  );
-  const digest = foldProjectTodos(vector.project, vector.events);
-  const read = nativePlanningRead(digest.lists, {
-    truncated: false,
-    ignored: digest.ignored,
-  });
-  assert.equal(read.issues.length, 5);
-  const byTitle = Object.fromEntries(read.issues.map((i) => [i.title, i]));
-  assert.equal(byTitle["restarted as a pair"].status.category, "started");
-  assert.equal(byTitle["started then ticked"].status.category, "completed");
-  assert.equal(
-    byTitle["ticked, then a stale restart"].status.category,
-    "completed",
-    "a status that disagrees with a later-or-equal item.done is not applied",
-  );
-  assert.equal(
-    byTitle["canceled without item.done"].status.category,
-    "unstarted",
-  );
-  assert.equal(byTitle["canceled as a pair"].status.category, "canceled");
-  assert.equal(byTitle["canceled as a pair"].completedAt, 16);
-
-  const lists = [
-    { ...digest.lists[0] },
-    {
-      ...digest.lists[0],
-      id: "2".repeat(32),
-      visibility: "personal",
-    },
-    { ...digest.lists[0], id: "3".repeat(32), archived: true },
-  ];
-  const filtered = nativePlanningRead(lists, { truncated: true, ignored: 2 });
-  assert.deepEqual(
-    filtered.containers.map((c) => c.id),
-    [digest.lists[0].id],
-    "a personal or archived list is not a planning container",
-  );
-  assert.equal(filtered.issues.length, 5);
-  assert.equal(filtered.truncated, true);
-  assert.equal(filtered.unreadable, 2);
-});
 
 test("a status write is always item.done with the status's closed-ness, then item.status", () => {
   const L = "1".repeat(32);
@@ -186,88 +134,6 @@ test("an unconfirmed item.status is a partial write that says how the item is ma
     return true;
   });
   assert.deepEqual(firstOnly, ["item.done"]);
-});
-
-function fakeWrites(refuse = {}) {
-  const calls = [];
-  const step =
-    (name, result) =>
-    async (...args) => {
-      calls.push([name, ...args]);
-      if (refuse[name]) throw new Error(refuse[name]);
-      return result;
-    };
-  return {
-    calls,
-    writes: {
-      createList: step("createList", "9".repeat(32)),
-      addItem: step("addItem", "8".repeat(32)),
-      setAssignee: step("setAssignee"),
-      setStatus: step("setStatus"),
-      setPriority: step("setPriority"),
-      setDescription: step("setDescription"),
-    },
-  };
-}
-
-const CREATE_INPUT = {
-  title: "Ship it",
-  description: "why",
-  statusId: "in_progress",
-  priorityId: "high",
-  assignee: "f".repeat(64),
-  containerId: "1".repeat(32),
-};
-
-test("create adds the bare item first, then each field; a refused assignee is reported, not thrown", async () => {
-  const { calls, writes } = fakeWrites({ setAssignee: "assignee refused" });
-  const result = await createNativeIssue(writes, CREATE_INPUT);
-  assert.equal(result.itemId, "8".repeat(32));
-  assert.deepEqual(result.failed, [
-    { field: "assignee", message: "assignee refused" },
-  ]);
-  assert.deepEqual(
-    calls.map((c) => c[0]),
-    ["addItem", "setAssignee", "setStatus", "setPriority", "setDescription"],
-  );
-  assert.deepEqual(
-    calls[0],
-    ["addItem", "1".repeat(32), "Ship it"],
-    "bare add",
-  );
-  assert.equal(
-    calls.filter((c) => c[0] === "addItem").length,
-    1,
-    "one item, so the caller closes the draft instead of retrying a duplicate",
-  );
-});
-
-test("create rejects only while nothing exists, and makes the default list when none is named", async () => {
-  const refused = fakeWrites({ addItem: "add refused" });
-  await assert.rejects(
-    createNativeIssue(refused.writes, CREATE_INPUT),
-    /add refused/,
-  );
-  assert.deepEqual(
-    refused.calls.map((c) => c[0]),
-    ["addItem"],
-  );
-
-  const fresh = fakeWrites();
-  const result = await createNativeIssue(fresh.writes, {
-    ...CREATE_INPUT,
-    containerId: null,
-    assignee: null,
-    statusId: "todo",
-    priorityId: "none",
-    description: null,
-  });
-  assert.equal(result.listId, "9".repeat(32));
-  assert.deepEqual(
-    fresh.calls.map((c) => c[0]),
-    ["createList", "addItem"],
-  );
-  assert.deepEqual(fresh.calls[0], ["createList", "Issues", "project"]);
 });
 
 test("scopes and filters narrow the same records; my issues needs a known self", () => {
@@ -395,34 +261,6 @@ test("display options parse field by field and are keyed per person and project"
   );
 });
 
-test("Linear is listed but unavailable, and never resolves as a project's provider", () => {
-  assert.deepEqual(
-    PLANNING_PROVIDERS.map((p) => p.id),
-    ["native", "linear"],
-  );
-  assert.equal(LINEAR_PLANNING_PROVIDER.availability.kind, "unavailable");
-  assert.match(LINEAR_PLANNING_PROVIDER.availability.reason, /cannot connect/);
-  assert.equal(resolvePlanningProvider(), "native");
-});
-
-test("activity lists every decodable op on the issue in order, including a losing write", () => {
-  const vector = VECTORS.cases.find((c) =>
-    c.name.startsWith("a status ties item.done on created_at"),
-  );
-  const listId = "1".repeat(32);
-  const tie = nativeIssueActivity(vector.events, listId, "a".repeat(32));
-  assert.deepEqual(
-    tie.map((e) => e.summary),
-    ["created the issue", "set status to Canceled", "marked it done"],
-  );
-  const skewed = nativeIssueActivity(vector.events, listId, "d".repeat(32));
-  assert.deepEqual(
-    skewed.map((e) => e.summary),
-    ["set status to Backlog", "created the issue"],
-    "the skewed status op is history even though the fold lets the add win",
-  );
-});
-
 test("person ids are the provider's: native ids are pubkeys, a provider's own ids resolve only through a known link", () => {
   const native = { personIds: "beekeeper-pubkey" };
   const pk = "f".repeat(64);
@@ -465,4 +303,45 @@ test("create defaults come from the provider's vocabulary, not native ids", () =
   for (const priority of NATIVE_CAPABILITIES.priorities) {
     assert.equal(priority.level, priority.id, "native ids and levels coincide");
   }
+});
+
+const PLUGIN = (name, extra = {}) => ({
+  name,
+  version: "1.0.0",
+  sha256: "ab".repeat(32),
+  api: ["beekeeper.planning/1"],
+  operations: [],
+  ...extra,
+});
+
+test("providers are whatever the relay registers; Linear is listed but never available", () => {
+  const registered = [PLUGIN("planning"), PLUGIN("planning-fixture")];
+  const listed = planningProviderList([
+    pluginProviderDescriptor(registered[0], NATIVE_CAPABILITIES),
+    pluginProviderDescriptor(registered[1], null),
+  ]);
+  assert.deepEqual(
+    listed.map((p) => p.id),
+    ["planning", "planning-fixture", "linear"],
+  );
+  assert.equal(listed[0].label, "Beekeeper", "the plugin names itself");
+  assert.equal(listed[1].label, "planning-fixture", "no description: its name");
+  assert.match(listed[0].description, /sha256 abababababab/);
+  assert.equal(LINEAR_PLANNING_PROVIDER.availability.kind, "unavailable");
+  assert.match(
+    LINEAR_PLANNING_PROVIDER.availability.reason,
+    /no Linear plugin/,
+  );
+
+  assert.equal(resolvePlanningProvider(registered, null)?.name, "planning");
+  assert.equal(
+    resolvePlanningProvider(registered, "planning-fixture")?.name,
+    "planning-fixture",
+  );
+  assert.equal(
+    resolvePlanningProvider(registered, "linear")?.name,
+    "planning",
+    "a pick that is not registered falls back, never to Linear",
+  );
+  assert.equal(resolvePlanningProvider([], null), null);
 });

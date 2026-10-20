@@ -59,6 +59,11 @@ impl Guest for Fixture {
                 "priorities": [priority],
                 "comments": false,
                 "createsDefaultContainer": false,
+                "defaultContainerTitle": null,
+                "provider": {
+                    "label": "Fixture",
+                    "description": "A read-only test provider. It serves one fixed issue.",
+                },
                 "personIds": "beekeeper-pubkey",
                 "limits": { "titleBytes": 64, "descriptionBytes": 64 },
             }),

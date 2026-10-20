@@ -12,7 +12,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 
-import type { ActivityEntry } from "../lib/nativeActivity";
+import type { ActivityState } from "../lib/planningPlugin";
 import type { PlanningCapabilities, PlanningIssue } from "../lib/planningTypes";
 import { PendingMark, PriorityPicker, StatusPicker } from "./PlanningPickers";
 
@@ -311,7 +311,8 @@ export function PlanningIssueDetail({
   readOnlyReason: string | null;
   pendingFields: ReadonlySet<string>;
   personFor: (pubkey: string) => TodoPerson;
-  activity: readonly ActivityEntry[];
+  /** The issue's history, as its provider reports it. */
+  activity: ActivityState;
   actions: PlanningDetailActions;
 }) {
   const assignee = issue.assignee ? personFor(issue.assignee) : null;
@@ -419,11 +420,26 @@ export function PlanningIssueDetail({
       </section>
       <section aria-label="Activity" className="flex flex-col gap-1.5">
         <h3 className="text-xs font-medium text-muted-foreground">Activity</h3>
+        {activity.kind === "loading" ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="planning-detail-activity-loading"
+          >
+            Reading history…
+          </p>
+        ) : activity.kind === "error" ? (
+          <p
+            className="text-xs text-foreground"
+            data-testid="planning-detail-activity-error"
+          >
+            Could not read this issue's history: {activity.message}
+          </p>
+        ) : null}
         <ol
           className="flex flex-col gap-1"
           data-testid="planning-detail-activity"
         >
-          {activity.map((entry) => {
+          {(activity.kind === "ready" ? activity.entries : []).map((entry) => {
             const actor = personFor(entry.actor);
             const subject =
               entry.subject != null ? personFor(entry.subject) : null;

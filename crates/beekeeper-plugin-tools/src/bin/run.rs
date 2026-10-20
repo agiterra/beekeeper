@@ -11,7 +11,8 @@
 //!   "now": 1760000000, "records": [ { "id": …, "pubkey": …, … } ] }
 //! ```
 //!
-//! and writes `{"ok": {...}}` or `{"error": {...}}` on stdout. The record
+//! and writes `{"ok": {...}}` or `{"error": {...}}` on stdout. A request of
+//! `{"registry": "...", "list": true}` answers what `GET /plugins` would. The record
 //! file stands in for the relay's store: the source returns records of the
 //! asked kinds whose single `a` tag is the project, newest first. It does not
 //! apply the relay's visibility rules — the caller passes only what that
@@ -120,7 +121,31 @@ fn main() {
         std::io::stdin()
             .read_to_string(&mut text)
             .map_err(|e| json!({ "code": "bad-request", "message": e.to_string() }))?;
-        let request: Request = serde_json::from_str(&text)
+        let raw: Value = serde_json::from_str(&text)
+            .map_err(|e| json!({ "code": "bad-request", "message": e.to_string() }))?;
+        if raw.get("list") == Some(&Value::Bool(true)) {
+            let path = raw["registry"].as_str().unwrap_or_default();
+            let registry = Registry::from_file(std::path::Path::new(path))
+                .map_err(|e| json!({ "code": "registry", "message": e.to_string() }))?;
+            let host = PluginHost::load(&registry, validators())
+                .map_err(|e| json!({ "code": "load", "message": e.to_string() }))?;
+            let plugins: Vec<Value> = host
+                .plugins()
+                .map(|p| {
+                    json!({
+                        "name": p.entry.name,
+                        "version": p.manifest.version,
+                        "sha256": p.sha256,
+                        "api": p.manifest.api,
+                        "operations": p.manifest.operations,
+                        "readKinds": p.manifest.read_kinds,
+                        "draftKinds": p.manifest.draft_kinds,
+                    })
+                })
+                .collect();
+            return Ok(json!({ "plugins": plugins }));
+        }
+        let request: Request = serde_json::from_value(raw)
             .map_err(|e| json!({ "code": "bad-request", "message": e.to_string() }))?;
         let registry = Registry::from_file(&request.registry)
             .map_err(|e| json!({ "code": "registry", "message": e.to_string() }))?;

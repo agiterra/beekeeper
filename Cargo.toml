@@ -175,6 +175,28 @@ beekeeper-datastore-tracing = { path = "crates/beekeeper-datastore-tracing" }
 # stable e2e timing (PR #307 flakiness was opt-0 + debug-assertions) at
 # roughly half the codegen cost. Incremental stays disabled: rust-cache exports
 # CARGO_INCREMENTAL=0, and the CI compiler cache requires non-incremental units.
+# Plugins (`crates/beekeeper-plugin-host`) are JIT-compiled by Cranelift when
+# a registry loads. Built unoptimized, Cranelift takes seconds per plugin, so
+# a debug relay starts slowly and `beekeeper-plugin-run` (which the desktop's
+# mock Planning specs call per request) crawls. Optimizing only the compiler
+# and its parsers keeps every other crate's debug build as it was.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmtime-cranelift]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3
+[profile.dev.package.wasmparser]
+opt-level = 3
+
 [profile.ci]
 inherits = "release"
 lto = false

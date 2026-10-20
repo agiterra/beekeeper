@@ -23,7 +23,6 @@ import { Input } from "@/shared/ui/input";
 import { Switch } from "@/shared/ui/switch";
 import { Textarea } from "@/shared/ui/textarea";
 
-import { DEFAULT_NATIVE_CONTAINER_TITLE } from "../lib/nativePlanning";
 import type {
   PlanningCapabilities,
   PlanningContainer,
@@ -165,7 +164,7 @@ export function PlanningQuickCreate({
               {container
                 ? `In ${project.name} · ${container.title}`
                 : capabilities.createsDefaultContainer
-                  ? `In ${project.name}. This project has no shared list yet, so this also creates one named “${DEFAULT_NATIVE_CONTAINER_TITLE}”.`
+                  ? `In ${project.name}. This project has no shared list yet, so this also creates one named “${capabilities.defaultContainerTitle ?? "Issues"}”.`
                   : `In ${project.name}`}
             </DialogDescription>
           </DialogHeader>

@@ -1601,6 +1601,13 @@ declare global {
      */
     __BEEKEEPER_E2E_REJECT_TODO_OPS__?: string[];
     /**
+     * Runs one plugin request through the REAL plugin host and component
+     * (`beekeeper-plugin-run`), exposed by a spec with
+     * `installPluginRunner` (tests/helpers/pluginRunner.ts). Absent: the mock
+     * relay runs no plugins, and Planning says so.
+     */
+    __BEEKEEPER_E2E_PLUGIN_RUNNER__?: (request: string) => Promise<string>;
+    /**
      * Project history kinds whose REQ is never answered — no EVENT, no EOSE,
      * no CLOSED. A rejection and a read still in flight are different answers,
      * and a surface that renders them the same way is the defect; this seam is
@@ -6416,6 +6423,158 @@ async function relayJsonRequest<T>(
  * Query the relay via POST /query (pure Nostr HTTP bridge).
  * Returns an array of raw Nostr events matching the filters.
  */
+// ── Plugin route (docs/plugins.md) ─────────────────────────────────────────
+// Mock mode drives the real WebAssembly component through the real host via
+// the spec's runner; the mock only supplies the records the relay would (its
+// project store, read with the same `kinds` + `#a` query the UI issues) and
+// the HTTP status the relay maps each refusal to. Relay mode calls the live
+// relay's route with the dev-mode `X-Pubkey` header, as every relay-mode
+// read here does.
+
+type MockPluginReply = { ok: boolean; status: number; body: unknown };
+
+const PLUGIN_ERROR_STATUS: Record<string, number> = {
+  "plugin-not-registered": 404,
+  "unknown-operation": 404,
+  "write-not-allowed": 403,
+  "input-too-large": 413,
+  busy: 503,
+  "plugin-trapped": 500,
+  "contract-violation": 502,
+  "host-failure": 500,
+};
+
+const PLUGIN_OPERATION_STATUS: Record<string, [number, string]> = {
+  "invalid-input": [422, "invalid-input"],
+  "not-found": [404, "not-found"],
+  conflict: [409, "conflict"],
+  unsupported: [501, "unsupported"],
+  host: [503, "host-refused"],
+  internal: [500, "plugin-internal"],
+};
+
+async function runMockPlugin(request: Record<string, unknown>): Promise<{
+  ok?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+}> {
+  const runner = window.__BEEKEEPER_E2E_PLUGIN_RUNNER__;
+  if (!runner) return { ok: { plugins: [] } };
+  return JSON.parse(await runner(JSON.stringify(request)));
+}
+
+async function mockPluginsList(): Promise<MockPluginReply> {
+  const out = await runMockPlugin({ list: true });
+  if (out.error) return { ok: false, status: 500, body: out.error };
+  return { ok: true, status: 200, body: out.ok };
+}
+
+async function mockPluginInvoke(
+  payload: {
+    plugin: string;
+    operation: string;
+    project: string;
+    input: unknown;
+  },
+  readRecords: (filters: MockFilter[]) => Promise<RelayEvent[]>,
+): Promise<MockPluginReply> {
+  if (!window.__BEEKEEPER_E2E_PLUGIN_RUNNER__) {
+    return {
+      ok: false,
+      status: 404,
+      body: {
+        error: `no plugin named "${payload.plugin}" is registered on this relay`,
+        code: "plugin-not-registered",
+      },
+    };
+  }
+  let records: RelayEvent[];
+  try {
+    records = await readRecords([
+      { kinds: [KIND_PROJECT_TODO_OP], "#a": [payload.project], limit: 10_000 },
+    ]);
+  } catch (error) {
+    // The relay's record source failed: the plugin is told, and its
+    // operation fails as a host refusal.
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        error: `unavailable: record read failed: ${error instanceof Error ? error.message : String(error)}`,
+        code: "host-refused",
+      },
+    };
+  }
+  const out = await runMockPlugin({
+    plugin: payload.plugin,
+    operation: payload.operation,
+    input: payload.input ?? {},
+    caller: DEFAULT_MOCK_IDENTITY.pubkey,
+    project: payload.project,
+    access: "write",
+    records: records.map((event) => ({
+      id: event.id,
+      pubkey: event.pubkey,
+      created_at: event.created_at,
+      kind: event.kind,
+      tags: event.tags,
+      content: event.content,
+    })),
+  });
+  if (out.ok) {
+    return {
+      ok: true,
+      status: 200,
+      body: { ...out.ok, operation: payload.operation, access: "write" },
+    };
+  }
+  const error = out.error ?? {};
+  const operation = error.operation as
+    | { code?: string; message?: string }
+    | undefined;
+  if (error.code === "operation-failed" && operation?.code) {
+    const [status, code] = PLUGIN_OPERATION_STATUS[operation.code] ?? [
+      500,
+      "plugin-internal",
+    ];
+    return {
+      ok: false,
+      status,
+      body: { error: operation.message ?? "", code },
+    };
+  }
+  const code = String(error.code ?? "host-failure");
+  return {
+    ok: false,
+    status: PLUGIN_ERROR_STATUS[code] ?? 500,
+    body: { error: String(error.message ?? ""), code, trap: error.trap },
+  };
+}
+
+async function relayPluginCall(
+  config: E2eConfig | undefined,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<MockPluginReply> {
+  const identity = getRelayIdentity(config);
+  const response = await fetch(`${getRelayHttpUrl(config)}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Pubkey": identity.pubkey,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = { error: text };
+  }
+  return { ok: response.ok, status: response.status, body: parsed };
+}
+
 async function relayQuery(
   config: E2eConfig | undefined,
   filters: Array<Record<string, unknown>>,
@@ -11858,6 +12017,38 @@ export function maybeInstallE2eTauriMocks() {
     if (waveB !== null) return waveB.value;
 
     switch (command) {
+      case "relay_plugins_list": {
+        if (activeConfig?.mode === "relay")
+          return relayPluginCall(activeConfig, "GET", "/plugins");
+        return mockPluginsList();
+      }
+      case "relay_plugin_invoke": {
+        const call = payload as {
+          plugin: string;
+          operation: string;
+          project: string;
+          input: unknown;
+        };
+        if (activeConfig?.mode === "relay")
+          return relayPluginCall(
+            activeConfig,
+            "POST",
+            `/plugins/${call.plugin}/invoke`,
+            {
+              operation: call.operation,
+              scope: { project: call.project },
+              input: call.input,
+            },
+          );
+        // The records come from the same read the UI's own queries use.
+        return mockPluginInvoke(
+          call,
+          (filters) =>
+            handleMockCommand("query_relay_filters", {
+              filters,
+            }) as Promise<RelayEvent[]>,
+        );
+      }
       case "query_relay_filters": {
         const { filters } = payload as { filters: MockFilter[] };
         if (activeConfig?.mode === "relay")

@@ -1,30 +1,31 @@
 /**
- * The planning providers this build knows, and which one a project uses.
+ * The Planning providers a project can use, and which one this view shows.
  *
- * Native is built in and on by default. Linear is listed so a person can see
- * it is coming and what it needs, but this build has no way to connect a
- * project to Linear: no installation record, no credential custody and no
- * outbound API client exist yet. So it is reported unavailable and is never
- * selectable — a Linear choice that silently read native data, or an empty
- * list that looked like an empty Linear team, would be a lie.
+ * A provider is a relay plugin that implements `beekeeper.planning/1`.
+ * Beekeeper's own (`planning`) is registered the same way as any other — it
+ * ships in the relay image and is on by default, but nothing here treats it
+ * specially: the list is whatever the relay says it runs, labelled by what
+ * each plugin says about itself.
  *
- * There is no stored per-project choice yet either, because there is only
- * one choice that works. When a second provider can be connected, the
- * choice has to be a shared project fact (every member and agent must see
- * the same provider), and switching must never move or copy records.
+ * Linear is listed so a person can see it is coming and what it needs, but
+ * no Linear plugin exists: no installation record, no credential custody and
+ * no outbound client. It is never selectable — a Linear choice that silently
+ * read native data, or an empty list that looked like an empty Linear team,
+ * would be a lie.
+ *
+ * There is no stored per-project choice. When a relay runs more than one
+ * provider this view picks the first by name and says so; the person can
+ * switch what *they* are looking at, but that is not a project fact — every
+ * member and agent must eventually see the same provider, and switching must
+ * never move or copy records.
  */
+import type { PluginInfo } from "@/shared/plugins/pluginClient";
+
 import type {
+  PlanningCapabilities,
   PlanningProviderDescriptor,
   PlanningProviderId,
-} from "./planningTypes.ts";
-
-export const NATIVE_PLANNING_PROVIDER: PlanningProviderDescriptor = {
-  id: "native",
-  label: "Beekeeper",
-  description:
-    "Issues live on this community's relay as the project's shared lists. Every member and agent reads the same records; `bee todos` operates them headless.",
-  availability: { kind: "available" },
-};
+} from "./planningTypes";
 
 export const LINEAR_PLANNING_PROVIDER: PlanningProviderDescriptor = {
   id: "linear",
@@ -34,19 +35,46 @@ export const LINEAR_PLANNING_PROVIDER: PlanningProviderDescriptor = {
   availability: {
     kind: "unavailable",
     reason:
-      "Not available in this build: Beekeeper cannot connect a project to a Linear workspace yet.",
+      "Not available: no Linear plugin exists yet, so Beekeeper cannot connect a project to a Linear workspace.",
   },
 };
 
-export const PLANNING_PROVIDERS: readonly PlanningProviderDescriptor[] = [
-  NATIVE_PLANNING_PROVIDER,
-  LINEAR_PLANNING_PROVIDER,
-];
+/** The descriptor for a registered provider plugin. */
+export function pluginProviderDescriptor(
+  plugin: PluginInfo,
+  capabilities: PlanningCapabilities | null,
+): PlanningProviderDescriptor {
+  const described = capabilities?.provider;
+  return {
+    id: plugin.name,
+    label: described?.label ?? plugin.name,
+    description: `${described?.description ?? "A Planning provider registered on this relay."} Plugin ${plugin.name} ${plugin.version}, sha256 ${plugin.sha256.slice(0, 12)}…`,
+    availability: { kind: "available" },
+  };
+}
 
 /**
- * The provider a project's Planning reads. Always native today: it is the
- * only available provider and there is no stored choice to honour.
+ * Every provider the control lists: the relay's, then Linear (unless a
+ * plugin by that name is registered, in which case it is just another
+ * provider).
  */
-export function resolvePlanningProvider(): PlanningProviderId {
-  return "native";
+export function planningProviderList(
+  registered: readonly PlanningProviderDescriptor[],
+): PlanningProviderDescriptor[] {
+  return registered.some((p) => p.id === LINEAR_PLANNING_PROVIDER.id)
+    ? [...registered]
+    : [...registered, LINEAR_PLANNING_PROVIDER];
+}
+
+/**
+ * The provider this view shows: the viewer's pick when it is still
+ * registered, else the first registered by name, else none.
+ */
+export function resolvePlanningProvider(
+  registered: readonly PluginInfo[],
+  picked: PlanningProviderId | null,
+): PluginInfo | null {
+  return (
+    registered.find((plugin) => plugin.name === picked) ?? registered[0] ?? null
+  );
 }

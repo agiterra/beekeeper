@@ -9,6 +9,7 @@ import type {
   PlanningAccess,
   PlanningCapabilities,
   PlanningIssue,
+  PlanningProviderDescriptor,
   PlanningProviderId,
   PlanningState,
 } from "../lib/planningTypes";
@@ -32,7 +33,11 @@ const PlanningBoard = React.lazy(async () => {
 
 export type PlanningViewProps = {
   project: ProjectContainer;
-  provider: PlanningProviderId;
+  /** Every provider the control lists, available or not. */
+  providers: readonly PlanningProviderDescriptor[];
+  /** The provider this view reads, if any. */
+  activeProvider: PlanningProviderId | null;
+  onChooseProvider?: (id: PlanningProviderId) => void;
   state: PlanningState;
   access: PlanningAccess;
   capabilities: PlanningCapabilities;
@@ -61,7 +66,9 @@ type Notice = { key: string; text: string; tone: "info" | "warn" };
  */
 export function PlanningView({
   project,
-  provider,
+  providers,
+  activeProvider,
+  onChooseProvider,
   state,
   access,
   capabilities,
@@ -79,7 +86,10 @@ export function PlanningView({
   onCreate,
   onVisibleOrder,
 }: PlanningViewProps) {
-  const read = state.kind === "loading" ? null : state.read;
+  const read =
+    state.kind === "loading" || state.kind === "unavailable"
+      ? null
+      : state.read;
   const issues = read?.issues ?? [];
   const containers = read?.containers ?? [];
   const nameOf = React.useCallback(
@@ -132,7 +142,9 @@ export function PlanningView({
       tone: "info",
     });
   }
-  if (access.kind === "read-only") {
+  // An unavailable state says why in the body; the same reason again as a
+  // read-only notice would only repeat it.
+  if (access.kind === "read-only" && state.kind !== "unavailable") {
     notices.push({
       key: "read-only",
       text: `Read-only: ${access.reason}`,
@@ -164,7 +176,19 @@ export function PlanningView({
   }
 
   let body: React.ReactNode;
-  if (!read) {
+  if (state.kind === "unavailable") {
+    body = (
+      <div
+        className="flex flex-col items-center gap-1 py-12 text-center"
+        data-testid="planning-unavailable"
+      >
+        <p className="text-sm text-foreground">
+          Planning is not available here.
+        </p>
+        <p className="max-w-sm text-xs text-muted-foreground">{state.reason}</p>
+      </div>
+    );
+  } else if (!read) {
     body =
       state.kind === "error" ? null : (
         <p
@@ -271,7 +295,11 @@ export function PlanningView({
           {state.kind === "ready" && state.refreshing ? " · refreshing" : ""}
         </p>
         <span className="flex-1" />
-        <PlanningProviderControl active={provider} />
+        <PlanningProviderControl
+          active={activeProvider}
+          onChoose={onChooseProvider}
+          providers={providers}
+        />
       </div>
       {notices.length > 0 ? (
         <ul className="flex flex-col gap-1" data-testid="planning-notices">
