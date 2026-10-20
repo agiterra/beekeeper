@@ -12,7 +12,7 @@ P="30621:"+"a"*64+":tank-loop"
 OTHER="30621:"+"b"*64+":other"
 ALICE="1"*64; BOB="2"*64
 L1="1"*32; L2="2"*32; L3="3"*32
-I1="a"*32; I2="b"*32; I3="c"*32
+I1="a"*32; I2="b"*32; I3="c"*32; I4="d"*32; I5="e"*32
 SCHEMA="buzz-project-todo/v1"
 def eid(n): return f"{n:064x}"
 def content(op, listId, **kw):
@@ -142,35 +142,49 @@ cases.append({"name":"a personal list takes ops from its creator only; a visibil
     lst(L2,"Shared",7,ALICE,7),
 ],ignored=4)})
 
-cases.append({"name":"item.status and item.done write one state field; the later of the two wins; done and canceled are closed","project":P,"events":[
+cases.append({"name":"item.done alone decides done; a later item.status refines it only when it agrees on closed-ness","project":P,"events":[
     ev(1,ALICE,1,"list.create",L1,title="L"),
     ev(2,ALICE,2,"item.add",L1,I1,text="started then ticked",rank="a0"),
-    ev(3,ALICE,2,"item.add",L1,I2,text="ticked then restarted",rank="a1"),
-    ev(4,ALICE,2,"item.add",L1,I3,text="canceled",rank="a2"),
-    ev(5,ALICE,10,"item.status",L1,I1,status="in_progress"),
-    ev(6,BOB,20,"item.done",L1,I1,done=True),
-    ev(7,BOB,10,"item.done",L1,I2,done=True),
-    ev(8,ALICE,20,"item.status",L1,I2,status="in_progress"),
-    ev(9,ALICE,15,"item.status",L1,I3,status="canceled"),
+    ev(3,ALICE,2,"item.add",L1,I2,text="ticked, then a stale restart",rank="a1"),
+    ev(4,ALICE,2,"item.add",L1,I3,text="canceled without item.done",rank="a2"),
+    ev(5,ALICE,2,"item.add",L1,I4,text="canceled as a pair",rank="a3"),
+    ev(6,ALICE,2,"item.add",L1,I5,text="restarted as a pair",rank="a4"),
+    ev(7,ALICE,10,"item.status",L1,I1,status="in_progress"),
+    ev(8,BOB,20,"item.done",L1,I1,done=True),
+    ev(9,BOB,10,"item.done",L1,I2,done=True),
+    ev(10,ALICE,20,"item.status",L1,I2,status="in_progress"),
+    ev(11,ALICE,15,"item.status",L1,I3,status="canceled"),
+    ev(12,BOB,16,"item.done",L1,I4,done=True),
+    ev(13,BOB,17,"item.status",L1,I4,status="canceled"),
+    ev(14,BOB,10,"item.done",L1,I5,done=True),
+    ev(15,ALICE,18,"item.done",L1,I5,done=False),
+    ev(16,ALICE,19,"item.status",L1,I5,status="in_progress"),
 ],"expected":digest([lst(L1,"L",1,ALICE,20,
-    open=[item(I2,L1,"ticked then restarted","a1",2,ALICE,20,status="in_progress")],
+    open=[item(I3,L1,"canceled without item.done","a2",2,ALICE,15),
+          item(I5,L1,"restarted as a pair","a4",2,ALICE,19,status="in_progress")],
     completed=[item(I1,L1,"started then ticked","a0",2,ALICE,20,done=True,completedAt=20,completedBy=BOB),
-               item(I3,L1,"canceled","a2",2,ALICE,15,done=True,status="canceled",completedAt=15,completedBy=ALICE)])])})
+               item(I4,L1,"canceled as a pair","a3",2,ALICE,17,done=True,status="canceled",completedAt=16,completedBy=BOB),
+               item(I2,L1,"ticked, then a stale restart","a1",2,ALICE,20,done=True,completedAt=10,completedBy=BOB)])])})
 
-cases.append({"name":"a status tie breaks on event id; item.done{false} reads as todo; a status before the add loses","project":P,"events":[
+cases.append({"name":"a status ties item.done on created_at and breaks on id; a checkbox after a status resets it; a status before the add loses","project":P,"events":[
     ev(1,ALICE,1,"list.create",L1,title="L"),
-    ev(2,ALICE,5,"item.add",L1,I1,text="tie",rank="a0"),
-    ev(3,ALICE,5,"item.add",L1,I2,text="reopened",rank="a1"),
-    ev(4,ALICE,5,"item.add",L1,I3,text="skewed",rank="a2"),
-    ev(0x20,BOB,9,"item.done",L1,I1,done=True),
-    ev(0x21,ALICE,9,"item.status",L1,I1,status="backlog"),
-    ev(0x22,ALICE,6,"item.status",L1,I2,status="triage"),
-    ev(0x23,BOB,7,"item.done",L1,I2,done=False),
-    ev(0x24,ALICE,4,"item.status",L1,I3,status="done"),
+    ev(2,ALICE,5,"item.add",L1,I1,text="tie, status id lower",rank="a0"),
+    ev(3,ALICE,5,"item.add",L1,I2,text="tie, status id higher",rank="a1"),
+    ev(4,ALICE,5,"item.add",L1,I3,text="reopened by a checkbox",rank="a2"),
+    ev(5,ALICE,5,"item.add",L1,I4,text="skewed",rank="a3"),
+    ev(0x20,ALICE,9,"item.status",L1,I1,status="canceled"),
+    ev(0x21,BOB,9,"item.done",L1,I1,done=True),
+    ev(0x22,BOB,9,"item.done",L1,I2,done=True),
+    ev(0x23,ALICE,9,"item.status",L1,I2,status="canceled"),
+    ev(0x24,ALICE,6,"item.status",L1,I3,status="in_progress"),
+    ev(0x25,BOB,7,"item.done",L1,I3,done=True),
+    ev(0x26,BOB,8,"item.done",L1,I3,done=False),
+    ev(0x27,ALICE,4,"item.status",L1,I4,status="backlog"),
 ],"expected":digest([lst(L1,"L",1,ALICE,9,
-    open=[item(I1,L1,"tie","a0",5,ALICE,9,status="backlog"),
-          item(I2,L1,"reopened","a1",5,ALICE,7),
-          item(I3,L1,"skewed","a2",5,ALICE,5)])])})
+    open=[item(I3,L1,"reopened by a checkbox","a2",5,ALICE,8),
+          item(I4,L1,"skewed","a3",5,ALICE,5)],
+    completed=[item(I2,L1,"tie, status id higher","a1",5,ALICE,9,done=True,status="canceled",completedAt=9,completedBy=BOB),
+               item(I1,L1,"tie, status id lower","a0",5,ALICE,9,done=True,completedAt=9,completedBy=BOB)])])})
 
 cases.append({"name":"priority and description are per-field last write wins; null clears a description; unknown values are ignored","project":P,"events":[
     ev(1,ALICE,1,"list.create",L1,title="L"),

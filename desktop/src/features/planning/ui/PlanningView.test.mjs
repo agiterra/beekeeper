@@ -82,6 +82,7 @@ function readOf(issues, extra = {}) {
     containers: [{ id: LIST, title: "Launch" }],
     truncated: false,
     unreadable: 0,
+    people: [],
     ...extra,
   };
 }

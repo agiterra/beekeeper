@@ -99,26 +99,32 @@ the fold's decode is the same rule, and an event that fails it is counted in
    create's key, so a field
    write stamped before the create loses to it. A field op naming a list or
    item that does not exist is counted in `ignored`.
-6. **State.** `item.done` and `item.status` write one field, the item's
-   state, and the greatest `(created_at, id)` over both wins.
-   `item.done{true}` reads as status `done`, `item.done{false}` as `todo`,
-   and `item.status` as itself. `done` and `canceled` are the **closed**
-   statuses: an item is `done` exactly when its status is one of them, and
-   then `completedAt` is the winning state op's `created_at` and
-   `completedBy` its author; otherwise both are `null`. `priority` and
-   `description` are plain fields under rule 5.
+6. **State.** Whether an item is done is decided by `item.done` alone, by
+   the same rule a reader that predates `item.status` applies: the winning
+   `item.done` (or the `add`'s implicit `false`) sets `done`, and when it is
+   `true`, `completedAt` is that op's `created_at` and `completedBy` its
+   author; otherwise both are `null`. `item.status` refines it and never
+   overrides it: the winning `item.status` is the item's `status` only when
+   its `(created_at, id)` is greater than the winning `item.done`'s **and**
+   it agrees on closed-ness (`done` and `canceled` are closed). Otherwise
+   `status` is `done` when the item is done and `todo` when it is not.
+   `priority` and `description` are plain fields under rule 5.
 
-   A writer moving an item across the closed boundary SHOULD publish
-   `item.done` first, then `item.status` (stamped after it), so a reader
-   that predates `item.status` — and folds only `item.done` — still agrees
-   on whether the item is done. The fold does not depend on it.
+   So a writer setting a status publishes `item.done` (closed-ness of the
+   new status) and then `item.status`, stamped after it — every time, not
+   only when its own read says the boundary is crossed, because that read
+   can be stale. The two events are not atomic. If the second is refused
+   (a relay that predates `item.status` rejects it), or another writer's
+   `item.done` lands between them, the item reads what `item.done` says, for
+   every reader; no interleaving can make two readers of different ages
+   disagree on whether an item is done, when, or by whom.
 7. **Timestamps.** `updatedAt` on an item is the greatest `created_at` among
    the ops applied to it (winners and losers alike; a loser is never later
    than its winner). `updatedAt` on a list is the greatest over its own ops,
    its items' ops, and removes.
 8. **Order out.** Lists sort by `(createdAt, id)`. Within a list, `open`
    holds the not-done items sorted by `(rank, id)` bytewise and `completed`
-   holds the done items sorted by the winning state op's `(created_at, id)`
+   holds the done items sorted by the winning `item.done`'s `(created_at, id)`
    descending — most recently completed first.
 
 ## Digest shape (`buzz-project-todo-digest/v1`)

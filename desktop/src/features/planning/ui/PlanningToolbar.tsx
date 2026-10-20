@@ -314,7 +314,7 @@ export function PlanningToolbar({
                     onSelect={(event) => event.preventDefault()}
                   >
                     <span className="flex items-center gap-2">
-                      <PriorityGlyph priorityId={priority.id} />
+                      <PriorityGlyph level={priority.level} />
                       {priority.label}
                     </span>
                   </DropdownMenuCheckboxItem>

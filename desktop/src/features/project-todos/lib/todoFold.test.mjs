@@ -219,3 +219,111 @@ test("due dates are real calendar days", () => {
     assert.notEqual(dueDateError(bad), null, bad);
   }
 });
+
+// Mixed-version agreement: a reader that predates `item.status` decodes it
+// as an unknown op and drops it. Whatever order `item.done` and
+// `item.status` arrive in — a pair split by another writer, a pair whose
+// second op was refused, a status written from a stale read — the two
+// readers must agree on whether the item is done, when and by whom.
+const MV_PROJECT = `30621:${"a".repeat(64)}:p`;
+const MV_LIST = "1".repeat(32);
+const MV_ITEM = "2".repeat(32);
+const MV_STATUSES = [
+  "triage",
+  "backlog",
+  "todo",
+  "in_progress",
+  "done",
+  "canceled",
+];
+
+function mvEvent(n, author, createdAt, op) {
+  const full = { listId: MV_LIST, visibility: "project", ...op };
+  return {
+    id: n.toString(16).padStart(64, "0"),
+    pubkey: author.repeat(64),
+    created_at: createdAt,
+    kind: 44248,
+    tags: todoOpTags(MV_PROJECT, full),
+    content: encodeTodoOpContent(full),
+  };
+}
+
+function mvSeed() {
+  return [
+    mvEvent(1, "a", 1, { op: "list.create", title: "L" }),
+    mvEvent(2, "a", 1, {
+      op: "item.add",
+      itemId: MV_ITEM,
+      text: "t",
+      rank: "a0",
+    }),
+  ];
+}
+
+const mvDone = (done) => ({ op: "item.done", itemId: MV_ITEM, done });
+const mvStatus = (status) => ({ op: "item.status", itemId: MV_ITEM, status });
+
+function mvItem(events) {
+  const list = foldProjectTodos(MV_PROJECT, events).lists[0];
+  return [...list.open, ...list.completed][0];
+}
+
+function mvOldReader(events) {
+  return mvItem(
+    events.filter((event) => !event.content.includes('"op":"item.status"')),
+  );
+}
+
+test("readers of different ages agree on done under any interleaving", () => {
+  let state = 0x2545f491;
+  const next = (bound) => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) % bound;
+  };
+  for (let round = 0; round < 2000; round += 1) {
+    const events = mvSeed();
+    const count = 1 + next(8);
+    for (let n = 0; n < count; n += 1) {
+      const author = next(2) === 0 ? "b" : "c";
+      const createdAt = 1 + next(6);
+      const op =
+        next(3) === 0 ? mvDone(next(2) === 0) : mvStatus(MV_STATUSES[next(6)]);
+      events.push(mvEvent(100 + n * 7 + next(5), author, createdAt, op));
+    }
+    const fresh = mvItem(events);
+    const old = mvOldReader(events);
+    const why = JSON.stringify(events.slice(2));
+    assert.equal(fresh.done, old.done, why);
+    assert.equal(fresh.completedAt, old.completedAt, why);
+    assert.equal(fresh.completedBy, old.completedBy, why);
+    assert.equal(
+      fresh.status === "done" || fresh.status === "canceled",
+      fresh.done,
+      why,
+    );
+  }
+});
+
+test("a stale-read Canceled published as a pair wins for every reader; alone it changes nothing", () => {
+  // B read Done; A reopened; B, still reading Done, sets Canceled.
+  const base = [
+    ...mvSeed(),
+    mvEvent(10, "b", 2, mvDone(true)),
+    mvEvent(11, "b", 3, mvStatus("done")),
+    mvEvent(12, "a", 4, mvDone(false)),
+  ];
+  const paired = [
+    ...base,
+    mvEvent(13, "b", 5, mvDone(true)),
+    mvEvent(14, "b", 6, mvStatus("canceled")),
+  ];
+  assert.equal(mvItem(paired).status, "canceled");
+  assert.equal(mvOldReader(paired).done, true);
+  const statusOnly = [...base, mvEvent(13, "b", 5, mvStatus("canceled"))];
+  assert.equal(mvItem(statusOnly).status, "todo");
+  assert.equal(mvItem(statusOnly).done, false);
+  assert.equal(mvOldReader(statusOnly).done, false);
+});

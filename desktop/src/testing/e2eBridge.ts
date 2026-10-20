@@ -1596,6 +1596,11 @@ declare global {
     /** Project history kinds rejected with CLOSED for aggregate-query tests. */
     __BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__?: number[];
     /**
+     * NIP-TD ops (`td-op` values) the mock relay refuses on publish, as a
+     * relay that predates them refuses an unknown op.
+     */
+    __BEEKEEPER_E2E_REJECT_TODO_OPS__?: string[];
+    /**
      * Project history kinds whose REQ is never answered — no EVENT, no EOSE,
      * no CLOSED. A rejection and a read still in flight are different answers,
      * and a surface that renders them the same way is the defect; this seam is
@@ -11136,6 +11141,20 @@ function sendToMockSocket(
           event.id,
           false,
           "invalid: event pubkey does not match authenticated identity",
+        ]);
+        return;
+      }
+      const todoOp = event.tags.find((tag) => tag[0] === "td-op")?.[1];
+      if (
+        event.kind === KIND_PROJECT_TODO_OP &&
+        todoOp !== undefined &&
+        window.__BEEKEEPER_E2E_REJECT_TODO_OPS__?.includes(todoOp)
+      ) {
+        sendWsText(socket.handler, [
+          "OK",
+          event.id,
+          false,
+          `invalid: unknown project todo op ${JSON.stringify(todoOp)}`,
         ]);
         return;
       }

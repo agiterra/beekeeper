@@ -21,6 +21,7 @@ import type { TodoItem } from "./todoFold";
 import {
   type TodoOp,
   type TodoOpContent,
+  type TodoOpKind,
   type TodoPriority,
   type TodoStatus,
   type TodoVisibility,
@@ -114,14 +115,17 @@ export type TodoMutations = {
   renameList: (listId: string, title: string) => Promise<void>;
   setListArchived: (listId: string, archived: boolean) => Promise<void>;
   setListPinned: (listId: string, pinned: boolean) => Promise<void>;
+  /**
+   * One `item.add`, so the item exists exactly when this resolves. Fields
+   * beyond text and position are separate ops the caller sends after, and
+   * reports one by one: folding them in here would turn "created, but the
+   * assignee was refused" into a rejection a caller would retry, minting a
+   * duplicate.
+   */
   addItem: (
     listId: string,
     text: string,
-    extra?: {
-      assignee?: string | null;
-      due?: string | null;
-      index?: number | null;
-    },
+    extra?: { index?: number | null },
   ) => Promise<string>;
   setText: (listId: string, itemId: string, text: string) => Promise<void>;
   setDone: (listId: string, itemId: string, done: boolean) => Promise<void>;
@@ -134,9 +138,10 @@ export type TodoMutations = {
   moveItem: (listId: string, itemId: string, index: number) => Promise<void>;
   removeItem: (listId: string, itemId: string) => Promise<void>;
   /**
-   * Set the workflow status. Crossing the closed boundary publishes
-   * `item.done` first and `item.status` second, so a reader that predates
-   * `item.status` still agrees on whether the item is done (NIP-TD).
+   * Set the workflow status: `item.done`, then `item.status` (see
+   * {@link statusOps}). Two events, not one: when the second is refused the
+   * promise rejects with a {@link TodoPartialWriteError} saying what the
+   * item now reads.
    */
   setStatus: (
     listId: string,
@@ -157,23 +162,81 @@ export type TodoMutations = {
 };
 
 /**
- * The ops `setStatus` publishes, in order, for an item whose fold currently
- * reads `currentlyDone`: `item.done` first when the move crosses the closed
- * boundary, then `item.status`.
+ * The ops `setStatus` publishes, in order: `item.done` carrying the new
+ * status's closed-ness, then `item.status`. Always both, never only the
+ * status when this client's read says the closed boundary is not crossed:
+ * that read can be stale (another writer may have reopened the item), and
+ * done-ness is decided by `item.done` alone, by every reader of any age
+ * (NIP-TD, fold rule 6). A status that disagrees with a later `item.done`
+ * is simply not applied, so the pair can never split old and new readers.
  */
 export function statusOps(
   listId: string,
   itemId: string,
   status: TodoStatus,
-  currentlyDone: boolean,
 ): TodoOpContent[] {
-  const closed = isClosedTodoStatus(status);
-  const ops: TodoOpContent[] = [];
-  if (closed !== currentlyDone) {
-    ops.push({ op: "item.done", listId, itemId, done: closed });
+  return [
+    { op: "item.done", listId, itemId, done: isClosedTodoStatus(status) },
+    { op: "item.status", listId, itemId, status },
+  ];
+}
+
+/**
+ * A write of several ops of which only the first `saved` were accepted.
+ * Ops are separate signed events; there is no transaction, so this says
+ * exactly which part landed and what the item reads now, instead of a
+ * generic failure that hides a half-applied change.
+ */
+export class TodoPartialWriteError extends Error {
+  readonly saved: readonly TodoOpKind[];
+  readonly refused: TodoOpKind;
+  readonly reason: string;
+
+  constructor(
+    summary: string,
+    saved: readonly TodoOpKind[],
+    refused: TodoOpKind,
+    reason: string,
+  ) {
+    super(`${summary} (${reason})`);
+    this.name = "TodoPartialWriteError";
+    this.saved = saved;
+    this.refused = refused;
+    this.reason = reason;
   }
-  ops.push({ op: "item.status", listId, itemId, status });
-  return ops;
+}
+
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Publish {@link statusOps} through `publish`. A refusal of the first op
+ * saved nothing and is rethrown as is; a refusal of the second leaves the
+ * item reading `done` or `todo` from the saved `item.done`, and says so.
+ */
+export async function publishStatusOps(
+  publish: (op: TodoOpContent) => Promise<unknown>,
+  listId: string,
+  itemId: string,
+  status: TodoStatus,
+): Promise<void> {
+  const [doneOp, statusOp] = statusOps(listId, itemId, status) as [
+    TodoOpContent,
+    TodoOpContent,
+  ];
+  await publish(doneOp);
+  try {
+    await publish(statusOp);
+  } catch (error) {
+    const reads = isClosedTodoStatus(status) ? "done" : "todo";
+    throw new TodoPartialWriteError(
+      `Only part of the change saved: the item now reads “${reads}” for everyone, but the relay refused the status “${status}”`,
+      ["item.done"],
+      "item.status",
+      reasonOf(error),
+    );
+  }
 }
 
 /** Reference-stable mutation callbacks for one project coordinate. */
@@ -233,17 +296,6 @@ export function useTodoMutations(coordinate: string | null): TodoMutations {
         const itemId = newTodoId();
         const rank = rankForIndex(openItems(listId), extra.index ?? null, null);
         await publishOn({ op: "item.add", listId, itemId, text, rank });
-        if (extra.assignee) {
-          await publishOn({
-            op: "item.assignee",
-            listId,
-            itemId,
-            assignee: extra.assignee,
-          });
-        }
-        if (extra.due) {
-          await publishOn({ op: "item.due", listId, itemId, due: extra.due });
-        }
         return itemId;
       },
       setText: async (listId, itemId, text) => {
@@ -266,18 +318,7 @@ export function useTodoMutations(coordinate: string | null): TodoMutations {
         await publishOn({ op: "item.remove", listId, itemId });
       },
       setStatus: async (listId, itemId, status) => {
-        const list = cachedList(listId);
-        const item = [...(list?.open ?? []), ...(list?.completed ?? [])].find(
-          (candidate) => candidate.id === itemId,
-        );
-        if (!item) {
-          throw new Error(
-            "This item is not in the current read; refresh and try again.",
-          );
-        }
-        for (const op of statusOps(listId, itemId, status, item.done)) {
-          await publishOn(op);
-        }
+        await publishStatusOps(publishOn, listId, itemId, status);
       },
       setPriority: async (listId, itemId, priority) => {
         await publishOn({ op: "item.priority", listId, itemId, priority });

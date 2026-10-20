@@ -10,8 +10,55 @@ import type {
   PlanningCapabilities,
   PlanningContainer,
   PlanningIssue,
+  PlanningRead,
   PlanningStatusCategory,
 } from "./planningTypes.ts";
+
+/**
+ * The Beekeeper pubkey behind a provider person id, or `null` when the
+ * provider has not linked that person to one. Natively the id is the pubkey.
+ */
+export function personPubkey(
+  capabilities: Pick<PlanningCapabilities, "personIds">,
+  read: Pick<PlanningRead, "people"> | null,
+  personId: string,
+): string | null {
+  if (capabilities.personIds === "beekeeper-pubkey") return personId;
+  return read?.people.find((person) => person.id === personId)?.pubkey ?? null;
+}
+
+/**
+ * The viewer's own person id in this provider — what "my issues" and the
+ * "me" filter compare assignees with — or `null` when the provider has no
+ * person linked to the viewer's pubkey.
+ */
+export function viewerPersonId(
+  capabilities: Pick<PlanningCapabilities, "personIds">,
+  read: Pick<PlanningRead, "people"> | null,
+  selfPubkey: string | null,
+): string | null {
+  if (selfPubkey === null) return null;
+  if (capabilities.personIds === "beekeeper-pubkey") return selfPubkey;
+  return (
+    read?.people.find((person) => person.pubkey === selfPubkey)?.id ?? null
+  );
+}
+
+/**
+ * The status and priority a new issue starts with, from the provider's own
+ * vocabulary: its first unstarted status and its "no priority" level.
+ */
+export function defaultCreateIds(
+  capabilities: Pick<PlanningCapabilities, "statuses" | "priorities">,
+): { statusId: string; priorityId: string } {
+  const status =
+    capabilities.statuses.find((s) => s.category === "unstarted") ??
+    capabilities.statuses[0];
+  const priority =
+    capabilities.priorities.find((p) => p.level === "none") ??
+    capabilities.priorities.at(-1);
+  return { statusId: status?.id ?? "", priorityId: priority?.id ?? "" };
+}
 
 export type PlanningLayout = "list" | "board";
 export type PlanningGroupBy =

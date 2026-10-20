@@ -14,6 +14,7 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled } from "@/shared/features";
 
 import { NATIVE_CAPABILITIES } from "../lib/nativePlanning";
+import { PlanningPartialWriteError } from "../lib/planningErrors";
 import {
   planningDisplayKey,
   readPlanningDisplay,
@@ -31,7 +32,10 @@ import {
   type PlanningDisplay,
   type PlanningFilters,
   type PlanningGroup,
+  defaultCreateIds,
+  personPubkey,
   stepSelection,
+  viewerPersonId,
 } from "../lib/planningView";
 import { useNativePlanning } from "../lib/useNativePlanning";
 import { PlanningIssueDetail } from "./PlanningIssueDetail";
@@ -66,8 +70,7 @@ function keyBelongsElsewhere(event: KeyboardEvent): boolean {
 }
 
 const DEFAULT_CREATE: QuickCreateDefaults = {
-  statusId: "todo",
-  priorityId: "none",
+  ...defaultCreateIds(NATIVE_CAPABILITIES),
   assignee: null,
   containerId: null,
 };
@@ -120,21 +123,30 @@ export function PlanningScreen({
       : todoAccess;
   const canEdit = access.kind === "writable";
 
-  // People: every pubkey an issue names, resolved in one batch.
+  // People: every person an issue names, resolved to Beekeeper profiles in
+  // one batch. Person ids are the provider's; natively they are pubkeys.
   const read = planning.state.kind === "loading" ? null : planning.state.read;
+  const viewerId = viewerPersonId(capabilities, read, self);
   const pubkeys = React.useMemo(() => {
     const set = new Set<string>();
     for (const issue of read?.issues ?? []) {
-      set.add(issue.createdBy);
-      if (issue.assignee) set.add(issue.assignee);
+      for (const id of [issue.createdBy, issue.assignee]) {
+        const pubkey =
+          id === null ? null : personPubkey(capabilities, read, id);
+        if (pubkey !== null) set.add(pubkey);
+      }
     }
     return [...set];
   }, [read]);
   const profiles = useUsersBatchQuery(pubkeys);
   const profileMap = profiles.data?.profiles;
   const personFor = React.useCallback(
-    (pubkey: string) => todoPerson(pubkey, profileMap),
-    [profileMap],
+    (personId: string) =>
+      todoPerson(
+        personPubkey(capabilities, read, personId) ?? personId,
+        profileMap,
+      ),
+    [profileMap, read],
   );
 
   // Display options are personal and remembered; filters are not.
@@ -202,6 +214,10 @@ export function PlanningScreen({
   const run = React.useCallback(
     (issue: PlanningIssue, field: string, work: () => Promise<void>) => {
       track(issue, field, work).catch((error: unknown) => {
+        if (error instanceof PlanningPartialWriteError) {
+          toast.warning(error.message);
+          return;
+        }
         toast.error(`Could not save the ${field}: ${message(error)}`);
       });
     },
@@ -399,7 +415,7 @@ export function PlanningScreen({
           provider={provider}
           searchRef={searchRef}
           selectedKey={selectedKey}
-          self={self}
+          self={viewerId}
           state={planning.state}
         />
         {issueKey !== null && read !== null ? (

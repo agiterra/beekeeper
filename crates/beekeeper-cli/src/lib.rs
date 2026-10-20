@@ -5592,9 +5592,11 @@ pub enum TodosCmd {
         due: String,
     },
     /// Set an item's status. `done` and `canceled` are closed: the item is
-    /// listed among the completed. Crossing that boundary publishes
-    /// `item.done` first, then `item.status`, so clients that predate
-    /// `item.status` agree on whether the item is done
+    /// listed among the completed. Publishes two events, `item.done` then
+    /// `item.status`, so every client — including ones that predate
+    /// `item.status` — agrees on whether the item is done. They are not
+    /// atomic: if the second is refused the command prints a `"partial"`
+    /// result naming what the item now reads and exits 4
     Status {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
         #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]

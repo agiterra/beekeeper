@@ -500,3 +500,99 @@ test("a refused read is an error, not an empty project", async ({ page }) => {
   await expect(page.getByTestId("planning-empty")).toHaveCount(0);
   await shot(page, "08-error");
 });
+
+const DOC_URL = `${PLANNING_URL}?issue=${LIST}/${ITEMS.doc}`;
+const DOC_TITLE = "Document the planning provider contract";
+
+async function refuseTodoOps(page: Page, ops: string[]) {
+  await page.evaluate((refused) => {
+    window.__BEEKEEPER_E2E_REJECT_TODO_OPS__ = refused;
+  }, ops);
+}
+
+test("Escape leaves a title edit without saving it", async ({ page }) => {
+  await openPlanning(page, { path: DOC_URL });
+  await waitForWriteAccess(page);
+  const title = page.getByTestId("planning-detail-title");
+  await expect(title).toHaveValue(DOC_TITLE);
+  await title.fill("A rename the viewer abandons");
+  await page.keyboard.press("Escape");
+  await expect(title).toHaveValue(DOC_TITLE);
+  await expect(title).not.toBeFocused();
+  // The detail stays open: Escape belonged to the field.
+  await expect(page.getByTestId("planning-detail")).toBeVisible();
+  // Nothing was published: a rename would show in the op history and the row.
+  await page.waitForTimeout(1_500);
+  await expect(page.getByTestId("planning-detail-activity")).not.toContainText(
+    "renamed the issue",
+  );
+  await expect(page.getByTestId(`planning-row-${ITEMS.doc}`)).toContainText(
+    DOC_TITLE,
+  );
+  await expect(page.getByTestId(`planning-row-${ITEMS.doc}`)).not.toContainText(
+    "abandons",
+  );
+
+  // Enter still saves.
+  await title.fill("Document the planning provider boundary");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("planning-detail-activity")).toContainText(
+    "renamed the issue",
+    { timeout: 10_000 },
+  );
+});
+
+test("a status the relay refuses is reported as a partial change, and the issue reads what item.done saved", async ({
+  page,
+}) => {
+  await openPlanning(page, { path: DOC_URL });
+  await waitForWriteAccess(page);
+  // A relay that predates item.status refuses it as an unknown op.
+  await refuseTodoOps(page, ["item.status"]);
+  await page.getByTestId("planning-detail-status").click();
+  await page.getByTestId("planning-status-option-canceled").click();
+  const toast = page
+    .locator("[data-sonner-toast]")
+    .filter({ hasText: "Only part of the change saved" });
+  await expect(toast).toBeVisible({ timeout: 10_000 });
+  await expect(toast).toContainText("now reads “done” for everyone");
+  await expect(toast).toContainText("refused the status “canceled”");
+  await expect(toast).toContainText("unknown project todo op");
+  // Done, not Canceled and not a pretend rollback: item.done was accepted.
+  await expect(page.getByTestId("planning-detail-status")).toContainText(
+    "Done",
+    { timeout: 10_000 },
+  );
+  const activity = page.getByTestId("planning-detail-activity");
+  await expect(activity).toContainText("marked it done");
+  await expect(activity).not.toContainText("set status to Canceled");
+  await shot(page, "09-partial-status");
+});
+
+test("a field refused at create is reported once; the issue exists once and the draft closes", async ({
+  page,
+}) => {
+  await openPlanning(page);
+  await waitForWriteAccess(page);
+  await refuseTodoOps(page, ["item.priority"]);
+  await page.getByTestId("planning-new-issue").click();
+  const dialog = page.getByTestId("planning-quick-create");
+  await expect(dialog).toBeVisible();
+  await page
+    .getByTestId("planning-quick-create-title")
+    .fill("Created even though its priority is refused");
+  await page.getByTestId("planning-quick-create-priority").click();
+  await page.getByTestId("planning-priority-option-high").click();
+  await page.keyboard.press("Meta+Enter");
+  await expect(dialog).toBeHidden({ timeout: 10_000 });
+  const toast = page
+    .locator("[data-sonner-toast]")
+    .filter({ hasText: "but its priority" });
+  await expect(toast).toBeVisible({ timeout: 10_000 });
+  await expect(toast).toContainText("did not save");
+  const rows = page
+    .getByTestId("planning-list")
+    .locator("li", { hasText: "Created even though its priority is refused" });
+  await expect(rows).toHaveCount(1, { timeout: 10_000 });
+  await shot(page, "10-partial-create");
+});

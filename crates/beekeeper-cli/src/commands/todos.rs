@@ -246,24 +246,38 @@ fn parse_priority(value: &str) -> Result<TodoPriority, CliError> {
     TodoPriority::from_str(value).map_err(CliError::Usage)
 }
 
-/// The ops that set `item_id` to `status`, in publish order. When the new
-/// status is on the other side of the closed boundary from the item's
-/// current `done`, `item.done` goes first so a reader that predates
-/// `item.status` still agrees on done-ness; `item.status` follows, stamped
-/// later, and wins the shared state field for every reader that knows it.
-fn status_ops(item_id: &str, currently_done: bool, status: TodoStatus) -> Vec<ProjectTodoOpValue> {
-    let mut ops = Vec::with_capacity(2);
-    if status.is_closed() != currently_done {
-        ops.push(ProjectTodoOpValue::ItemDone {
+/// The ops that set `item_id` to `status`, in publish order: `item.done`
+/// carrying the status's closed-ness, then `item.status`. Always both —
+/// never the status alone because this snapshot says the closed boundary is
+/// not crossed, since the snapshot can be stale. Done-ness is decided by
+/// `item.done` alone for every reader of any age, and a status that
+/// disagrees with a later `item.done` is not applied (NIP-TD, fold rule 6),
+/// so no interleaving splits old and new readers.
+fn status_ops(item_id: &str, status: TodoStatus) -> [ProjectTodoOpValue; 2] {
+    [
+        ProjectTodoOpValue::ItemDone {
             item_id: item_id.to_owned(),
             done: status.is_closed(),
-        });
-    }
-    ops.push(ProjectTodoOpValue::ItemStatus {
-        item_id: item_id.to_owned(),
-        status,
-    });
-    ops
+        },
+        ProjectTodoOpValue::ItemStatus {
+            item_id: item_id.to_owned(),
+            status,
+        },
+    ]
+}
+
+/// The outcome to print when `item.done` was accepted and `item.status`
+/// refused: the two are separate events with no transaction, so the item
+/// reads what `item.done` saved, and the command says exactly that.
+fn partial_status_report(saved: &Value, status: TodoStatus, error: &CliError) -> Value {
+    let reads = if status.is_closed() { "done" } else { "todo" };
+    json!({
+        "status": "partial",
+        "requested": status.as_str(),
+        "reads": reads,
+        "saved": [saved],
+        "refused": { "op": "item.status", "error": error.to_string() },
+    })
 }
 
 /// The rank that places an item at `index` among `open` (0 = first;
@@ -506,39 +520,47 @@ pub async fn dispatch(
                 )
                 .await?,
             ];
-            if let Some(assignee) = assignee {
-                published.push(
-                    publish(
-                        &mut snap,
-                        client,
-                        &ProjectTodoOp {
-                            list_id: list_id.clone(),
-                            visibility,
-                            value: ProjectTodoOpValue::ItemAssignee {
-                                item_id: item_id.clone(),
-                                assignee: Some(assignee),
-                            },
-                        },
-                    )
-                    .await?,
-                );
+            // The item exists from here on. A refused follow-up must not
+            // surface as a plain failure: a caller retrying `add` would mint
+            // a second item. Report what saved and what did not instead.
+            let follow_ups = [
+                assignee.map(|assignee| ProjectTodoOpValue::ItemAssignee {
+                    item_id: item_id.clone(),
+                    assignee: Some(assignee),
+                }),
+                due.map(|due| ProjectTodoOpValue::ItemDue {
+                    item_id: item_id.clone(),
+                    due: Some(due),
+                }),
+            ];
+            let mut refused = Vec::new();
+            for value in follow_ups.into_iter().flatten() {
+                let op = ProjectTodoOp {
+                    list_id: list_id.clone(),
+                    visibility,
+                    value,
+                };
+                let kind = op.kind().as_str();
+                match publish(&mut snap, client, &op).await {
+                    Ok(response) => published.push(response),
+                    Err(error) => refused.push(json!({ "op": kind, "error": error.to_string() })),
+                }
             }
-            if let Some(due) = due {
-                published.push(
-                    publish(
-                        &mut snap,
-                        client,
-                        &ProjectTodoOp {
-                            list_id: list_id.clone(),
-                            visibility,
-                            value: ProjectTodoOpValue::ItemDue {
-                                item_id: item_id.clone(),
-                                due: Some(due),
-                            },
-                        },
-                    )
-                    .await?,
+            if !refused.is_empty() {
+                println!(
+                    "{}",
+                    json!({
+                        "status": "partial",
+                        "item_id": item_id,
+                        "saved": published,
+                        "refused": refused,
+                    })
                 );
+                return Err(CliError::Other(format!(
+                    "item {item_id} was added, but {} follow-up op(s) were refused; set them on \
+                     that item rather than re-running add, which would add a second item",
+                    refused.len()
+                )));
             }
             let first = published.first().cloned().unwrap_or(Value::Null);
             let mut out = first;
@@ -614,24 +636,30 @@ pub async fn dispatch(
             let (list, item) = resolve_item(&snap.digest, &item)?;
             let list_id = list.id.clone();
             let visibility = visibility_of(list)?;
-            let values = status_ops(&item.id, item.done, status);
-            let mut published = Vec::with_capacity(values.len());
-            for value in values {
-                let op = ProjectTodoOp {
-                    list_id: list_id.clone(),
-                    visibility,
-                    value,
-                };
-                published.push(publish(&mut snap, client, &op).await?);
+            let [done_op, status_op] = status_ops(&item.id, status);
+            let op = |value| ProjectTodoOp {
+                list_id: list_id.clone(),
+                visibility,
+                value,
+            };
+            // Refused here, nothing was saved: the plain error is the truth.
+            let saved = publish(&mut snap, client, &op(done_op)).await?;
+            match publish(&mut snap, client, &op(status_op)).await {
+                Ok(mut out) => {
+                    out["ops"] = json!([saved, out.clone()]);
+                    println!("{out}");
+                    Ok(())
+                }
+                Err(error) => {
+                    println!("{}", partial_status_report(&saved, status, &error));
+                    Err(CliError::Other(format!(
+                        "only part of the status change saved: item.done was accepted, so the \
+                         item reads {:?} for everyone, but item.status {:?} was refused: {error}",
+                        if status.is_closed() { "done" } else { "todo" },
+                        status.as_str()
+                    )))
+                }
             }
-            // The `item.status` op is the answer; a preceding `item.done`
-            // is listed under `ops` in publish order.
-            let mut out = published.last().cloned().unwrap_or(Value::Null);
-            if published.len() > 1 {
-                out["ops"] = json!(published);
-            }
-            println!("{out}");
-            Ok(())
         }
         TodosCmd::Priority {
             project,
@@ -882,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn status_crossing_the_closed_boundary_publishes_done_first() {
+    fn a_status_is_always_item_done_then_item_status() {
         let id = "a".repeat(32);
         let done = |d: bool| ProjectTodoOpValue::ItemDone {
             item_id: id.clone(),
@@ -892,29 +920,37 @@ mod tests {
             item_id: id.clone(),
             status: s,
         };
-        // Open -> closed: done{true}, then the status.
-        assert_eq!(
-            status_ops(&id, false, TodoStatus::Canceled),
-            vec![done(true), status(TodoStatus::Canceled)]
-        );
-        assert_eq!(
-            status_ops(&id, false, TodoStatus::Done),
-            vec![done(true), status(TodoStatus::Done)]
-        );
-        // Closed -> open: done{false}, then the status.
-        assert_eq!(
-            status_ops(&id, true, TodoStatus::InProgress),
-            vec![done(false), status(TodoStatus::InProgress)]
-        );
-        // Same side of the boundary: the status alone.
-        assert_eq!(
-            status_ops(&id, false, TodoStatus::Backlog),
-            vec![status(TodoStatus::Backlog)]
-        );
-        assert_eq!(
-            status_ops(&id, true, TodoStatus::Done),
-            vec![status(TodoStatus::Done)]
-        );
+        // Whatever the snapshot said: the pair, every time.
+        for (target, closed) in [
+            (TodoStatus::Canceled, true),
+            (TodoStatus::Done, true),
+            (TodoStatus::InProgress, false),
+            (TodoStatus::Backlog, false),
+            (TodoStatus::Todo, false),
+        ] {
+            assert_eq!(status_ops(&id, target), [done(closed), status(target)]);
+        }
+    }
+
+    #[test]
+    fn a_refused_status_reports_the_saved_half_and_what_the_item_reads() {
+        let saved = json!({ "event_id": "e", "op": "item.done", "accepted": true });
+        let error = CliError::Relay {
+            status: 400,
+            body: "invalid: unknown project todo op \"item.status\"".into(),
+        };
+        let report = partial_status_report(&saved, TodoStatus::Canceled, &error);
+        assert_eq!(report["status"], "partial");
+        assert_eq!(report["requested"], "canceled");
+        assert_eq!(report["reads"], "done");
+        assert_eq!(report["saved"][0]["op"], "item.done");
+        assert_eq!(report["refused"]["op"], "item.status");
+        assert!(report["refused"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown project todo op"));
+        let reopened = partial_status_report(&saved, TodoStatus::InProgress, &error);
+        assert_eq!(reopened["reads"], "todo");
     }
 
     #[test]

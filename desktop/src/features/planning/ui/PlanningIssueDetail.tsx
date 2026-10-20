@@ -57,6 +57,10 @@ function TitleField({
   const [saving, setSaving] = React.useState(false);
   // A new remote title replaces the draft unless the viewer is mid-edit.
   const editing = React.useRef(false);
+  // Escape blurs the field to leave it; that blur must not save. The flag
+  // is read by the blur handler the same tick, before any re-render could
+  // hand it a fresh closure, so the restored draft never races the typed one.
+  const discardOnBlur = React.useRef(false);
   React.useEffect(() => {
     if (!editing.current) setDraft(issue.title);
   }, [issue.title]);
@@ -100,7 +104,13 @@ function TitleField({
         className="h-auto border-transparent px-1 py-1 text-lg font-semibold shadow-none hover:border-input focus-visible:border-input"
         data-testid="planning-detail-title"
         disabled={saving}
-        onBlur={() => void commit()}
+        onBlur={() => {
+          if (discardOnBlur.current) {
+            discardOnBlur.current = false;
+            return;
+          }
+          void commit();
+        }}
         onChange={(event) => {
           editing.current = true;
           setDraft(event.target.value);
@@ -113,7 +123,9 @@ function TitleField({
             event.preventDefault();
             event.stopPropagation();
             editing.current = false;
+            discardOnBlur.current = true;
             setDraft(issue.title);
+            setError(null);
             event.currentTarget.blur();
           }
         }}

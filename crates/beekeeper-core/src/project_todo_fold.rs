@@ -31,13 +31,17 @@
 //!    part with the create's own key — so a `text` op stamped *before* the
 //!    `add` (a skewed clock) loses to the add. Ops naming a list or item that
 //!    does not exist are ignored.
-//! 6. **State.** `item.done` and `item.status` write one field, the item's
-//!    state, and the greater key over both wins: `item.done{true}` reads as
-//!    status `done`, `item.done{false}` as `todo`, `item.status` as itself.
-//!    An item is `done` — listed among the completed — when its status is
-//!    `done` or `canceled`, and then records `completedAt`/`completedBy`
-//!    from the winning op; otherwise both are null. An untouched item is
-//!    `todo`, priority `none`, description null.
+//! 6. **State.** Whether an item is done is decided by `item.done` alone,
+//!    exactly as a reader that predates `item.status` decides it: the
+//!    winning `item.done` (or the `add`'s implicit `false`) sets `done`,
+//!    `completedAt` and `completedBy`. `item.status` only refines that: the
+//!    winning `item.status` is the item's status when its key is greater
+//!    than the winning `item.done`'s and it agrees on closed-ness (`done`
+//!    and `canceled` are closed); otherwise the status is `done` or `todo`
+//!    from `item.done`. So no interleaving of the two ops, and no writer
+//!    whose second op was refused, can make two readers of different ages
+//!    disagree on whether an item is done. An untouched item is `todo`,
+//!    priority `none`, description null.
 //! 7. **Order out.** Lists sort by `(createdAt, id)`. Within a list, open
 //!    items sort by `(rank, id)` and completed items by
 //!    `(completedAt, doneOpId)` descending — most recently completed first.
@@ -189,9 +193,12 @@ struct ListState {
 struct ItemState {
     text: (OpKey, String),
     rank: (OpKey, String),
-    /// The state field `item.done` and `item.status` share, and who wrote
-    /// the winning op.
-    state: (OpKey, TodoStatus, String),
+    /// The winning `item.done` (the add's implicit `false` at first) and
+    /// its author: the only source of done-ness.
+    done: (OpKey, bool, String),
+    /// The winning `item.status`, if any — a refinement of `done`, never a
+    /// rival to it (rule 6).
+    status: Option<(OpKey, TodoStatus)>,
     assignee: (OpKey, Option<String>),
     due: (OpKey, Option<String>),
     priority: (OpKey, TodoPriority),
@@ -245,6 +252,20 @@ fn set_field<T>(slot: &mut (OpKey, T), key: &OpKey, value: T) {
 fn set_field_by<T>(slot: &mut (OpKey, T, String), key: &OpKey, value: T, by: &str) {
     if *key > slot.0 {
         *slot = (key.clone(), value, by.to_owned());
+    }
+}
+
+/// Rule 6: the status a reader shows, given the winning `item.done` and the
+/// winning `item.status`. Done-ness is `done`'s alone; a status applies only
+/// when it is later than `done` and on the same side of the closed boundary.
+fn effective_status(
+    done: &(OpKey, bool, String),
+    status: Option<&(OpKey, TodoStatus)>,
+) -> TodoStatus {
+    match status {
+        Some((key, status)) if *key > done.0 && status.is_closed() == done.1 => *status,
+        _ if done.1 => TodoStatus::Done,
+        _ => TodoStatus::Todo,
     }
 }
 
@@ -333,7 +354,8 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                 ItemState {
                     text: (d.key.clone(), text.clone()),
                     rank: (d.key.clone(), rank.clone()),
-                    state: (d.key.clone(), TodoStatus::Todo, d.pubkey.to_owned()),
+                    done: (d.key.clone(), false, d.pubkey.to_owned()),
+                    status: None,
                     assignee: (d.key.clone(), None),
                     due: (d.key.clone(), None),
                     priority: (d.key.clone(), TodoPriority::None),
@@ -417,12 +439,7 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                     ignored += 1;
                     continue;
                 };
-                let status = if *done {
-                    TodoStatus::Done
-                } else {
-                    TodoStatus::Todo
-                };
-                set_field_by(&mut item.state, &d.key, status, d.pubkey);
+                set_field_by(&mut item.done, &d.key, *done, d.pubkey);
                 item.updated_at = item.updated_at.max(d.key.0);
                 list.updated_at = list.updated_at.max(d.key.0);
             }
@@ -461,7 +478,9 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                     ignored += 1;
                     continue;
                 };
-                set_field_by(&mut item.state, &d.key, *status, d.pubkey);
+                if item.status.as_ref().is_none_or(|(key, _)| d.key > *key) {
+                    item.status = Some((d.key.clone(), *status));
+                }
                 item.updated_at = item.updated_at.max(d.key.0);
                 list.updated_at = list.updated_at.max(d.key.0);
             }
@@ -520,7 +539,8 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                 if owner != list_id || removed.contains(&(owner, item_id)) {
                     continue;
                 }
-                let done = item.state.1.is_closed();
+                let done = item.done.1;
+                let status = effective_status(&item.done, item.status.as_ref());
                 let row = TodoItem {
                     id: (*item_id).to_owned(),
                     list_id: (*list_id).to_owned(),
@@ -529,17 +549,17 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                     rank: item.rank.1.clone(),
                     assignee: item.assignee.1.clone(),
                     due: item.due.1.clone(),
-                    status: item.state.1.as_str().to_owned(),
+                    status: status.as_str().to_owned(),
                     priority: item.priority.1.as_str().to_owned(),
                     description: item.description.1.clone(),
                     created_at: item.created_at,
                     created_by: item.created_by.clone(),
                     updated_at: item.updated_at,
-                    completed_at: done.then_some(item.state.0 .0),
-                    completed_by: done.then(|| item.state.2.clone()),
+                    completed_at: done.then_some(item.done.0 .0),
+                    completed_by: done.then(|| item.done.2.clone()),
                 };
                 if done {
-                    completed.push((item.state.0.clone(), row));
+                    completed.push((item.done.0.clone(), row));
                 } else {
                     open.push((item.rank.1.clone(), row));
                 }
@@ -608,6 +628,176 @@ mod tests {
                 serde_json::to_string_pretty(&actual).unwrap()
             );
         }
+    }
+
+    const PROJECT: &str =
+        "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:p";
+    const LIST: &str = "11111111111111111111111111111111";
+    const ITEM: &str = "22222222222222222222222222222222";
+
+    fn op_event(n: u64, author: char, created_at: u64, value: ProjectTodoOpValue) -> TodoFoldEvent {
+        let op = ProjectTodoOp {
+            list_id: LIST.to_owned(),
+            visibility: TodoVisibility::Project,
+            value,
+        };
+        TodoFoldEvent {
+            id: format!("{n:064x}"),
+            pubkey: author.to_string().repeat(64),
+            created_at,
+            kind: KIND_PROJECT_TODO_OP,
+            tags: op.tags(PROJECT),
+            content: op.to_content(),
+        }
+    }
+
+    fn seed_events() -> Vec<TodoFoldEvent> {
+        vec![
+            op_event(
+                1,
+                'a',
+                1,
+                ProjectTodoOpValue::ListCreate {
+                    title: "L".into(),
+                    visibility: TodoVisibility::Project,
+                },
+            ),
+            op_event(
+                2,
+                'a',
+                1,
+                ProjectTodoOpValue::ItemAdd {
+                    item_id: ITEM.into(),
+                    text: "t".into(),
+                    rank: "a0".into(),
+                },
+            ),
+        ]
+    }
+
+    fn done_op(done: bool) -> ProjectTodoOpValue {
+        ProjectTodoOpValue::ItemDone {
+            item_id: ITEM.into(),
+            done,
+        }
+    }
+
+    fn status_op(status: TodoStatus) -> ProjectTodoOpValue {
+        ProjectTodoOpValue::ItemStatus {
+            item_id: ITEM.into(),
+            status,
+        }
+    }
+
+    fn only_item(digest: &ProjectTodoDigest) -> &TodoItem {
+        let list = &digest.lists[0];
+        list.open
+            .iter()
+            .chain(&list.completed)
+            .next()
+            .expect("the item is listed")
+    }
+
+    /// A reader that predates `item.status` decodes it as an unknown op and
+    /// drops it; this is that reader.
+    fn fold_as_old_reader(events: &[TodoFoldEvent]) -> ProjectTodoDigest {
+        let old: Vec<TodoFoldEvent> = events
+            .iter()
+            .filter(|event| !event.content.contains("\"op\":\"item.status\""))
+            .cloned()
+            .collect();
+        fold_project_todos(PROJECT, &old)
+    }
+
+    const STATUSES: [TodoStatus; 6] = [
+        TodoStatus::Triage,
+        TodoStatus::Backlog,
+        TodoStatus::Todo,
+        TodoStatus::InProgress,
+        TodoStatus::Done,
+        TodoStatus::Canceled,
+    ];
+
+    /// Any interleaving of `item.done` and `item.status` from any writers —
+    /// including a writer whose second op was refused, or whose read was
+    /// stale — leaves a reader that knows `item.status` and one that does
+    /// not agreeing on whether the item is done, when, and by whom.
+    #[test]
+    fn readers_of_different_ages_agree_on_done_under_any_interleaving() {
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for _ in 0..2000 {
+            let mut events = seed_events();
+            let count = 1 + next(8);
+            for n in 0..count {
+                let author = if next(2) == 0 { 'b' } else { 'c' };
+                // Ties on created_at are deliberate: they break on id.
+                let created_at = 1 + next(6);
+                let value = match next(3) {
+                    0 => done_op(next(2) == 0),
+                    _ => status_op(STATUSES[next(6) as usize]),
+                };
+                events.push(op_event(100 + n * 7 + next(5), author, created_at, value));
+            }
+            let new = fold_project_todos(PROJECT, &events);
+            let old = fold_as_old_reader(&events);
+            let (new_item, old_item) = (only_item(&new), only_item(&old));
+            assert_eq!(new_item.done, old_item.done, "{events:#?}");
+            assert_eq!(new_item.completed_at, old_item.completed_at, "{events:#?}");
+            assert_eq!(new_item.completed_by, old_item.completed_by, "{events:#?}");
+            let status = TodoStatus::from_str(&new_item.status).expect("status");
+            assert_eq!(status.is_closed(), new_item.done, "{events:#?}");
+        }
+    }
+
+    /// B read the item as Done; A reopened it; B, still reading Done, sets
+    /// Canceled. B's writer always publishes `item.done` before
+    /// `item.status`, so B's later intent wins for both readers. Had B
+    /// published only the status (its stale read said no boundary was
+    /// crossed), the status would disagree with the newer `item.done{false}`
+    /// and both readers would show the item open — never one each way.
+    #[test]
+    fn a_stale_status_write_never_splits_old_and_new_readers() {
+        let mut base = seed_events();
+        base.push(op_event(10, 'b', 2, done_op(true)));
+        base.push(op_event(11, 'b', 3, status_op(TodoStatus::Done)));
+        base.push(op_event(12, 'a', 4, done_op(false)));
+
+        let mut paired = base.clone();
+        paired.push(op_event(13, 'b', 5, done_op(true)));
+        paired.push(op_event(14, 'b', 6, status_op(TodoStatus::Canceled)));
+        let new = fold_project_todos(PROJECT, &paired);
+        assert_eq!(only_item(&new).status, "canceled");
+        assert!(only_item(&new).done && only_item(&fold_as_old_reader(&paired)).done);
+
+        let mut status_only = base;
+        status_only.push(op_event(13, 'b', 5, status_op(TodoStatus::Canceled)));
+        let new = fold_project_todos(PROJECT, &status_only);
+        assert_eq!(only_item(&new).status, "todo");
+        assert!(!only_item(&new).done && !only_item(&fold_as_old_reader(&status_only)).done);
+    }
+
+    /// The pair's second op refused (an older relay rejects `item.status`
+    /// outright): the item reads what `item.done` says, for every reader.
+    #[test]
+    fn a_refused_status_leaves_what_item_done_says() {
+        let mut events = seed_events();
+        events.push(op_event(10, 'b', 2, status_op(TodoStatus::InProgress)));
+        events.push(op_event(11, 'b', 3, done_op(true)));
+        let new = fold_project_todos(PROJECT, &events);
+        assert_eq!(only_item(&new).status, "done");
+        assert_eq!(only_item(&new).completed_at, Some(3));
+        events.push(op_event(12, 'b', 4, done_op(false)));
+        // Reopened by a checkbox: the older in-progress status does not come back.
+        assert_eq!(
+            only_item(&fold_project_todos(PROJECT, &events)).status,
+            "todo"
+        );
     }
 
     #[test]

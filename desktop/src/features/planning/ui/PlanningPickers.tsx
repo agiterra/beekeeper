@@ -3,7 +3,6 @@ import {
   CircleCheck,
   CircleDashed,
   CircleDot,
-  CircleSlash,
   CircleX,
   Minus,
   SignalHigh,
@@ -23,6 +22,7 @@ import {
 
 import type {
   PlanningPriority,
+  PlanningPriorityLevel,
   PlanningStatus,
   PlanningStatusCategory,
 } from "../lib/planningTypes";
@@ -57,30 +57,28 @@ export function StatusGlyph({
 }
 
 export function PriorityGlyph({
-  priorityId,
+  level,
   className,
 }: {
-  priorityId: string;
+  level: PlanningPriorityLevel;
   className?: string;
 }) {
   const Icon =
-    priorityId === "urgent"
+    level === "urgent"
       ? TriangleAlert
-      : priorityId === "high"
+      : level === "high"
         ? SignalHigh
-        : priorityId === "medium"
+        : level === "medium"
           ? SignalMedium
-          : priorityId === "low"
+          : level === "low"
             ? SignalLow
-            : priorityId === "none"
-              ? Minus
-              : CircleSlash;
+            : Minus;
   return (
     <Icon
       aria-hidden="true"
       className={cn(
         "h-3.5 w-3.5 shrink-0",
-        priorityId === "urgent" ? "text-red-500" : "text-muted-foreground",
+        level === "urgent" ? "text-red-500" : "text-muted-foreground",
         className,
       )}
     />
@@ -190,7 +188,7 @@ export function PriorityPicker({
     <>
       <PriorityGlyph
         className={pending ? "animate-pulse" : undefined}
-        priorityId={priority.id}
+        level={priority.level}
       />
       {showLabel ? <span>{priority.label}</span> : null}
     </>
@@ -233,7 +231,7 @@ export function PriorityPicker({
               value={option.id}
             >
               <span className="flex items-center gap-2">
-                <PriorityGlyph priorityId={option.id} />
+                <PriorityGlyph level={option.level} />
                 {option.label}
               </span>
             </DropdownMenuRadioItem>

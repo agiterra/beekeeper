@@ -1251,7 +1251,7 @@ bee todos assign --project $P <item> <64-hex|none>
 bee todos due --project $P <item> 2026-12-31              # or none
 bee todos edit --project $P <item> --text "…"
 bee todos status --project $P <item> in_progress         # triage|backlog|todo|in_progress|done|canceled
-bee todos status --project $P <item> canceled            # crosses into closed: item.done{true}, then item.status
+bee todos status --project $P <item> canceled            # always two ops: item.done{true}, then item.status
 bee todos priority --project $P <item> urgent            # urgent|high|medium|low|none
 bee todos describe --project $P <item> $'Steps:\n\t1. reproduce'   # ≤ 3072 bytes
 bee todos describe --project $P <item> --clear           # publishes null
@@ -1265,9 +1265,11 @@ bee todos lists --project $P --archived
 | Check | Expect |
 | --- | --- |
 | `add --due` / `--assignee` | one `item.add` plus one op per extra field, listed under `ops`; the follow-ups are stamped after the add |
+| `add --assignee` where the follow-up is refused | stdout `{"status":"partial","item_id":…,"saved":[…],"refused":[{"op":"item.assignee",…}]}`, exit **4**; the item exists, so re-running `add` would make a second one |
 | `show` after another key's `done` | the item is under `completed` (most recent first); `open` keeps rank order |
 | `status <item> canceled` on an open item | two ops under `ops`, `item.done` then `item.status`, the second stamped later; `show` lists it under `completed` with `status: canceled` |
-| `status <item> backlog` on an open item | one `item.status` op, no `item.done` |
+| `status <item> backlog` on any item | the same two ops, `item.done{false}` first — even when the snapshot already reads it open, because the snapshot can be stale |
+| `status <item> canceled` against a relay that predates `item.status` | stdout `{"status":"partial","requested":"canceled","reads":"done","saved":[…],"refused":{"op":"item.status",…}}`, exit **4**; `show` lists the item under `completed` with `status: done` |
 | `status <item> started` / `priority <item> 1` | usage error naming the allowed values, exit 1, nothing published |
 | `describe` over 3072 bytes, blank, or with a control character other than newline/tab | usage error, exit 1 |
 | `show` (either format) | every item carries `status`, `priority`, `description` |

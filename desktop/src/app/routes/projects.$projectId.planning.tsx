@@ -9,12 +9,18 @@ const PlanningScreen = React.lazy(async () => {
   return { default: module.PlanningScreen };
 });
 
-const ISSUE_KEY = /^[0-9a-f]{32}\/[0-9a-f]{32}$/;
+/**
+ * An issue key, `<containerId>/<issueId>`, in any provider's id alphabet: a
+ * native list and item id are 32 hex, a Linear team and issue id are UUIDs.
+ * The screen looks the key up in the read and says "not found" when no issue
+ * has it, so the route only bounds the shape.
+ */
+const ISSUE_KEY = /^[A-Za-z0-9._~-]{1,128}\/[A-Za-z0-9._~-]{1,128}$/;
 
 /**
  * The project's Planning tab: its issues as a list or a board. `issue`
- * names the open issue as `<listId>/<itemId>`, so a reload or a shared link
- * lands on it; anything else is dropped.
+ * names the open issue by its key, so a reload or a shared link lands on
+ * it; anything that is not key-shaped is dropped.
  */
 export const Route = createFileRoute("/projects/$projectId/planning")({
   component: PlanningRouteComponent,

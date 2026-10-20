@@ -9,6 +9,11 @@
  *   the relay withholds from everyone else, and a shared board must not
  *   show something only its viewer can see as if it were shared;
  * - not an archived list's items, the way an archived Linear team drops out.
+ *
+ * Not NIP-34 repository issues (kind 1621). Those belong to a repository and
+ * its surfaces; Planning neither reads nor converts them, and whether a
+ * project should have one issue record instead of two is an open product
+ * decision (NIP-TD § Limitations), not something this module settles.
  */
 import type { TodoItem, TodoList } from "../../project-todos/lib/todoFold.ts";
 import {
@@ -39,11 +44,11 @@ export const NATIVE_STATUSES: readonly PlanningStatus[] = [
 ];
 
 export const NATIVE_PRIORITIES: readonly PlanningPriority[] = [
-  { id: "urgent", label: "Urgent", order: 0 },
-  { id: "high", label: "High", order: 1 },
-  { id: "medium", label: "Medium", order: 2 },
-  { id: "low", label: "Low", order: 3 },
-  { id: "none", label: "No priority", order: 4 },
+  { id: "urgent", label: "Urgent", level: "urgent", order: 0 },
+  { id: "high", label: "High", level: "high", order: 1 },
+  { id: "medium", label: "Medium", level: "medium", order: 2 },
+  { id: "low", label: "Low", level: "low", order: 3 },
+  { id: "none", label: "No priority", level: "none", order: 4 },
 ];
 
 export const NATIVE_CAPABILITIES: PlanningCapabilities = {
@@ -53,6 +58,7 @@ export const NATIVE_CAPABILITIES: PlanningCapabilities = {
   // project item; the detail says so instead of drawing a box that cannot save.
   comments: false,
   createsDefaultContainer: true,
+  personIds: "beekeeper-pubkey",
   limits: {
     titleBytes: MAX_PROJECT_TODO_TEXT_BYTES,
     descriptionBytes: MAX_PROJECT_TODO_DESCRIPTION_BYTES,
@@ -127,5 +133,6 @@ export function nativePlanningRead(
     containers,
     truncated: meta.truncated,
     unreadable: meta.ignored,
+    people: [],
   };
 }

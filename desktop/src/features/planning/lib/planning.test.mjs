@@ -5,7 +5,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { foldProjectTodos } from "../../project-todos/lib/todoFold.ts";
-import { statusOps } from "../../project-todos/lib/todoMutations.ts";
+import {
+  TodoPartialWriteError,
+  publishStatusOps,
+  statusOps,
+} from "../../project-todos/lib/todoMutations.ts";
+import { createNativeIssue } from "./nativeCreate.ts";
 import { nativeIssueActivity } from "./nativeActivity.ts";
 import { NATIVE_CAPABILITIES, nativePlanningRead } from "./nativePlanning.ts";
 import {
@@ -20,10 +25,13 @@ import {
 import {
   DEFAULT_PLANNING_DISPLAY,
   DEFAULT_PLANNING_FILTERS,
+  defaultCreateIds,
   groupIssues,
   issueMatches,
+  personPubkey,
   planningView,
   stepSelection,
+  viewerPersonId,
 } from "./planningView.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -69,19 +77,28 @@ function issue(id, overrides = {}) {
 
 test("native planning reads the fold: project lists only, archived lists dropped, statuses mapped to categories", () => {
   const vector = VECTORS.cases.find((c) =>
-    c.name.startsWith("item.status and item.done write one state field"),
+    c.name.startsWith("item.done alone decides done"),
   );
   const digest = foldProjectTodos(vector.project, vector.events);
   const read = nativePlanningRead(digest.lists, {
     truncated: false,
     ignored: digest.ignored,
   });
-  assert.equal(read.issues.length, 3);
+  assert.equal(read.issues.length, 5);
   const byTitle = Object.fromEntries(read.issues.map((i) => [i.title, i]));
-  assert.equal(byTitle["ticked then restarted"].status.category, "started");
+  assert.equal(byTitle["restarted as a pair"].status.category, "started");
   assert.equal(byTitle["started then ticked"].status.category, "completed");
-  assert.equal(byTitle.canceled.status.category, "canceled");
-  assert.equal(byTitle.canceled.completedAt, 15);
+  assert.equal(
+    byTitle["ticked, then a stale restart"].status.category,
+    "completed",
+    "a status that disagrees with a later-or-equal item.done is not applied",
+  );
+  assert.equal(
+    byTitle["canceled without item.done"].status.category,
+    "unstarted",
+  );
+  assert.equal(byTitle["canceled as a pair"].status.category, "canceled");
+  assert.equal(byTitle["canceled as a pair"].completedAt, 16);
 
   const lists = [
     { ...digest.lists[0] },
@@ -98,40 +115,159 @@ test("native planning reads the fold: project lists only, archived lists dropped
     [digest.lists[0].id],
     "a personal or archived list is not a planning container",
   );
-  assert.equal(filtered.issues.length, 3);
+  assert.equal(filtered.issues.length, 5);
   assert.equal(filtered.truncated, true);
   assert.equal(filtered.unreadable, 2);
 });
 
-test("a status change crossing the closed boundary publishes item.done first, then item.status", () => {
+test("a status write is always item.done with the status's closed-ness, then item.status", () => {
   const L = "1".repeat(32);
   const I = "a".repeat(32);
+  const pairs = (status) =>
+    statusOps(L, I, status).map((op) => [op.op, op.done ?? op.status]);
+  // Never conditional on this client's read: that read can be stale.
+  assert.deepEqual(pairs("done"), [
+    ["item.done", true],
+    ["item.status", "done"],
+  ]);
+  assert.deepEqual(pairs("canceled"), [
+    ["item.done", true],
+    ["item.status", "canceled"],
+  ]);
+  assert.deepEqual(pairs("in_progress"), [
+    ["item.done", false],
+    ["item.status", "in_progress"],
+  ]);
+  assert.deepEqual(pairs("backlog"), [
+    ["item.done", false],
+    ["item.status", "backlog"],
+  ]);
+});
+
+test("a refused item.status is a partial write that says what the item now reads", async () => {
+  const L = "1".repeat(32);
+  const I = "a".repeat(32);
+  const sent = [];
+  const refuseStatus = async (op) => {
+    sent.push(op.op);
+    if (op.op === "item.status") {
+      throw new Error('invalid: unknown project todo op "item.status"');
+    }
+  };
+  await assert.rejects(
+    publishStatusOps(refuseStatus, L, I, "canceled"),
+    (error) => {
+      assert.ok(error instanceof TodoPartialWriteError);
+      assert.deepEqual(error.saved, ["item.done"]);
+      assert.equal(error.refused, "item.status");
+      assert.match(error.message, /now reads “done” for everyone/);
+      assert.match(error.message, /refused the status “canceled”/);
+      assert.match(error.message, /unknown project todo op/);
+      return true;
+    },
+  );
+  assert.deepEqual(sent, ["item.done", "item.status"]);
+
+  // Reopening into a started status: the saved half reads Todo.
+  await assert.rejects(
+    publishStatusOps(refuseStatus, L, I, "in_progress"),
+    /now reads “todo”/,
+  );
+
+  // The first op refused: nothing saved, the relay's own error, no second op.
+  const firstOnly = [];
+  const refuseAll = async (op) => {
+    firstOnly.push(op.op);
+    throw new Error("relay down");
+  };
+  await assert.rejects(publishStatusOps(refuseAll, L, I, "done"), (error) => {
+    assert.ok(!(error instanceof TodoPartialWriteError));
+    assert.equal(error.message, "relay down");
+    return true;
+  });
+  assert.deepEqual(firstOnly, ["item.done"]);
+});
+
+function fakeWrites(refuse = {}) {
+  const calls = [];
+  const step =
+    (name, result) =>
+    async (...args) => {
+      calls.push([name, ...args]);
+      if (refuse[name]) throw new Error(refuse[name]);
+      return result;
+    };
+  return {
+    calls,
+    writes: {
+      createList: step("createList", "9".repeat(32)),
+      addItem: step("addItem", "8".repeat(32)),
+      setAssignee: step("setAssignee"),
+      setStatus: step("setStatus"),
+      setPriority: step("setPriority"),
+      setDescription: step("setDescription"),
+    },
+  };
+}
+
+const CREATE_INPUT = {
+  title: "Ship it",
+  description: "why",
+  statusId: "in_progress",
+  priorityId: "high",
+  assignee: "f".repeat(64),
+  containerId: "1".repeat(32),
+};
+
+test("create adds the bare item first, then each field; a refused assignee is reported, not thrown", async () => {
+  const { calls, writes } = fakeWrites({ setAssignee: "assignee refused" });
+  const result = await createNativeIssue(writes, CREATE_INPUT);
+  assert.equal(result.itemId, "8".repeat(32));
+  assert.deepEqual(result.failed, [
+    { field: "assignee", message: "assignee refused" },
+  ]);
   assert.deepEqual(
-    statusOps(L, I, "done", false).map((op) => [op.op, op.done ?? op.status]),
-    [
-      ["item.done", true],
-      ["item.status", "done"],
-    ],
+    calls.map((c) => c[0]),
+    ["addItem", "setAssignee", "setStatus", "setPriority", "setDescription"],
   );
   assert.deepEqual(
-    statusOps(L, I, "in_progress", true).map((op) => [
-      op.op,
-      op.done ?? op.status,
-    ]),
-    [
-      ["item.done", false],
-      ["item.status", "in_progress"],
-    ],
+    calls[0],
+    ["addItem", "1".repeat(32), "Ship it"],
+    "bare add",
+  );
+  assert.equal(
+    calls.filter((c) => c[0] === "addItem").length,
+    1,
+    "one item, so the caller closes the draft instead of retrying a duplicate",
+  );
+});
+
+test("create rejects only while nothing exists, and makes the default list when none is named", async () => {
+  const refused = fakeWrites({ addItem: "add refused" });
+  await assert.rejects(
+    createNativeIssue(refused.writes, CREATE_INPUT),
+    /add refused/,
   );
   assert.deepEqual(
-    statusOps(L, I, "canceled", true).map((op) => op.op),
-    ["item.status"],
-    "done to canceled stays closed: no item.done",
+    refused.calls.map((c) => c[0]),
+    ["addItem"],
   );
+
+  const fresh = fakeWrites();
+  const result = await createNativeIssue(fresh.writes, {
+    ...CREATE_INPUT,
+    containerId: null,
+    assignee: null,
+    statusId: "todo",
+    priorityId: "none",
+    description: null,
+  });
+  assert.equal(result.listId, "9".repeat(32));
   assert.deepEqual(
-    statusOps(L, I, "backlog", false).map((op) => op.op),
-    ["item.status"],
+    fresh.calls.map((c) => c[0]),
+    ["createList", "addItem"],
   );
+  assert.deepEqual(fresh.calls[0], ["createList", "Issues", "project"]);
 });
 
 test("scopes and filters narrow the same records; my issues needs a known self", () => {
@@ -271,18 +407,62 @@ test("Linear is listed but unavailable, and never resolves as a project's provid
 
 test("activity lists every decodable op on the issue in order, including a losing write", () => {
   const vector = VECTORS.cases.find((c) =>
-    c.name.startsWith("a status tie breaks on event id"),
+    c.name.startsWith("a status ties item.done on created_at"),
   );
   const listId = "1".repeat(32);
   const tie = nativeIssueActivity(vector.events, listId, "a".repeat(32));
   assert.deepEqual(
     tie.map((e) => e.summary),
-    ["created the issue", "marked it done", "set status to Backlog"],
+    ["created the issue", "set status to Canceled", "marked it done"],
   );
-  const skewed = nativeIssueActivity(vector.events, listId, "c".repeat(32));
+  const skewed = nativeIssueActivity(vector.events, listId, "d".repeat(32));
   assert.deepEqual(
     skewed.map((e) => e.summary),
-    ["set status to Done", "created the issue"],
+    ["set status to Backlog", "created the issue"],
     "the skewed status op is history even though the fold lets the add win",
   );
+});
+
+test("person ids are the provider's: native ids are pubkeys, a provider's own ids resolve only through a known link", () => {
+  const native = { personIds: "beekeeper-pubkey" };
+  const pk = "f".repeat(64);
+  assert.equal(personPubkey(native, null, pk), pk);
+  assert.equal(viewerPersonId(native, null, pk), pk);
+  assert.equal(viewerPersonId(native, null, null), null);
+
+  const provider = { personIds: "provider" };
+  const read = {
+    people: [
+      { id: "lin-user-1", pubkey: pk, name: "Ada" },
+      { id: "lin-user-2", pubkey: null, name: "Unlinked" },
+    ],
+  };
+  assert.equal(personPubkey(provider, read, "lin-user-1"), pk);
+  assert.equal(personPubkey(provider, read, "lin-user-2"), null);
+  assert.equal(personPubkey(provider, read, pk), null, "never a guess");
+  assert.equal(viewerPersonId(provider, read, pk), "lin-user-1");
+  assert.equal(viewerPersonId(provider, read, "e".repeat(64)), null);
+});
+
+test("create defaults come from the provider's vocabulary, not native ids", () => {
+  assert.deepEqual(defaultCreateIds(NATIVE_CAPABILITIES), {
+    statusId: "todo",
+    priorityId: "none",
+  });
+  assert.deepEqual(
+    defaultCreateIds({
+      statuses: [
+        { id: "uuid-backlog", label: "Backlog", category: "backlog" },
+        { id: "uuid-todo", label: "Todo", category: "unstarted" },
+      ],
+      priorities: [
+        { id: "1", label: "Urgent", level: "urgent", order: 0 },
+        { id: "0", label: "No priority", level: "none", order: 4 },
+      ],
+    }),
+    { statusId: "uuid-todo", priorityId: "0" },
+  );
+  for (const priority of NATIVE_CAPABILITIES.priorities) {
+    assert.equal(priority.level, priority.id, "native ids and levels coincide");
+  }
 });

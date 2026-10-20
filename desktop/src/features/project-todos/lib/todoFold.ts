@@ -101,8 +101,10 @@ type ListState = {
 type ItemState = {
   text: Slot<string>;
   rank: Slot<string>;
-  /** The one field `item.done` and `item.status` both write, and its writer. */
-  state: Slot<{ status: TodoStatus; by: string }>;
+  /** The winning `item.done` and its writer: the only source of done-ness. */
+  done: Slot<{ done: boolean; by: string }>;
+  /** The winning `item.status`, if any: a refinement of `done` (rule 6). */
+  status: Slot<TodoStatus> | null;
   assignee: Slot<string | null>;
   due: Slot<string | null>;
   priority: Slot<TodoPriority>;
@@ -115,6 +117,27 @@ type ItemState = {
 type Decoded = { key: OpKey; pubkey: string; op: TodoOp };
 
 /** Normalize a coordinate's hex case; `null` when it is not a 30621 coordinate. */
+/**
+ * Rule 6: done-ness is the winning `item.done`'s alone, exactly as a reader
+ * that predates `item.status` folds it; the winning `item.status` applies
+ * only when it is later than that and on the same side of the closed
+ * boundary. No interleaving and no half-refused pair can split readers of
+ * different ages on whether an item is done.
+ */
+function effectiveStatus(
+  done: Slot<{ done: boolean; by: string }>,
+  status: Slot<TodoStatus> | null,
+): TodoStatus {
+  if (
+    status !== null &&
+    keyLess(done.key, status.key) &&
+    isClosedTodoStatus(status.value) === done.value.done
+  ) {
+    return status.value;
+  }
+  return done.value.done ? "done" : "todo";
+}
+
 function normalizeCoordinate(value: string): string | null {
   const parts = value.split(":");
   if (parts.length < 3 || parts[0] !== "30621") return null;
@@ -220,7 +243,8 @@ export function foldProjectTodos(
     items.set(itemKey(d.op.listId, d.op.itemId), {
       text: { key: d.key, value: d.op.text },
       rank: { key: d.key, value: d.op.rank },
-      state: { key: d.key, value: { status: "todo", by: d.pubkey } },
+      done: { key: d.key, value: { done: false, by: d.pubkey } },
+      status: null,
       assignee: { key: d.key, value: null },
       due: { key: d.key, value: null },
       priority: { key: d.key, value: "none" },
@@ -288,13 +312,14 @@ export function foldProjectTodos(
         setField(item.text, d.key, op.text);
         break;
       case "item.done":
-        setField(item.state, d.key, {
-          status: op.done ? "done" : "todo",
-          by: d.pubkey,
-        });
+        setField(item.done, d.key, { done: op.done, by: d.pubkey });
         break;
       case "item.status":
-        setField(item.state, d.key, { status: op.status, by: d.pubkey });
+        if (item.status === null) {
+          item.status = { key: d.key, value: op.status };
+        } else {
+          setField(item.status, d.key, op.status);
+        }
         break;
       case "item.priority":
         setField(item.priority, d.key, op.priority);
@@ -323,7 +348,7 @@ export function foldProjectTodos(
     for (const [key, item] of items) {
       const [owner, itemId] = key.split("/") as [string, string];
       if (owner !== listId || removed.has(key)) continue;
-      const done = isClosedTodoStatus(item.state.value.status);
+      const done = item.done.value.done;
       const row: TodoItem = {
         id: itemId,
         listId,
@@ -332,16 +357,16 @@ export function foldProjectTodos(
         rank: item.rank.value,
         assignee: item.assignee.value,
         due: item.due.value,
-        status: item.state.value.status,
+        status: effectiveStatus(item.done, item.status),
         priority: item.priority.value,
         description: item.description.value,
         createdAt: item.createdAt,
         createdBy: item.createdBy,
         updatedAt: item.updatedAt,
-        completedAt: done ? item.state.key.createdAt : null,
-        completedBy: done ? item.state.value.by : null,
+        completedAt: done ? item.done.key.createdAt : null,
+        completedBy: done ? item.done.value.by : null,
       };
-      if (done) completed.push({ key: item.state.key, row });
+      if (done) completed.push({ key: item.done.key, row });
       else open.push({ rank: item.rank.value, row });
     }
     open.sort((a, b) =>

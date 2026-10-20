@@ -8,11 +8,15 @@ import * as React from "react";
 
 import type { ProjectTodosRead } from "@/features/project-todos/lib/todoQueries";
 import { useProjectTodos } from "@/features/project-todos/lib/todoQueries";
-import { useTodoMutations } from "@/features/project-todos/lib/todoMutations";
+import {
+  TodoPartialWriteError,
+  useTodoMutations,
+} from "@/features/project-todos/lib/todoMutations";
 
 import { type ActivityEntry, nativeIssueActivity } from "./nativeActivity";
+import { createNativeIssue } from "./nativeCreate";
+import { PlanningPartialWriteError } from "./planningErrors";
 import {
-  DEFAULT_NATIVE_CONTAINER_TITLE,
   isNativePriorityId,
   isNativeStatusId,
   nativeIssueKey,
@@ -32,10 +36,6 @@ function readOf(read: ProjectTodosRead): PlanningRead {
     // relay ever held one, so they are not reported as unreadable.
     ignored: read.digest.ignored - read.legacy,
   });
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export type NativePlanning = {
@@ -72,44 +72,10 @@ export function useNativePlanning(coordinate: string | null): NativePlanning {
         if (!isNativePriorityId(input.priorityId)) {
           throw new Error(`Unknown priority ${input.priorityId}.`);
         }
-        const listId =
-          input.containerId ??
-          (await todoMutations.createList(
-            DEFAULT_NATIVE_CONTAINER_TITLE,
-            "project",
-          ));
-        const itemId = await todoMutations.addItem(listId, input.title, {
-          assignee: input.assignee,
-        });
-        // The item exists from here on. Each further field is its own op;
-        // one that fails is reported, never rolled back into a pretend
-        // "nothing happened".
-        const failed: { field: string; message: string }[] = [];
-        const attempt = async (field: string, work: () => Promise<void>) => {
-          try {
-            await work();
-          } catch (error) {
-            failed.push({ field, message: message(error) });
-          }
-        };
-        if (input.statusId !== "todo") {
-          const statusId = input.statusId;
-          await attempt("status", () =>
-            todoMutations.setStatus(listId, itemId, statusId),
-          );
-        }
-        if (input.priorityId !== "none") {
-          const priorityId = input.priorityId;
-          await attempt("priority", () =>
-            todoMutations.setPriority(listId, itemId, priorityId),
-          );
-        }
-        if (input.description !== null) {
-          const description = input.description;
-          await attempt("description", () =>
-            todoMutations.setDescription(listId, itemId, description),
-          );
-        }
+        const { listId, itemId, failed } = await createNativeIssue(
+          todoMutations,
+          { ...input, statusId: input.statusId, priorityId: input.priorityId },
+        );
         return { key: nativeIssueKey(listId, itemId), failed };
       },
       setTitle: (issue, title) =>
@@ -124,11 +90,18 @@ export function useNativePlanning(coordinate: string | null): NativePlanning {
         if (!isNativeStatusId(statusId)) {
           throw new Error(`Unknown status ${statusId}.`);
         }
-        await todoMutations.setStatus(
-          issue.containerId,
-          issue.issueId,
-          statusId,
-        );
+        try {
+          await todoMutations.setStatus(
+            issue.containerId,
+            issue.issueId,
+            statusId,
+          );
+        } catch (error) {
+          if (error instanceof TodoPartialWriteError) {
+            throw new PlanningPartialWriteError(error.message);
+          }
+          throw error;
+        }
       },
       setPriority: async (issue, priorityId) => {
         if (!isNativePriorityId(priorityId)) {

@@ -1334,14 +1334,14 @@ async fn test_planning_ops_round_trip_and_fold() {
     assert!(closed.done, "canceled counts as done");
     assert_eq!(
         closed.status, "canceled",
-        "the later item.status wins the shared state field over item.done"
+        "a later item.status that agrees with item.done on closed-ness refines it"
     );
     assert_eq!(closed.priority, "high");
     assert_eq!(closed.description.as_deref(), Some(description));
     assert_eq!(
         closed.completed_at,
-        Some(base + 7),
-        "the closing op is the status op, not the earlier done"
+        Some(base + 6),
+        "completion is item.done's, the same answer a reader that predates item.status gives"
     );
     assert_eq!(
         closed.completed_by.as_deref(),
