@@ -221,6 +221,18 @@ pub async fn execute_drafts(
     Ok(json!({ "published": published, "failed": failed }))
 }
 
+/// An unconfirmed write still names what the plugin said it was creating —
+/// a create's issue key above all — so the caller can read before retrying
+/// instead of minting a duplicate.
+pub fn with_result(error: CliError, result: &Value) -> CliError {
+    match error {
+        CliError::DeliveryUnknown(message) => {
+            CliError::DeliveryUnknown(format!("{message}; result: {result}"))
+        }
+        other => other,
+    }
+}
+
 /// Dispatch `bee plugins`.
 pub async fn dispatch(cmd: crate::PluginsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     match cmd {
@@ -243,7 +255,9 @@ pub async fn dispatch(cmd: crate::PluginsCmd, client: &BeekeeperClient) -> Resul
             };
             let mut reply = invoke(client, &plugin, &operation, &project, input).await?;
             if publish {
-                let ran = execute_drafts(client, &project, &reply["drafts"]).await?;
+                let ran = execute_drafts(client, &project, &reply["drafts"])
+                    .await
+                    .map_err(|error| with_result(error, &reply["result"]))?;
                 reply["published"] = ran["published"].clone();
                 reply["failed"] = ran["failed"].clone();
             }
@@ -259,6 +273,17 @@ mod tests {
 
     const PROJECT: &str =
         "30621:1111111111111111111111111111111111111111111111111111111111111111:demo";
+
+    #[test]
+    fn an_unconfirmed_write_keeps_the_result() {
+        let error = with_result(
+            CliError::DeliveryUnknown("no answer".into()),
+            &json!({ "key": "aa/bb" }),
+        );
+        assert!(error.to_string().contains("\"key\":\"aa/bb\""), "{error}");
+        let other = with_result(CliError::Usage("x".into()), &json!({}));
+        assert!(matches!(other, CliError::Usage(_)));
+    }
 
     #[test]
     fn only_signable_kinds_in_the_named_project_pass() {

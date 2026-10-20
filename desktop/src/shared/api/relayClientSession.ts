@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { RelayRejectedEventError } from "./relayRejection";
 import { createAuthEvent, getRelayWsUrl } from "@/shared/api/tauri";
 import { queryRelayFilters } from "@/shared/api/relayQueryBridge";
 import type { RelayEvent } from "@/shared/api/types";
@@ -792,7 +793,9 @@ export class RelaySessionCore {
     if (success) {
       pendingEvent.resolve(pendingEvent.event);
     } else {
-      pendingEvent.reject(new Error(message || "Relay rejected the event."));
+      pendingEvent.reject(
+        new RelayRejectedEventError(message || "Relay rejected the event."),
+      );
     }
   }
 

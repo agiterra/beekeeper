@@ -153,7 +153,8 @@ and both re-check kind and scope before signing anything:
 - `skip-group` — report the group failed (using `partialSummary` when part of
   the group landed), skip the rest of it, continue with the next group.
 - **unconfirmed** — whatever the policy, a publish with no answer (a timeout,
-  a connection lost mid-publish) may still land. The run stops there and
+  a connection closed or stalled mid-publish — anything but an explicit
+  `OK false`) may still land. The run stops there and
   reports it as unconfirmed, never as refused, so nobody retries into a
   duplicate. A create still returns its issue key.
 
@@ -237,6 +238,12 @@ and live UI gates against a scratch database with two tenants.
   (no state survives a call); compilation happens once, at startup.
 - **The deadline counts host reads**: a slow database fails the call
   (`host-refused`) rather than holding it open.
+- **A row the database layer cannot decode ends a scan early.**
+  `query_events` silently drops a stored row it cannot rebuild, so a page
+  that contained one looks like the last page and the read can end without
+  `next` or `truncated`. That predates plugins (every reader of
+  `query_events` is affected); fixing it means the database layer reporting
+  how many rows it fetched.
 - **Concurrency is per plugin, not per community.** `max_concurrent` is one
   counter for the whole relay, so one busy community can make others see
   `busy`.

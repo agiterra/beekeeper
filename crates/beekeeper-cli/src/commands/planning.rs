@@ -48,7 +48,9 @@ impl Call<'_> {
 
     async fn write(&self, operation: &str, input: Value) -> Result<Value, CliError> {
         let reply = self.read(operation, input).await?;
-        let ran = plugins::execute_drafts(self.client, &self.project, &reply["drafts"]).await?;
+        let ran = plugins::execute_drafts(self.client, &self.project, &reply["drafts"])
+            .await
+            .map_err(|error| plugins::with_result(error, &reply["result"]))?;
         Ok(json!({
             "plugin": reply["plugin"],
             "operation": operation,

@@ -13,6 +13,7 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { relayClient } from "@/shared/api/relayClient";
+import { RelayRejectedEventError } from "@/shared/api/relayRejection";
 import { signRelayEvent } from "@/shared/api/tauri";
 import {
   type PluginInfo,
@@ -273,18 +274,13 @@ export function usePluginPlanning(
                 "The relay refused the change.",
               );
             } catch (error) {
-              const text = message(error);
-              // No answer, or the connection went away with the event in
-              // flight: it may have landed. Never report that as refused.
-              if (
-                text === PUBLISH_TIMEOUT ||
-                /disconnected|superseded/i.test(text)
-              ) {
-                throw new DraftUnconfirmedError(
-                  `The relay did not confirm the change in time (${text}).`,
-                );
-              }
-              throw error;
+              // Only an explicit `OK false` is a refusal. A timeout, or a
+              // socket that closed or stalled with the event in flight, may
+              // have landed: never report that as refused.
+              if (error instanceof RelayRejectedEventError) throw error;
+              throw new DraftUnconfirmedError(
+                `The relay did not confirm the change (${message(error)}).`,
+              );
             }
           },
         });

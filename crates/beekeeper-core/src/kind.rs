@@ -931,7 +931,11 @@ pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 /// inside `uv.lock` files.
 ///
 /// The wire contract is `docs/nips/NIP-TD.md`.
-pub const KIND_PROJECT_TODO_OP: u32 = beekeeper_nip_td::KIND_PROJECT_TODO_OP;
+pub const KIND_PROJECT_TODO_OP: u32 = 44248;
+// Literal on purpose: the NIP-11 registry test reads this file's constants
+// as text. `beekeeper-nip-td` (which a WebAssembly plugin links) carries the
+// same value; the build fails if the two ever differ.
+const _: () = assert!(KIND_PROJECT_TODO_OP == beekeeper_nip_td::KIND_PROJECT_TODO_OP);
 
 /// NIP-PW: Project work record — the signed join between a committed plan
 /// file and the work that delivers it.

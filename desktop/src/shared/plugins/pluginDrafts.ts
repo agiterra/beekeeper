@@ -113,7 +113,10 @@ export async function executePluginDrafts(
             drafts
               .slice(index + 1)
               .map((d) => d.group)
-              .filter((g) => g !== draft.group && !skipped.has(g)),
+              .filter(
+                (g) =>
+                  g !== draft.group && !skipped.has(g) && !savedGroups.has(g),
+              ),
           ),
         ];
         return {
