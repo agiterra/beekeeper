@@ -26,8 +26,8 @@ Signatures are not the fold's concern (the relay verified them at ingest).
 ## The op vocabulary (kind 44248 content, `buzz-project-todo/v1`)
 
 Every op sets exactly one thing. The key set is exact per op: every listed
-key must be present and no other may be; `assignee` and `due` are `null`,
-never absent, when cleared.
+key must be present and no other may be; `assignee`, `due` and `description`
+are `null`, never absent, when cleared.
 
 | `op` | keys | sets |
 |---|---|---|
@@ -37,15 +37,21 @@ never absent, when cleared.
 | `list.pinned` | `listId`, `pinned` (bool) | shown in every member's project sidebar, reversible |
 | `item.add` | `listId`, `itemId`, `text`, `rank` | the item into existence |
 | `item.text` | `listId`, `itemId`, `text` | text |
-| `item.done` | `listId`, `itemId`, `done` (bool) | done, and completion |
+| `item.done` | `listId`, `itemId`, `done` (bool) | state: `true` reads as `done`, `false` as `todo` |
 | `item.assignee` | `listId`, `itemId`, `assignee` (64 hex or null) | assignee |
 | `item.due` | `listId`, `itemId`, `due` (`YYYY-MM-DD` or null) | due date |
 | `item.rank` | `listId`, `itemId`, `rank` | position among open items |
 | `item.remove` | `listId`, `itemId` | the item out of existence, for good |
+| `item.status` | `listId`, `itemId`, `status` (`triage`, `backlog`, `todo`, `in_progress`, `done`, `canceled`) | state |
+| `item.priority` | `listId`, `itemId`, `priority` (`urgent`, `high`, `medium`, `low`, `none`) | priority |
+| `item.description` | `listId`, `itemId`, `description` (string or null) | description |
 
 `schema` is always present. `listId` and `itemId` are 32 lowercase hex.
 Titles and text are non-blank, at most 1024 bytes, free of control characters
-other than newline and tab. Content is at most 4096 bytes. The event's tags
+other than newline and tab. A description is non-blank (cleared with `null`,
+never an empty string), at most 3072 bytes, under the same control-character
+rule. A priority is a string; a number is a decode error, so no two JSON
+readers can disagree about `1` versus `1.0`. Content is at most 4096 bytes. The event's tags
 are `a`, `td-v` (`td1-1`), `td-op`, `td-list`, `td-vis` (`project` or
 `personal`), and `td-item` on item ops; `td-op`/`td-list`/`td-item` equal the
 content's `op`/`listId`/`itemId`, and on a `list.create` `td-vis` equals the
@@ -88,20 +94,31 @@ the fold's decode is the same rule, and an event that fails it is counted in
 5. **Fields.** Each remaining op sets one field. Per field, the write with
    the greatest `(created_at, id)` wins. The create op's own values (`title`,
    `archived=false`, `pinned=false` for a list; `text` and `rank` for an
-   item, plus `done=false`, `assignee=null`, `due=null`) take part with the
+   item, plus `status=todo`, `priority=none`, `assignee=null`, `due=null`,
+   `description=null`) take part with the
    create's key, so a field
    write stamped before the create loses to it. A field op naming a list or
    item that does not exist is counted in `ignored`.
-6. **Done.** The winning `item.done` decides `done`. If it is `true`,
-   `completedAt` is that op's `created_at` and `completedBy` its author;
-   otherwise both are `null`.
+6. **State.** `item.done` and `item.status` write one field, the item's
+   state, and the greatest `(created_at, id)` over both wins.
+   `item.done{true}` reads as status `done`, `item.done{false}` as `todo`,
+   and `item.status` as itself. `done` and `canceled` are the **closed**
+   statuses: an item is `done` exactly when its status is one of them, and
+   then `completedAt` is the winning state op's `created_at` and
+   `completedBy` its author; otherwise both are `null`. `priority` and
+   `description` are plain fields under rule 5.
+
+   A writer moving an item across the closed boundary SHOULD publish
+   `item.done` first, then `item.status` (stamped after it), so a reader
+   that predates `item.status` — and folds only `item.done` — still agrees
+   on whether the item is done. The fold does not depend on it.
 7. **Timestamps.** `updatedAt` on an item is the greatest `created_at` among
    the ops applied to it (winners and losers alike; a loser is never later
    than its winner). `updatedAt` on a list is the greatest over its own ops,
    its items' ops, and removes.
 8. **Order out.** Lists sort by `(createdAt, id)`. Within a list, `open`
    holds the not-done items sorted by `(rank, id)` bytewise and `completed`
-   holds the done items sorted by the winning done op's `(created_at, id)`
+   holds the done items sorted by the winning state op's `(created_at, id)`
    descending — most recently completed first.
 
 ## Digest shape (`buzz-project-todo-digest/v1`)
@@ -127,6 +144,7 @@ An item:
 ```json
 { "id": "<32 hex>", "listId": "<32 hex>", "text": "…", "done": false,
   "rank": "a0", "assignee": null, "due": null,
+  "status": "todo", "priority": "none", "description": null,
   "createdAt": 0, "createdBy": "<64 hex>", "updatedAt": 0,
   "completedAt": null, "completedBy": null }
 ```

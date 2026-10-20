@@ -26,8 +26,11 @@ def ev(n, pk, t, op, listId, itemId=None, kind=44248, tags=None, content_overrid
         tags=[["a",P],["td-v","td1-1"],["td-op",op],["td-list",listId],["td-vis",vis]]
         if itemId is not None: tags.append(["td-item",itemId])
     return {"id":eid(n),"pubkey":pk,"created_at":t,"kind":kind,"tags":tags,"content":c}
-def item(id, listId, text, rank, createdAt, createdBy, updatedAt, done=False, assignee=None, due=None, completedAt=None, completedBy=None):
+def item(id, listId, text, rank, createdAt, createdBy, updatedAt, done=False, assignee=None, due=None, completedAt=None, completedBy=None, status=None, priority="none", description=None):
+    if status is None: status = "done" if done else "todo"
+    assert done == (status in ("done","canceled"))
     return {"id":id,"listId":listId,"text":text,"done":done,"rank":rank,"assignee":assignee,"due":due,
+            "status":status,"priority":priority,"description":description,
             "createdAt":createdAt,"createdBy":createdBy,"updatedAt":updatedAt,"completedAt":completedAt,"completedBy":completedBy}
 def lst(id,title,createdAt,createdBy,updatedAt,open=(),completed=(),archived=False,visibility="project",pinned=False):
     return {"id":id,"title":title,"visibility":visibility,"archived":archived,"pinned":pinned,"createdAt":createdAt,"createdBy":createdBy,"updatedAt":updatedAt,"open":list(open),"completed":list(completed)}
@@ -138,6 +141,52 @@ cases.append({"name":"a personal list takes ops from its creator only; a visibil
     lst(L1,"Mine",1,ALICE,6,visibility="personal",pinned=True,open=[item(I1,L1,"private one","a0",2,ALICE,2)]),
     lst(L2,"Shared",7,ALICE,7),
 ],ignored=4)})
+
+cases.append({"name":"item.status and item.done write one state field; the later of the two wins; done and canceled are closed","project":P,"events":[
+    ev(1,ALICE,1,"list.create",L1,title="L"),
+    ev(2,ALICE,2,"item.add",L1,I1,text="started then ticked",rank="a0"),
+    ev(3,ALICE,2,"item.add",L1,I2,text="ticked then restarted",rank="a1"),
+    ev(4,ALICE,2,"item.add",L1,I3,text="canceled",rank="a2"),
+    ev(5,ALICE,10,"item.status",L1,I1,status="in_progress"),
+    ev(6,BOB,20,"item.done",L1,I1,done=True),
+    ev(7,BOB,10,"item.done",L1,I2,done=True),
+    ev(8,ALICE,20,"item.status",L1,I2,status="in_progress"),
+    ev(9,ALICE,15,"item.status",L1,I3,status="canceled"),
+],"expected":digest([lst(L1,"L",1,ALICE,20,
+    open=[item(I2,L1,"ticked then restarted","a1",2,ALICE,20,status="in_progress")],
+    completed=[item(I1,L1,"started then ticked","a0",2,ALICE,20,done=True,completedAt=20,completedBy=BOB),
+               item(I3,L1,"canceled","a2",2,ALICE,15,done=True,status="canceled",completedAt=15,completedBy=ALICE)])])})
+
+cases.append({"name":"a status tie breaks on event id; item.done{false} reads as todo; a status before the add loses","project":P,"events":[
+    ev(1,ALICE,1,"list.create",L1,title="L"),
+    ev(2,ALICE,5,"item.add",L1,I1,text="tie",rank="a0"),
+    ev(3,ALICE,5,"item.add",L1,I2,text="reopened",rank="a1"),
+    ev(4,ALICE,5,"item.add",L1,I3,text="skewed",rank="a2"),
+    ev(0x20,BOB,9,"item.done",L1,I1,done=True),
+    ev(0x21,ALICE,9,"item.status",L1,I1,status="backlog"),
+    ev(0x22,ALICE,6,"item.status",L1,I2,status="triage"),
+    ev(0x23,BOB,7,"item.done",L1,I2,done=False),
+    ev(0x24,ALICE,4,"item.status",L1,I3,status="done"),
+],"expected":digest([lst(L1,"L",1,ALICE,9,
+    open=[item(I1,L1,"tie","a0",5,ALICE,9,status="backlog"),
+          item(I2,L1,"reopened","a1",5,ALICE,7),
+          item(I3,L1,"skewed","a2",5,ALICE,5)])])})
+
+cases.append({"name":"priority and description are per-field last write wins; null clears a description; unknown values are ignored","project":P,"events":[
+    ev(1,ALICE,1,"list.create",L1,title="L"),
+    ev(2,ALICE,2,"item.add",L1,I1,text="one",rank="a0"),
+    ev(3,ALICE,2,"item.add",L1,I2,text="two",rank="a1"),
+    ev(4,ALICE,3,"item.priority",L1,I1,priority="low"),
+    ev(5,BOB,4,"item.priority",L1,I1,priority="urgent"),
+    ev(6,ALICE,3,"item.description",L1,I1,description="Steps:\n1. open it"),
+    ev(7,ALICE,3,"item.description",L1,I2,description="gone soon"),
+    ev(8,BOB,4,"item.description",L1,I2,description=None),
+    ev(9,BOB,5,"item.priority",L1,I2,priority=2),
+    ev(10,BOB,6,"item.status",L1,I2,status="started"),
+    ev(11,BOB,7,"item.description",L1,I2,description="   "),
+],"expected":digest([lst(L1,"L",1,ALICE,4,
+    open=[item(I1,L1,"one","a0",2,ALICE,4,priority="urgent",description="Steps:\n1. open it"),
+          item(I2,L1,"two","a1",2,ALICE,4)])],ignored=3)})
 
 out={"schema":"buzz-project-todo-fold-vectors/v1","cases":cases}
 with open(os.path.join(HERE,"fixtures","fold-vectors.json"),"w") as f:

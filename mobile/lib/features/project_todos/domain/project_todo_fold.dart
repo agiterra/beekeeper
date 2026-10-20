@@ -32,6 +32,16 @@ class TodoItem {
   /// Due date `YYYY-MM-DD`, if any.
   final String? due;
 
+  /// Workflow status; [done] is `true` exactly when this is closed
+  /// (`done` or `canceled`).
+  final TodoStatus status;
+
+  /// Priority.
+  final TodoPriority priority;
+
+  /// Longer description, if any.
+  final String? description;
+
   /// The winning `item.add`'s `created_at`.
   final int createdAt;
 
@@ -41,7 +51,8 @@ class TodoItem {
   /// The greatest applied op `created_at`.
   final int updatedAt;
 
-  /// When the winning `item.done{true}` was stamped, if done.
+  /// When the winning state op (`item.done` or `item.status`) was stamped,
+  /// if done.
   final int? completedAt;
 
   /// Who stamped it, if done.
@@ -55,6 +66,9 @@ class TodoItem {
     required this.rank,
     required this.assignee,
     required this.due,
+    this.status = TodoStatus.todo,
+    this.priority = TodoPriority.none,
+    this.description,
     required this.createdAt,
     required this.createdBy,
     required this.updatedAt,
@@ -71,6 +85,9 @@ class TodoItem {
     'rank': rank,
     'assignee': assignee,
     'due': due,
+    'status': status.wire,
+    'priority': priority.wire,
+    'description': description,
     'createdAt': createdAt,
     'createdBy': createdBy,
     'updatedAt': updatedAt,
@@ -239,11 +256,16 @@ class _ListState {
 class _ItemState {
   final _Field<String> text;
   final _Field<String> rank;
-  _OpKey doneKey;
-  bool done;
-  String? completedBy;
+
+  /// The state field `item.done` and `item.status` share, and who wrote
+  /// the winning op.
+  _OpKey stateKey;
+  TodoStatus status;
+  String stateBy;
   final _Field<String?> assignee;
   final _Field<String?> due;
+  final _Field<TodoPriority> priority;
+  final _Field<String?> description;
   final int createdAt;
   final String createdBy;
   int updatedAt;
@@ -251,14 +273,24 @@ class _ItemState {
   _ItemState({
     required this.text,
     required this.rank,
-    required this.doneKey,
+    required this.stateKey,
     required this.assignee,
     required this.due,
+    required this.priority,
+    required this.description,
     required this.createdAt,
     required this.createdBy,
     required this.updatedAt,
-  }) : done = false,
-       completedBy = null;
+  }) : status = TodoStatus.todo,
+       stateBy = createdBy;
+
+  void setState(_OpKey key, TodoStatus next, String by) {
+    if (key > stateKey) {
+      stateKey = key;
+      status = next;
+      stateBy = by;
+    }
+  }
 
   void touch(int at) {
     if (at > updatedAt) updatedAt = at;
@@ -345,9 +377,11 @@ ProjectTodoDigest foldProjectTodos(
     items[target] = _ItemState(
       text: _Field(d.key, d.op.text!),
       rank: _Field(d.key, d.op.rank!),
-      doneKey: d.key,
+      stateKey: d.key,
       assignee: _Field(d.key, null),
       due: _Field(d.key, null),
+      priority: _Field(d.key, TodoPriority.none),
+      description: _Field(d.key, null),
       createdAt: d.key.createdAt,
       createdBy: d.pubkey,
       updatedAt: d.key.createdAt,
@@ -400,6 +434,9 @@ ProjectTodoDigest foldProjectTodos(
       case ProjectTodoOpKind.itemAssignee:
       case ProjectTodoOpKind.itemDue:
       case ProjectTodoOpKind.itemRank:
+      case ProjectTodoOpKind.itemStatus:
+      case ProjectTodoOpKind.itemPriority:
+      case ProjectTodoOpKind.itemDescription:
         break;
     }
     final target = _itemKey(d.op.listId, d.op.itemId!);
@@ -413,11 +450,17 @@ ProjectTodoDigest foldProjectTodos(
       case ProjectTodoOpKind.itemText:
         item.text.set(d.key, d.op.text!);
       case ProjectTodoOpKind.itemDone:
-        if (d.key > item.doneKey) {
-          item.doneKey = d.key;
-          item.done = d.op.done!;
-          item.completedBy = d.op.done! ? d.pubkey : null;
-        }
+        item.setState(
+          d.key,
+          d.op.done! ? TodoStatus.done : TodoStatus.todo,
+          d.pubkey,
+        );
+      case ProjectTodoOpKind.itemStatus:
+        item.setState(d.key, d.op.status!, d.pubkey);
+      case ProjectTodoOpKind.itemPriority:
+        item.priority.set(d.key, d.op.priority!);
+      case ProjectTodoOpKind.itemDescription:
+        item.description.set(d.key, d.op.description);
       case ProjectTodoOpKind.itemAssignee:
         item.assignee.set(d.key, d.op.assignee);
       case ProjectTodoOpKind.itemDue:
@@ -444,7 +487,7 @@ ProjectTodoDigest foldProjectTodos(
       final owner = itemEntry.key.substring(0, slash);
       final itemId = itemEntry.key.substring(slash + 1);
       if (owner != listId || removed.contains(itemEntry.key)) continue;
-      final done = item.done;
+      final done = item.status.isClosed;
       final row = TodoItem(
         id: itemId,
         listId: listId,
@@ -453,14 +496,17 @@ ProjectTodoDigest foldProjectTodos(
         rank: item.rank.value,
         assignee: item.assignee.value,
         due: item.due.value,
+        status: item.status,
+        priority: item.priority.value,
+        description: item.description.value,
         createdAt: item.createdAt,
         createdBy: item.createdBy,
         updatedAt: item.updatedAt,
-        completedAt: done ? item.doneKey.createdAt : null,
-        completedBy: item.completedBy,
+        completedAt: done ? item.stateKey.createdAt : null,
+        completedBy: done ? item.stateBy : null,
       );
       if (done) {
-        completed.add((item.doneKey, row));
+        completed.add((item.stateKey, row));
       } else {
         open.add((item.rank.value, row));
       }

@@ -69,6 +69,7 @@ import {
   KIND_GIT_ISSUE,
   KIND_GIT_PATCH,
   KIND_AGENTS_REPO_DRAFT_OP,
+  KIND_PROJECT_TODO_OP,
   KIND_GIT_PR_UPDATE,
   KIND_GIT_PULL_REQUEST,
   KIND_GIT_STATUS_CLOSED,
@@ -6018,6 +6019,10 @@ const MOCK_PROJECT_KINDS = new Set<number>([
   // NIP-AD draft ops are project-scoped by the same `a` coordinate, so a
   // live-published 44250 routes through this store and reads back by `#a`.
   KIND_AGENTS_REPO_DRAFT_OP,
+  // NIP-TD to-do ops (the To-Do and Planning tabs) are project-scoped by
+  // the same `a` coordinate; without this arm a published 44248 falls to the
+  // channel branch and is refused with "Missing channel tag.".
+  KIND_PROJECT_TODO_OP,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
   KIND_GIT_PATCH,

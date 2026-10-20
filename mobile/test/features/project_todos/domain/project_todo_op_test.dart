@@ -109,6 +109,30 @@ void main() {
       rank: 'a0V',
     ),
     const ProjectTodoOp.itemRemove(listId: list, visibility: vis, itemId: item),
+    const ProjectTodoOp.itemStatus(
+      listId: list,
+      visibility: vis,
+      itemId: item,
+      status: TodoStatus.inProgress,
+    ),
+    const ProjectTodoOp.itemPriority(
+      listId: list,
+      visibility: vis,
+      itemId: item,
+      priority: TodoPriority.urgent,
+    ),
+    const ProjectTodoOp.itemDescription(
+      listId: list,
+      visibility: vis,
+      itemId: item,
+      description: 'Steps:\n\t1. reproduce',
+    ),
+    const ProjectTodoOp.itemDescription(
+      listId: list,
+      visibility: vis,
+      itemId: item,
+      description: null,
+    ),
   ];
 
   final itemAddOp = everyOp[5];
@@ -408,6 +432,124 @@ void main() {
     expect(
       () => decodeProjectTodoOp(content('item.done', {'done': 'yes'}), vis),
       _refuses('must be a boolean'),
+    );
+  });
+
+  test('status, priority and description are closed vocabularies', () {
+    String content(String op, Map<String, Object?> fields) => jsonEncode({
+      'schema': 'buzz-project-todo/v1',
+      'op': op,
+      'listId': list,
+      'itemId': item,
+      ...fields,
+    });
+    for (final status in TodoStatus.values) {
+      expect(
+        decodeProjectTodoOp(
+          content('item.status', {'status': status.wire}),
+          vis,
+        ).status,
+        status,
+      );
+    }
+    expect(TodoStatus.inProgress.wire, 'in_progress');
+    expect(TodoStatus.values.where((s) => s.isClosed), [
+      TodoStatus.done,
+      TodoStatus.canceled,
+    ]);
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.status', {'status': 'started'}),
+        vis,
+      ),
+      _refuses('todo status must be one of'),
+    );
+    expect(
+      () => decodeProjectTodoOp(content('item.status', {'status': null}), vis),
+      _refuses('must be a string'),
+    );
+    expect(
+      () => decodeProjectTodoOp(content('item.status', {}), vis),
+      _refuses('missing field "status"'),
+    );
+    for (final priority in TodoPriority.values) {
+      expect(
+        decodeProjectTodoOp(
+          content('item.priority', {'priority': priority.wire}),
+          vis,
+        ).priority,
+        priority,
+      );
+    }
+    // A number is never a priority.
+    expect(
+      () => decodeProjectTodoOp(content('item.priority', {'priority': 1}), vis),
+      _refuses('must be a string'),
+    );
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.priority', {'priority': 'p1'}),
+        vis,
+      ),
+      _refuses('todo priority must be one of'),
+    );
+    expect(
+      () => decodeProjectTodoOp(content('item.description', {}), vis),
+      _refuses('missing field "description"'),
+    );
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.description', {'description': '  '}),
+        vis,
+      ),
+      _refuses('clear it with null'),
+    );
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.description', {'description': 'a\u0007b'}),
+        vis,
+      ),
+      _refuses('control'),
+    );
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.description', {'description': 7}),
+        vis,
+      ),
+      _refuses('must be a string or null'),
+    );
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.description', {
+          'description': 'd' * (maxProjectTodoDescriptionBytes + 1),
+        }),
+        vis,
+      ),
+      _refuses('exceeds'),
+    );
+    // Multibyte text counts in UTF-8 bytes, not characters.
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.description', {'description': 'é' * 1537}),
+        vis,
+      ),
+      _refuses('exceeds'),
+    );
+    expect(
+      decodeProjectTodoOp(
+        content('item.description', {
+          'description': 'd' * maxProjectTodoDescriptionBytes,
+        }),
+        vis,
+      ).description,
+      hasLength(maxProjectTodoDescriptionBytes),
+    );
+    expect(
+      () => decodeProjectTodoOp(
+        content('item.description', {'description': 'x', 'status': 'todo'}),
+        vis,
+      ),
+      _refuses('unsupported field "status"'),
     );
   });
 

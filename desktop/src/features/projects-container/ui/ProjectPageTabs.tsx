@@ -6,11 +6,12 @@ import { PROJECT_TAB_TRIGGER_CLASS } from "@/features/projects/ui/ProjectWorkspa
 import { cn } from "@/shared/lib/cn";
 
 /** The project page's tab vocabulary. Overview/Pulse are the URL `tab` search
- * param on `/projects/$projectId`; the To-Do, Agents, Actions and Roles
- * (`packs`) tabs are their own paths. */
+ * param on `/projects/$projectId`; the Planning, To-Do, Agents, Actions and
+ * Roles (`packs`) tabs are their own paths. */
 export type ProjectPageTab =
   | "overview"
   | "pulse"
+  | "planning"
   | "todos"
   | "agents"
   | "actions"
@@ -23,9 +24,10 @@ export function parseProjectPageTab(value: unknown): ProjectPageTab {
 
 type SearchTab = { id: "overview" | "pulse"; label: string };
 type PathTab = {
-  id: "todos" | "agents" | "actions" | "packs" | "files";
+  id: "planning" | "todos" | "agents" | "actions" | "packs" | "files";
   label: string;
   to:
+    | "/projects/$projectId/planning"
     | "/projects/$projectId/todos"
     | "/projects/$projectId/agents"
     | "/projects/$projectId/actions"
@@ -34,6 +36,10 @@ type PathTab = {
 };
 
 const PATH_TABS: readonly PathTab[] = [
+  // Planning: the project's issues as a list or a board. Native planning
+  // reads the same shared lists the To-Do tab does, as issues with status,
+  // priority and description.
+  { id: "planning", label: "Planning", to: "/projects/$projectId/planning" },
   // To-Do next to Overview: the shared list of what is left is the thing a
   // member checks most often after the project's state.
   { id: "todos", label: "To-Do", to: "/projects/$projectId/todos" },

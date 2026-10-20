@@ -303,3 +303,27 @@ test("the overview card summarizes progress honestly", () => {
   assert.equal(todoListSummary(list()), "1 of 3 done");
   assert.equal(todoListSummary(list({ open: [], completed: [] })), "empty");
 });
+
+test("a status the checkbox cannot say is named on the row: canceled is not done", async () => {
+  const html = await render({
+    state: {
+      kind: "ready",
+      read: read([
+        list({
+          open: [item("aa".repeat(16), { status: "in_progress" })],
+          completed: [
+            item("cc".repeat(16), {
+              done: true,
+              status: "canceled",
+              completedAt: 200,
+              completedBy: OWNER,
+            }),
+          ],
+        }),
+      ]),
+      refreshing: false,
+    },
+  });
+  assert.match(html, /data-testid="todo-item-status"[^>]*>In progress</);
+  assert.match(html, /data-testid="todo-item-status"[^>]*>Canceled</);
+});

@@ -20,6 +20,47 @@ export const PROJECT_TODO_SCHEMA = "buzz-project-todo/v1";
 export const PROJECT_TODO_TAG_VERSION = "td1-1";
 export const MAX_PROJECT_TODO_CONTENT_BYTES = 4 * 1024;
 export const MAX_PROJECT_TODO_TEXT_BYTES = 1024;
+export const MAX_PROJECT_TODO_DESCRIPTION_BYTES = 3 * 1024;
+
+/** An item's workflow status, in workflow order. `done` and `canceled` are closed. */
+export const TODO_STATUSES = [
+  "triage",
+  "backlog",
+  "todo",
+  "in_progress",
+  "done",
+  "canceled",
+] as const;
+export type TodoStatus = (typeof TODO_STATUSES)[number];
+
+export function isTodoStatus(value: unknown): value is TodoStatus {
+  return (
+    typeof value === "string" &&
+    (TODO_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+/** `true` for the two statuses that list an item among the completed. */
+export function isClosedTodoStatus(status: TodoStatus): boolean {
+  return status === "done" || status === "canceled";
+}
+
+/** An item's priority, most urgent first, `none` last. A string on the wire. */
+export const TODO_PRIORITIES = [
+  "urgent",
+  "high",
+  "medium",
+  "low",
+  "none",
+] as const;
+export type TodoPriority = (typeof TODO_PRIORITIES)[number];
+
+export function isTodoPriority(value: unknown): value is TodoPriority {
+  return (
+    typeof value === "string" &&
+    (TODO_PRIORITIES as readonly string[]).includes(value)
+  );
+}
 
 export type TodoVisibility = "project" | "personal";
 
@@ -38,7 +79,10 @@ export type TodoOpKind =
   | "item.assignee"
   | "item.due"
   | "item.rank"
-  | "item.remove";
+  | "item.remove"
+  | "item.status"
+  | "item.priority"
+  | "item.description";
 
 /**
  * One op's content, without the visibility every op also carries as its
@@ -72,7 +116,20 @@ export type TodoOpContent =
     }
   | { op: "item.due"; listId: string; itemId: string; due: string | null }
   | { op: "item.rank"; listId: string; itemId: string; rank: string }
-  | { op: "item.remove"; listId: string; itemId: string };
+  | { op: "item.remove"; listId: string; itemId: string }
+  | { op: "item.status"; listId: string; itemId: string; status: TodoStatus }
+  | {
+      op: "item.priority";
+      listId: string;
+      itemId: string;
+      priority: TodoPriority;
+    }
+  | {
+      op: "item.description";
+      listId: string;
+      itemId: string;
+      description: string | null;
+    };
 
 /** An op with the list's visibility, which rides every event as `td-vis`. */
 export type TodoOp = TodoOpContent & { visibility: TodoVisibility };
@@ -89,6 +146,9 @@ const CONTENT_KEYS: Record<TodoOpKind, readonly string[]> = {
   "item.due": ["schema", "op", "listId", "itemId", "due"],
   "item.rank": ["schema", "op", "listId", "itemId", "rank"],
   "item.remove": ["schema", "op", "listId", "itemId"],
+  "item.status": ["schema", "op", "listId", "itemId", "status"],
+  "item.priority": ["schema", "op", "listId", "itemId", "priority"],
+  "item.description": ["schema", "op", "listId", "itemId", "description"],
 };
 
 export const TODO_OP_KINDS = Object.keys(CONTENT_KEYS) as TodoOpKind[];
@@ -117,6 +177,28 @@ export function todoTextError(field: string, value: string): string | null {
     return `todo ${field} must not contain control characters`;
   }
   return null;
+}
+
+/** Why `value` is not a valid description (clear one with `null`), or `null`. */
+export function todoDescriptionError(value: string): string | null {
+  if (value.trim().length === 0) {
+    return "todo description must not be blank; clear it with null";
+  }
+  if (utf8Length(value) > MAX_PROJECT_TODO_DESCRIPTION_BYTES) {
+    return `todo description exceeds ${MAX_PROJECT_TODO_DESCRIPTION_BYTES} bytes`;
+  }
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the rule is about control characters
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/.test(value)) {
+    return "todo description must not contain control characters";
+  }
+  return null;
+}
+
+/** Why `op` would be refused for size once encoded, or `null`. */
+export function todoOpSizeError(op: TodoOpContent): string | null {
+  return utf8Length(encodeTodoOpContent(op)) > MAX_PROJECT_TODO_CONTENT_BYTES
+    ? `todo op content exceeds ${MAX_PROJECT_TODO_CONTENT_BYTES} bytes`
+    : null;
 }
 
 /** Why `value` is not a `YYYY-MM-DD` calendar date in 1970–9999, or `null`. */
@@ -317,6 +399,47 @@ export function decodeTodoOp(
     }
     case "item.remove":
       return { op: kind, listId, itemId: itemId as string, visibility };
+    case "item.status": {
+      const status = str("status");
+      if (bad(status)) return status;
+      if (!isTodoStatus(status)) {
+        return {
+          error: `todo status must be one of triage, backlog, todo, in_progress, done, canceled (got ${JSON.stringify(status)})`,
+        };
+      }
+      return { op: kind, listId, itemId: itemId as string, status, visibility };
+    }
+    case "item.priority": {
+      const priority = str("priority");
+      if (bad(priority)) return priority;
+      if (!isTodoPriority(priority)) {
+        return {
+          error: `todo priority must be one of urgent, high, medium, low, none (got ${JSON.stringify(priority)})`,
+        };
+      }
+      return {
+        op: kind,
+        listId,
+        itemId: itemId as string,
+        priority,
+        visibility,
+      };
+    }
+    case "item.description": {
+      const description = nullableStr("description");
+      if (bad(description)) return description;
+      if (description !== null) {
+        const err = todoDescriptionError(description);
+        if (err) return { error: err };
+      }
+      return {
+        op: kind,
+        listId,
+        itemId: itemId as string,
+        description,
+        visibility,
+      };
+    }
   }
 }
 

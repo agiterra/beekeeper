@@ -33,6 +33,85 @@ const maxProjectTodoContentBytes = 4 * 1024;
 /// Maximum UTF-8 byte length of a list title or an item's text.
 const maxProjectTodoTextBytes = 1024;
 
+/// Maximum UTF-8 byte length of an item's description. The whole op is
+/// still capped at [maxProjectTodoContentBytes], so a description whose JSON
+/// escaping pushes the op past that cap is refused too.
+const maxProjectTodoDescriptionBytes = 3 * 1024;
+
+/// An item's workflow status. The vocabulary is closed and native: a
+/// provider with its own workflow (Linear's per-team states) keeps its own
+/// ids and never writes these.
+///
+/// [done] and [canceled] are the two **closed** states; an item in either is
+/// listed among the completed items, exactly as `item.done{true}` lists it.
+enum TodoStatus {
+  /// Intake: reported, not yet accepted into the backlog.
+  triage('triage'),
+
+  /// Accepted, not yet planned.
+  backlog('backlog'),
+
+  /// Planned, not started. The state of an item nobody has touched.
+  todo('todo'),
+
+  /// Being worked on.
+  inProgress('in_progress'),
+
+  /// Finished.
+  done('done'),
+
+  /// Closed without being done.
+  canceled('canceled');
+
+  const TodoStatus(this.wire);
+
+  /// The wire spelling.
+  final String wire;
+
+  /// `true` for [done] and [canceled].
+  bool get isClosed => this == done || this == canceled;
+
+  /// The status spelled [wire], or `null` for an unknown value.
+  static TodoStatus? fromWire(String wire) {
+    for (final status in values) {
+      if (status.wire == wire) return status;
+    }
+    return null;
+  }
+}
+
+/// An item's priority. A string on the wire, never a number, so every
+/// client's JSON reader agrees on what is valid.
+enum TodoPriority {
+  /// Urgent.
+  urgent('urgent'),
+
+  /// High.
+  high('high'),
+
+  /// Medium.
+  medium('medium'),
+
+  /// Low.
+  low('low'),
+
+  /// No priority set. The priority of an item nobody has touched.
+  none('none');
+
+  const TodoPriority(this.wire);
+
+  /// The wire spelling.
+  final String wire;
+
+  /// The priority spelled [wire], or `null` for an unknown value.
+  static TodoPriority? fromWire(String wire) {
+    for (final priority in values) {
+      if (priority.wire == wire) return priority;
+    }
+    return null;
+  }
+}
+
 /// Who may read a list. Carried on every op as the `td-vis` tag and, for
 /// `list.create`, in content as `visibility`.
 enum TodoVisibility {
@@ -96,7 +175,29 @@ enum ProjectTodoOpKind {
   itemRank('item.rank', ['schema', 'op', 'listId', 'itemId', 'rank']),
 
   /// Remove an item for good.
-  itemRemove('item.remove', ['schema', 'op', 'listId', 'itemId']);
+  itemRemove('item.remove', ['schema', 'op', 'listId', 'itemId']),
+
+  /// Set an item's workflow status ([TodoStatus]). Shares one field with
+  /// `item.done`: the latest of the two wins.
+  itemStatus('item.status', ['schema', 'op', 'listId', 'itemId', 'status']),
+
+  /// Set an item's priority ([TodoPriority]).
+  itemPriority('item.priority', [
+    'schema',
+    'op',
+    'listId',
+    'itemId',
+    'priority',
+  ]),
+
+  /// Set or clear an item's longer description.
+  itemDescription('item.description', [
+    'schema',
+    'op',
+    'listId',
+    'itemId',
+    'description',
+  ]);
 
   const ProjectTodoOpKind(this.wire, this.contentKeys);
 
@@ -122,7 +223,7 @@ enum ProjectTodoOpKind {
 
 /// One decoded op: the list it names, the list's visibility, and what it
 /// sets. Only the fields the op's [kind] carries are non-null, except
-/// `assignee` and `due`, which are legitimately `null` on their own ops
+/// `assignee`, `due` and `description`, which are legitimately `null` on their own ops
 /// when cleared.
 @immutable
 class ProjectTodoOp {
@@ -146,6 +247,9 @@ class ProjectTodoOp {
   final bool? done;
   final String? assignee;
   final String? due;
+  final TodoStatus? status;
+  final TodoPriority? priority;
+  final String? description;
 
   const ProjectTodoOp._({
     required this.kind,
@@ -160,6 +264,9 @@ class ProjectTodoOp {
     this.done,
     this.assignee,
     this.due,
+    this.status,
+    this.priority,
+    this.description,
   });
 
   /// `list.create`: [visibility] is both the content's `visibility` and the
@@ -299,6 +406,45 @@ class ProjectTodoOp {
          itemId: itemId,
        );
 
+  const ProjectTodoOp.itemStatus({
+    required String listId,
+    required TodoVisibility visibility,
+    required String itemId,
+    required TodoStatus status,
+  }) : this._(
+         kind: ProjectTodoOpKind.itemStatus,
+         listId: listId,
+         visibility: visibility,
+         itemId: itemId,
+         status: status,
+       );
+
+  const ProjectTodoOp.itemPriority({
+    required String listId,
+    required TodoVisibility visibility,
+    required String itemId,
+    required TodoPriority priority,
+  }) : this._(
+         kind: ProjectTodoOpKind.itemPriority,
+         listId: listId,
+         visibility: visibility,
+         itemId: itemId,
+         priority: priority,
+       );
+
+  const ProjectTodoOp.itemDescription({
+    required String listId,
+    required TodoVisibility visibility,
+    required String itemId,
+    required String? description,
+  }) : this._(
+         kind: ProjectTodoOpKind.itemDescription,
+         listId: listId,
+         visibility: visibility,
+         itemId: itemId,
+         description: description,
+       );
+
   /// Encode as canonical content JSON: keys in [ProjectTodoOpKind.contentKeys]
   /// order, no whitespace. The inverse of [decodeProjectTodoOp].
   String toContent() {
@@ -333,6 +479,12 @@ class ProjectTodoOp {
         object['rank'] = rank;
       case ProjectTodoOpKind.itemRemove:
         break;
+      case ProjectTodoOpKind.itemStatus:
+        object['status'] = status!.wire;
+      case ProjectTodoOpKind.itemPriority:
+        object['priority'] = priority!.wire;
+      case ProjectTodoOpKind.itemDescription:
+        object['description'] = description;
     }
     return jsonEncode(object);
   }
@@ -362,7 +514,10 @@ class ProjectTodoOp {
       other.rank == rank &&
       other.done == done &&
       other.assignee == assignee &&
-      other.due == due;
+      other.due == due &&
+      other.status == status &&
+      other.priority == priority &&
+      other.description == description;
 
   @override
   int get hashCode => Object.hash(
@@ -378,6 +533,9 @@ class ProjectTodoOp {
     done,
     assignee,
     due,
+    status,
+    priority,
+    description,
   );
 
   @override
@@ -413,6 +571,29 @@ void validateTodoText(String field, String value) {
   for (final rune in value.runes) {
     if (_isControl(rune) && rune != 0x0a && rune != 0x09) {
       throw FormatException('todo $field must not contain control characters');
+    }
+  }
+}
+
+/// Validate an item's description: non-blank (clear it with `null`, not an
+/// empty string), within [maxProjectTodoDescriptionBytes], no control
+/// characters other than newline and tab.
+void validateTodoDescription(String value) {
+  if (value.trim().isEmpty) {
+    throw const FormatException(
+      'todo description must not be blank; clear it with null',
+    );
+  }
+  if (utf8.encode(value).length > maxProjectTodoDescriptionBytes) {
+    throw const FormatException(
+      'todo description exceeds $maxProjectTodoDescriptionBytes bytes',
+    );
+  }
+  for (final rune in value.runes) {
+    if (_isControl(rune) && rune != 0x0a && rune != 0x09) {
+      throw const FormatException(
+        'todo description must not contain control characters',
+      );
     }
   }
 }
@@ -624,6 +805,45 @@ ProjectTodoOp decodeProjectTodoOp(String content, TodoVisibility visibility) {
         listId: listId,
         visibility: visibility,
         itemId: itemId!,
+      );
+    case ProjectTodoOpKind.itemStatus:
+      final wire = _takeString(object, 'status');
+      final status = TodoStatus.fromWire(wire);
+      if (status == null) {
+        throw FormatException(
+          'todo status must be one of triage, backlog, todo, in_progress, '
+          'done, canceled (got "$wire")',
+        );
+      }
+      return ProjectTodoOp.itemStatus(
+        listId: listId,
+        visibility: visibility,
+        itemId: itemId!,
+        status: status,
+      );
+    case ProjectTodoOpKind.itemPriority:
+      final wire = _takeString(object, 'priority');
+      final priority = TodoPriority.fromWire(wire);
+      if (priority == null) {
+        throw FormatException(
+          'todo priority must be one of urgent, high, medium, low, none '
+          '(got "$wire")',
+        );
+      }
+      return ProjectTodoOp.itemPriority(
+        listId: listId,
+        visibility: visibility,
+        itemId: itemId!,
+        priority: priority,
+      );
+    case ProjectTodoOpKind.itemDescription:
+      final description = _takeNullableString(object, 'description');
+      if (description != null) validateTodoDescription(description);
+      return ProjectTodoOp.itemDescription(
+        listId: listId,
+        visibility: visibility,
+        itemId: itemId!,
+        description: description,
       );
   }
 }

@@ -193,14 +193,19 @@ export function useProjectTodos(coordinate: string | null): ProjectTodosState {
     queryFn: () => fetchProjectTodos(coordinate ?? ""),
   });
 
-  if (query.isError) {
+  // A failed first read is reported while React Query retries it, not only
+  // after the last retry: "Reading lists…" over a read that already failed
+  // would be a comfortable guess.
+  const failure = query.isError
+    ? query.error
+    : !query.data && query.failureCount > 0
+      ? query.failureReason
+      : null;
+  if (failure) {
     return {
       kind: "error",
       read: query.data ?? null,
-      message:
-        query.error instanceof Error
-          ? query.error.message
-          : String(query.error),
+      message: failure instanceof Error ? failure.message : String(failure),
     };
   }
   if (!query.data) return { kind: "loading", read: null };

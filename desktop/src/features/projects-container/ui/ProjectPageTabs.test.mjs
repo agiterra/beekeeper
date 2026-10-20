@@ -72,7 +72,7 @@ test("the active packs tab is still marked as the current page", async () => {
   assert.match(html, /data-testid="project-tab-agents"[^>]*>Agents</);
 });
 
-test("the strip reads Overview, Pulse, To-Do, Agents, Actions, Roles, Artifacts, and Contributors is gone", async () => {
+test("the strip reads Overview, Pulse, Planning, To-Do, Agents, Actions, Roles, Artifacts, and Contributors is gone", async () => {
   const html = await renderTabs({
     active: "agents",
     projectId: "p1",
@@ -85,6 +85,7 @@ test("the strip reads Overview, Pulse, To-Do, Agents, Actions, Roles, Artifacts,
   assert.deepEqual(order, [
     "overview",
     "pulse",
+    "planning",
     "todos",
     "agents",
     "actions",
@@ -96,6 +97,7 @@ test("the strip reads Overview, Pulse, To-Do, Agents, Actions, Roles, Artifacts,
   // routes, remembered routes and existing selectors keep working while the
   // name covers the documents tree as well as the plans.
   assert.match(html, /data-testid="project-tab-files"[^>]*>Artifacts</);
+  assert.match(html, /href="\/projects\/p1\/planning"/);
   assert.match(html, /href="\/projects\/p1\/todos"/);
   assert.match(html, /href="\/projects\/p1\/agents"/);
   assert.match(html, /href="\/projects\/p1\/actions"/);

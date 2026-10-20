@@ -21,8 +21,11 @@ import type { TodoItem } from "./todoFold";
 import {
   type TodoOp,
   type TodoOpContent,
+  type TodoPriority,
+  type TodoStatus,
   type TodoVisibility,
   encodeTodoOpContent,
+  isClosedTodoStatus,
   newTodoId,
   todoOpItemId,
   todoOpTags,
@@ -130,7 +133,48 @@ export type TodoMutations = {
   setDue: (listId: string, itemId: string, due: string | null) => Promise<void>;
   moveItem: (listId: string, itemId: string, index: number) => Promise<void>;
   removeItem: (listId: string, itemId: string) => Promise<void>;
+  /**
+   * Set the workflow status. Crossing the closed boundary publishes
+   * `item.done` first and `item.status` second, so a reader that predates
+   * `item.status` still agrees on whether the item is done (NIP-TD).
+   */
+  setStatus: (
+    listId: string,
+    itemId: string,
+    status: TodoStatus,
+  ) => Promise<void>;
+  setPriority: (
+    listId: string,
+    itemId: string,
+    priority: TodoPriority,
+  ) => Promise<void>;
+  /** `null` clears the description. */
+  setDescription: (
+    listId: string,
+    itemId: string,
+    description: string | null,
+  ) => Promise<void>;
 };
+
+/**
+ * The ops `setStatus` publishes, in order, for an item whose fold currently
+ * reads `currentlyDone`: `item.done` first when the move crosses the closed
+ * boundary, then `item.status`.
+ */
+export function statusOps(
+  listId: string,
+  itemId: string,
+  status: TodoStatus,
+  currentlyDone: boolean,
+): TodoOpContent[] {
+  const closed = isClosedTodoStatus(status);
+  const ops: TodoOpContent[] = [];
+  if (closed !== currentlyDone) {
+    ops.push({ op: "item.done", listId, itemId, done: closed });
+  }
+  ops.push({ op: "item.status", listId, itemId, status });
+  return ops;
+}
 
 /** Reference-stable mutation callbacks for one project coordinate. */
 export function useTodoMutations(coordinate: string | null): TodoMutations {
@@ -220,6 +264,31 @@ export function useTodoMutations(coordinate: string | null): TodoMutations {
       },
       removeItem: async (listId, itemId) => {
         await publishOn({ op: "item.remove", listId, itemId });
+      },
+      setStatus: async (listId, itemId, status) => {
+        const list = cachedList(listId);
+        const item = [...(list?.open ?? []), ...(list?.completed ?? [])].find(
+          (candidate) => candidate.id === itemId,
+        );
+        if (!item) {
+          throw new Error(
+            "This item is not in the current read; refresh and try again.",
+          );
+        }
+        for (const op of statusOps(listId, itemId, status, item.done)) {
+          await publishOn(op);
+        }
+      },
+      setPriority: async (listId, itemId, priority) => {
+        await publishOn({ op: "item.priority", listId, itemId, priority });
+      },
+      setDescription: async (listId, itemId, description) => {
+        await publishOn({
+          op: "item.description",
+          listId,
+          itemId,
+          description,
+        });
       },
     };
   }, [coordinate, queryClient]);

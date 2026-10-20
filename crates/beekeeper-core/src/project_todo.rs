@@ -44,6 +44,11 @@ pub const MAX_PROJECT_TODO_CONTENT_BYTES: usize = 4 * 1024;
 /// Maximum UTF-8 byte length of a list title or an item's text.
 pub const MAX_PROJECT_TODO_TEXT_BYTES: usize = 1024;
 
+/// Maximum UTF-8 byte length of an item's description. The whole op is
+/// still capped at [`MAX_PROJECT_TODO_CONTENT_BYTES`], so a description
+/// whose JSON escaping pushes the op past that cap is refused too.
+pub const MAX_PROJECT_TODO_DESCRIPTION_BYTES: usize = 3 * 1024;
+
 /// What one op does. The wire spelling is the `td-op` tag and the content
 /// `op` field; [`validate_project_todo_envelope`] requires the two to agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,11 +75,18 @@ pub enum ProjectTodoOpKind {
     ItemRank,
     /// Remove an item for good.
     ItemRemove,
+    /// Set an item's workflow status ([`TodoStatus`]). Shares one field
+    /// with `item.done`: the latest of the two wins.
+    ItemStatus,
+    /// Set an item's priority ([`TodoPriority`]).
+    ItemPriority,
+    /// Set or clear an item's longer description.
+    ItemDescription,
 }
 
 impl ProjectTodoOpKind {
     /// Every op kind, in wire order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 14] = [
         Self::ListCreate,
         Self::ListTitle,
         Self::ListArchived,
@@ -86,6 +98,9 @@ impl ProjectTodoOpKind {
         Self::ItemDue,
         Self::ItemRank,
         Self::ItemRemove,
+        Self::ItemStatus,
+        Self::ItemPriority,
+        Self::ItemDescription,
     ];
 
     /// The wire spelling, identical in the `td-op` tag and in content.
@@ -102,6 +117,9 @@ impl ProjectTodoOpKind {
             Self::ItemDue => "item.due",
             Self::ItemRank => "item.rank",
             Self::ItemRemove => "item.remove",
+            Self::ItemStatus => "item.status",
+            Self::ItemPriority => "item.priority",
+            Self::ItemDescription => "item.description",
         }
     }
 
@@ -129,6 +147,9 @@ impl ProjectTodoOpKind {
             Self::ItemDue => &["schema", "op", "listId", "itemId", "due"],
             Self::ItemRank => &["schema", "op", "listId", "itemId", "rank"],
             Self::ItemRemove => &["schema", "op", "listId", "itemId"],
+            Self::ItemStatus => &["schema", "op", "listId", "itemId", "status"],
+            Self::ItemPriority => &["schema", "op", "listId", "itemId", "priority"],
+            Self::ItemDescription => &["schema", "op", "listId", "itemId", "description"],
         }
     }
 }
@@ -224,6 +245,158 @@ pub enum ProjectTodoOpValue {
         /// The item.
         item_id: String,
     },
+    /// `item.status`.
+    ItemStatus {
+        /// The item.
+        item_id: String,
+        /// The new status.
+        status: TodoStatus,
+    },
+    /// `item.priority`.
+    ItemPriority {
+        /// The item.
+        item_id: String,
+        /// The new priority.
+        priority: TodoPriority,
+    },
+    /// `item.description`.
+    ItemDescription {
+        /// The item.
+        item_id: String,
+        /// The description, or `None` to clear it.
+        description: Option<String>,
+    },
+}
+
+/// An item's workflow status. The vocabulary is closed and native: a
+/// provider with its own workflow (Linear's per-team states) keeps its own
+/// ids and never writes these.
+///
+/// `done` and `canceled` are the two **closed** states; an item in either is
+/// listed among the completed items, exactly as `item.done{true}` lists it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TodoStatus {
+    /// Intake: reported, not yet accepted into the backlog.
+    Triage,
+    /// Accepted, not yet planned.
+    Backlog,
+    /// Planned, not started. The state of an item nobody has touched.
+    Todo,
+    /// Being worked on.
+    InProgress,
+    /// Finished.
+    Done,
+    /// Closed without being done.
+    Canceled,
+}
+
+impl TodoStatus {
+    /// Every status, in workflow order.
+    pub const ALL: [Self; 6] = [
+        Self::Triage,
+        Self::Backlog,
+        Self::Todo,
+        Self::InProgress,
+        Self::Done,
+        Self::Canceled,
+    ];
+
+    /// The wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Triage => "triage",
+            Self::Backlog => "backlog",
+            Self::Todo => "todo",
+            Self::InProgress => "in_progress",
+            Self::Done => "done",
+            Self::Canceled => "canceled",
+        }
+    }
+
+    /// `true` for `done` and `canceled`.
+    pub const fn is_closed(self) -> bool {
+        matches!(self, Self::Done | Self::Canceled)
+    }
+}
+
+impl fmt::Display for TodoStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for TodoStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|status| status.as_str() == value)
+            .ok_or_else(|| {
+                format!(
+                    "todo status must be one of triage, backlog, todo, in_progress, done, canceled (got {value:?})"
+                )
+            })
+    }
+}
+
+/// An item's priority. A string on the wire, never a number, so every
+/// client's JSON reader agrees on what is valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TodoPriority {
+    /// No priority set. The priority of an item nobody has touched.
+    None,
+    /// Urgent.
+    Urgent,
+    /// High.
+    High,
+    /// Medium.
+    Medium,
+    /// Low.
+    Low,
+}
+
+impl TodoPriority {
+    /// Every priority, most urgent first, `none` last.
+    pub const ALL: [Self; 5] = [
+        Self::Urgent,
+        Self::High,
+        Self::Medium,
+        Self::Low,
+        Self::None,
+    ];
+
+    /// The wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Urgent => "urgent",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+        }
+    }
+}
+
+impl fmt::Display for TodoPriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for TodoPriority {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|priority| priority.as_str() == value)
+            .ok_or_else(|| {
+                format!(
+                    "todo priority must be one of urgent, high, medium, low, none (got {value:?})"
+                )
+            })
+    }
 }
 
 /// Who may read a list. Carried on every op as the `td-vis` tag and, for
@@ -294,6 +467,9 @@ impl ProjectTodoOp {
             ProjectTodoOpValue::ItemDue { .. } => ProjectTodoOpKind::ItemDue,
             ProjectTodoOpValue::ItemRank { .. } => ProjectTodoOpKind::ItemRank,
             ProjectTodoOpValue::ItemRemove { .. } => ProjectTodoOpKind::ItemRemove,
+            ProjectTodoOpValue::ItemStatus { .. } => ProjectTodoOpKind::ItemStatus,
+            ProjectTodoOpValue::ItemPriority { .. } => ProjectTodoOpKind::ItemPriority,
+            ProjectTodoOpValue::ItemDescription { .. } => ProjectTodoOpKind::ItemDescription,
         }
     }
 
@@ -310,7 +486,10 @@ impl ProjectTodoOp {
             | ProjectTodoOpValue::ItemAssignee { item_id, .. }
             | ProjectTodoOpValue::ItemDue { item_id, .. }
             | ProjectTodoOpValue::ItemRank { item_id, .. }
-            | ProjectTodoOpValue::ItemRemove { item_id } => Some(item_id),
+            | ProjectTodoOpValue::ItemRemove { item_id }
+            | ProjectTodoOpValue::ItemStatus { item_id, .. }
+            | ProjectTodoOpValue::ItemPriority { item_id, .. }
+            | ProjectTodoOpValue::ItemDescription { item_id, .. } => Some(item_id),
         }
     }
 
@@ -364,6 +543,21 @@ impl ProjectTodoOp {
                 object.insert("rank".into(), Value::from(rank.as_str()));
             }
             ProjectTodoOpValue::ItemRemove { .. } => {}
+            ProjectTodoOpValue::ItemStatus { status, .. } => {
+                object.insert("status".into(), Value::from(status.as_str()));
+            }
+            ProjectTodoOpValue::ItemPriority { priority, .. } => {
+                object.insert("priority".into(), Value::from(priority.as_str()));
+            }
+            ProjectTodoOpValue::ItemDescription { description, .. } => {
+                object.insert(
+                    "description".into(),
+                    description
+                        .as_deref()
+                        .map(Value::from)
+                        .unwrap_or(Value::Null),
+                );
+            }
         }
         // serde_json's default Map preserves insertion order only with the
         // `preserve_order` feature; without it keys sort alphabetically. Either
@@ -424,6 +618,27 @@ pub fn validate_todo_text(field: &str, value: &str) -> Result<(), String> {
         .any(|c| c.is_control() && c != '\n' && c != '\t')
     {
         return Err(format!("todo {field} must not contain control characters"));
+    }
+    Ok(())
+}
+
+/// Validate an item's description: non-blank (clear it with `null`, not an
+/// empty string), within [`MAX_PROJECT_TODO_DESCRIPTION_BYTES`], no control
+/// characters other than newline and tab.
+pub fn validate_todo_description(value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err("todo description must not be blank; clear it with null".to_owned());
+    }
+    if value.len() > MAX_PROJECT_TODO_DESCRIPTION_BYTES {
+        return Err(format!(
+            "todo description exceeds {MAX_PROJECT_TODO_DESCRIPTION_BYTES} bytes"
+        ));
+    }
+    if value
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return Err("todo description must not contain control characters".to_owned());
     }
     Ok(())
 }
@@ -626,6 +841,24 @@ pub fn decode_project_todo_op(
             }
         }
         ProjectTodoOpKind::ItemRemove => ProjectTodoOpValue::ItemRemove { item_id: item() },
+        ProjectTodoOpKind::ItemStatus => ProjectTodoOpValue::ItemStatus {
+            item_id: item(),
+            status: TodoStatus::from_str(take_str(object, "status")?)?,
+        },
+        ProjectTodoOpKind::ItemPriority => ProjectTodoOpValue::ItemPriority {
+            item_id: item(),
+            priority: TodoPriority::from_str(take_str(object, "priority")?)?,
+        },
+        ProjectTodoOpKind::ItemDescription => {
+            let description = take_nullable_str(object, "description")?.map(str::to_owned);
+            if let Some(text) = &description {
+                validate_todo_description(text)?;
+            }
+            ProjectTodoOpValue::ItemDescription {
+                item_id: item(),
+                description,
+            }
+        }
     };
     Ok(ProjectTodoOp {
         list_id,
@@ -868,8 +1101,40 @@ mod tests {
                     item_id: ITEM.to_owned(),
                 },
             },
+            ProjectTodoOp {
+                list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
+                value: ProjectTodoOpValue::ItemStatus {
+                    item_id: ITEM.to_owned(),
+                    status: TodoStatus::InProgress,
+                },
+            },
+            ProjectTodoOp {
+                list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
+                value: ProjectTodoOpValue::ItemPriority {
+                    item_id: ITEM.to_owned(),
+                    priority: TodoPriority::Urgent,
+                },
+            },
+            ProjectTodoOp {
+                list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
+                value: ProjectTodoOpValue::ItemDescription {
+                    item_id: ITEM.to_owned(),
+                    description: Some("Steps:\n\t1. reproduce".to_owned()),
+                },
+            },
+            ProjectTodoOp {
+                list_id: LIST.to_owned(),
+                visibility: TodoVisibility::Project,
+                value: ProjectTodoOpValue::ItemDescription {
+                    item_id: ITEM.to_owned(),
+                    description: None,
+                },
+            },
         ];
-        assert_eq!(ops.len(), ProjectTodoOpKind::ALL.len() + 3);
+        assert_eq!(ops.len(), ProjectTodoOpKind::ALL.len() + 4);
         for op in ops {
             let decoded =
                 decode_project_todo_op(&op.to_content(), op.visibility).expect("content decodes");
@@ -1078,5 +1343,69 @@ mod tests {
         assert!(validate_project_todo_envelope(&event)
             .unwrap_err()
             .contains("kind 44248"));
+    }
+
+    #[test]
+    fn planning_fields_are_closed_vocabularies() {
+        let op = |body: &str| {
+            format!(
+                r#"{{"schema":"{PROJECT_TODO_SCHEMA}","listId":"{LIST}","itemId":"{ITEM}",{body}}}"#
+            )
+        };
+        let decode = |body: &str| decode_project_todo_op(&op(body), TodoVisibility::Project);
+
+        for status in TodoStatus::ALL {
+            let decoded = decode(&format!(r#""op":"item.status","status":"{status}""#)).unwrap();
+            assert_eq!(
+                decoded.value,
+                ProjectTodoOpValue::ItemStatus {
+                    item_id: ITEM.to_owned(),
+                    status
+                }
+            );
+        }
+        assert!(decode(r#""op":"item.status","status":"started""#)
+            .unwrap_err()
+            .contains("todo status must be one of"));
+        assert!(decode(r#""op":"item.status","status":null"#)
+            .unwrap_err()
+            .contains("must be a string"));
+        assert!(TodoStatus::Done.is_closed() && TodoStatus::Canceled.is_closed());
+        assert!(!TodoStatus::InProgress.is_closed());
+
+        for priority in TodoPriority::ALL {
+            decode(&format!(r#""op":"item.priority","priority":"{priority}""#)).unwrap();
+        }
+        // A number is never a priority, so no client's JSON reader has to
+        // agree with another's about `1` versus `1.0`.
+        assert!(decode(r#""op":"item.priority","priority":1"#)
+            .unwrap_err()
+            .contains("must be a string"));
+        assert!(decode(r#""op":"item.priority","priority":"p1""#)
+            .unwrap_err()
+            .contains("todo priority must be one of"));
+
+        assert!(decode(r#""op":"item.description""#)
+            .unwrap_err()
+            .contains("missing field \"description\""));
+        assert!(decode(r#""op":"item.description","description":"  ""#)
+            .unwrap_err()
+            .contains("clear it with null"));
+        assert!(
+            decode("\"op\":\"item.description\",\"description\":\"a\\u0007b\"")
+                .unwrap_err()
+                .contains("control")
+        );
+        let long = "d".repeat(MAX_PROJECT_TODO_DESCRIPTION_BYTES + 1);
+        assert!(decode(&format!(
+            r#""op":"item.description","description":"{long}""#
+        ))
+        .unwrap_err()
+        .contains("exceeds"));
+        let fits = "d".repeat(MAX_PROJECT_TODO_DESCRIPTION_BYTES);
+        decode(&format!(
+            r#""op":"item.description","description":"{fits}""#
+        ))
+        .unwrap();
     }
 }

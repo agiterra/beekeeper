@@ -245,6 +245,8 @@ export default defineConfig({
         "**/project-repository-protection.spec.ts",
         "**/project-settings-screenshots.spec.ts",
         "**/projectPulse.spec.ts",
+        // Project Planning: list/board over NIP-TD items, quick create, detail.
+        "**/project-planning.spec.ts",
         "**/project-pulse-missions.spec.ts",
         "**/project-pulse-declared-work.spec.ts",
         "**/agentProgress.spec.ts",
@@ -341,6 +343,7 @@ export default defineConfig({
         "**/agents-everywhere.live.spec.ts",
         "**/relay-restart.live.spec.ts",
         "**/project-todos.live.spec.ts",
+        "**/project-planning.live.spec.ts",
         "**/project-artifacts.live.spec.ts",
         "**/parity-ancestor-island.spec.ts",
       ],

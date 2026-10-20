@@ -14,7 +14,9 @@
 
 use beekeeper_core::fractional_rank::rank_between;
 use beekeeper_core::kind::KIND_PROJECT_TODO_OP;
-use beekeeper_core::project_todo::{ProjectTodoOp, ProjectTodoOpValue, TodoVisibility};
+use beekeeper_core::project_todo::{
+    ProjectTodoOp, ProjectTodoOpValue, TodoPriority, TodoStatus, TodoVisibility,
+};
 use beekeeper_core::project_todo_fold::{
     fold_project_todos, ProjectTodoDigest, TodoFoldEvent, TodoItem, TodoList,
 };
@@ -236,6 +238,34 @@ fn parse_due(value: &str) -> Result<Option<String>, CliError> {
     Ok(Some(value.to_owned()))
 }
 
+fn parse_status(value: &str) -> Result<TodoStatus, CliError> {
+    TodoStatus::from_str(value).map_err(CliError::Usage)
+}
+
+fn parse_priority(value: &str) -> Result<TodoPriority, CliError> {
+    TodoPriority::from_str(value).map_err(CliError::Usage)
+}
+
+/// The ops that set `item_id` to `status`, in publish order. When the new
+/// status is on the other side of the closed boundary from the item's
+/// current `done`, `item.done` goes first so a reader that predates
+/// `item.status` still agrees on done-ness; `item.status` follows, stamped
+/// later, and wins the shared state field for every reader that knows it.
+fn status_ops(item_id: &str, currently_done: bool, status: TodoStatus) -> Vec<ProjectTodoOpValue> {
+    let mut ops = Vec::with_capacity(2);
+    if status.is_closed() != currently_done {
+        ops.push(ProjectTodoOpValue::ItemDone {
+            item_id: item_id.to_owned(),
+            done: status.is_closed(),
+        });
+    }
+    ops.push(ProjectTodoOpValue::ItemStatus {
+        item_id: item_id.to_owned(),
+        status,
+    });
+    ops
+}
+
 /// The rank that places an item at `index` among `open` (0 = first;
 /// `None` = last). `moving` is excluded from the neighbour computation so
 /// an item can be moved within its own list.
@@ -288,6 +318,9 @@ fn item_row(item: &TodoItem, format: &crate::OutputFormat) -> Value {
             "done": item.done,
             "assignee": item.assignee,
             "due": item.due,
+            "status": item.status,
+            "priority": item.priority,
+            "description": item.description,
         }),
         crate::OutputFormat::Json => serde_json::to_value(item).unwrap_or(Value::Null),
     }
@@ -571,6 +604,74 @@ pub async fn dispatch(
             println!("{}", publish(&mut snap, client, &op).await?);
             Ok(())
         }
+        TodosCmd::Status {
+            project,
+            item,
+            status,
+        } => {
+            let status = parse_status(&status)?;
+            let mut snap = snapshot(client, project.as_deref()).await?;
+            let (list, item) = resolve_item(&snap.digest, &item)?;
+            let list_id = list.id.clone();
+            let visibility = visibility_of(list)?;
+            let values = status_ops(&item.id, item.done, status);
+            let mut published = Vec::with_capacity(values.len());
+            for value in values {
+                let op = ProjectTodoOp {
+                    list_id: list_id.clone(),
+                    visibility,
+                    value,
+                };
+                published.push(publish(&mut snap, client, &op).await?);
+            }
+            // The `item.status` op is the answer; a preceding `item.done`
+            // is listed under `ops` in publish order.
+            let mut out = published.last().cloned().unwrap_or(Value::Null);
+            if published.len() > 1 {
+                out["ops"] = json!(published);
+            }
+            println!("{out}");
+            Ok(())
+        }
+        TodosCmd::Priority {
+            project,
+            item,
+            priority,
+        } => {
+            let priority = parse_priority(&priority)?;
+            let mut snap = snapshot(client, project.as_deref()).await?;
+            let (list, item) = resolve_item(&snap.digest, &item)?;
+            let op = ProjectTodoOp {
+                list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
+                value: ProjectTodoOpValue::ItemPriority {
+                    item_id: item.id.clone(),
+                    priority,
+                },
+            };
+            println!("{}", publish(&mut snap, client, &op).await?);
+            Ok(())
+        }
+        TodosCmd::Describe {
+            project,
+            item,
+            description,
+            clear,
+        } => {
+            let description = if clear { None } else { description };
+            let mut snap = snapshot(client, project.as_deref()).await?;
+            let (list, item) = resolve_item(&snap.digest, &item)?;
+            let op = ProjectTodoOp {
+                list_id: list.id.clone(),
+                visibility: visibility_of(list)?,
+                value: ProjectTodoOpValue::ItemDescription {
+                    item_id: item.id.clone(),
+                    description,
+                },
+            };
+            println!("{}", publish(&mut snap, client, &op).await?);
+            Ok(())
+        }
         TodosCmd::Move {
             project,
             item,
@@ -662,6 +763,9 @@ mod tests {
             rank: rank.to_owned(),
             assignee: None,
             due: None,
+            status: if done { "done" } else { "todo" }.to_owned(),
+            priority: "none".to_owned(),
+            description: None,
             created_at: 1,
             created_by: "p".repeat(64),
             updated_at: 1,
@@ -763,5 +867,69 @@ mod tests {
         );
         assert!(parse_due("2026-13-01").is_err());
         assert!(is_todo_id(&new_id()));
+    }
+
+    #[test]
+    fn status_and_priority_parse_the_closed_vocabularies() {
+        assert_eq!(parse_status("in_progress").unwrap(), TodoStatus::InProgress);
+        assert_eq!(parse_status("canceled").unwrap(), TodoStatus::Canceled);
+        assert!(matches!(parse_status("started"), Err(CliError::Usage(_))));
+        assert!(matches!(parse_status("Done"), Err(CliError::Usage(_))));
+        assert_eq!(parse_priority("urgent").unwrap(), TodoPriority::Urgent);
+        assert_eq!(parse_priority("none").unwrap(), TodoPriority::None);
+        assert!(matches!(parse_priority("1"), Err(CliError::Usage(_))));
+        assert!(matches!(parse_priority("p1"), Err(CliError::Usage(_))));
+    }
+
+    #[test]
+    fn status_crossing_the_closed_boundary_publishes_done_first() {
+        let id = "a".repeat(32);
+        let done = |d: bool| ProjectTodoOpValue::ItemDone {
+            item_id: id.clone(),
+            done: d,
+        };
+        let status = |s: TodoStatus| ProjectTodoOpValue::ItemStatus {
+            item_id: id.clone(),
+            status: s,
+        };
+        // Open -> closed: done{true}, then the status.
+        assert_eq!(
+            status_ops(&id, false, TodoStatus::Canceled),
+            vec![done(true), status(TodoStatus::Canceled)]
+        );
+        assert_eq!(
+            status_ops(&id, false, TodoStatus::Done),
+            vec![done(true), status(TodoStatus::Done)]
+        );
+        // Closed -> open: done{false}, then the status.
+        assert_eq!(
+            status_ops(&id, true, TodoStatus::InProgress),
+            vec![done(false), status(TodoStatus::InProgress)]
+        );
+        // Same side of the boundary: the status alone.
+        assert_eq!(
+            status_ops(&id, false, TodoStatus::Backlog),
+            vec![status(TodoStatus::Backlog)]
+        );
+        assert_eq!(
+            status_ops(&id, true, TodoStatus::Done),
+            vec![status(TodoStatus::Done)]
+        );
+    }
+
+    #[test]
+    fn compact_rows_carry_the_planning_fields() {
+        let mut row = item(&"a".repeat(32), "a0", false);
+        row.status = "in_progress".to_owned();
+        row.priority = "high".to_owned();
+        row.description = Some("why".to_owned());
+        let compact = item_row(&row, &crate::OutputFormat::Compact);
+        assert_eq!(compact["status"], "in_progress");
+        assert_eq!(compact["priority"], "high");
+        assert_eq!(compact["description"], "why");
+        let full = item_row(&row, &crate::OutputFormat::Json);
+        assert_eq!(full["status"], "in_progress");
+        assert_eq!(full["priority"], "high");
+        assert_eq!(full["description"], "why");
     }
 }

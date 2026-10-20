@@ -31,6 +31,7 @@ export const routes = rootRoute("root.tsx", [
     index("projects.$projectId.index.tsx"),
     route("/code/$repoId", "projects.$projectId.code.$repoId.tsx"),
     route("/pulse", "projects.$projectId.pulse.tsx"),
+    route("/planning", "projects.$projectId.planning.tsx"),
     route("/todos", "projects.$projectId.todos.tsx"),
     route("/agents", "projects.$projectId.agents.tsx"),
     route("/actions", "projects.$projectId.actions.tsx"),

@@ -31,8 +31,13 @@
 //!    part with the create's own key — so a `text` op stamped *before* the
 //!    `add` (a skewed clock) loses to the add. Ops naming a list or item that
 //!    does not exist are ignored.
-//! 6. **Done.** `item.done{true}` also records `completedAt`/`completedBy`
-//!    from the winning op; `item.done{false}` clears them.
+//! 6. **State.** `item.done` and `item.status` write one field, the item's
+//!    state, and the greater key over both wins: `item.done{true}` reads as
+//!    status `done`, `item.done{false}` as `todo`, `item.status` as itself.
+//!    An item is `done` — listed among the completed — when its status is
+//!    `done` or `canceled`, and then records `completedAt`/`completedBy`
+//!    from the winning op; otherwise both are null. An untouched item is
+//!    `todo`, priority `none`, description null.
 //! 7. **Order out.** Lists sort by `(createdAt, id)`. Within a list, open
 //!    items sort by `(rank, id)` and completed items by
 //!    `(completedAt, doneOpId)` descending — most recently completed first.
@@ -47,7 +52,8 @@ use std::str::FromStr;
 
 use crate::kind::{normalize_project_coordinate, KIND_PROJECT_TODO_OP};
 use crate::project_todo::{
-    decode_project_todo_op, ProjectTodoOp, ProjectTodoOpValue, TodoVisibility,
+    decode_project_todo_op, ProjectTodoOp, ProjectTodoOpValue, TodoPriority, TodoStatus,
+    TodoVisibility,
 };
 
 /// Exact `schema` value carried by a digest.
@@ -107,6 +113,13 @@ pub struct TodoItem {
     pub assignee: Option<String>,
     /// Due date `YYYY-MM-DD`, if any.
     pub due: Option<String>,
+    /// Workflow status (`TodoStatus` wire spelling); `done` is `true`
+    /// exactly when this is `done` or `canceled`.
+    pub status: String,
+    /// Priority (`TodoPriority` wire spelling).
+    pub priority: String,
+    /// Longer description, if any.
+    pub description: Option<String>,
     /// The winning `item.add`'s `created_at`.
     pub created_at: u64,
     /// The winning `item.add`'s author.
@@ -176,9 +189,13 @@ struct ListState {
 struct ItemState {
     text: (OpKey, String),
     rank: (OpKey, String),
-    done: (OpKey, bool, Option<String>),
+    /// The state field `item.done` and `item.status` share, and who wrote
+    /// the winning op.
+    state: (OpKey, TodoStatus, String),
     assignee: (OpKey, Option<String>),
     due: (OpKey, Option<String>),
+    priority: (OpKey, TodoPriority),
+    description: (OpKey, Option<String>),
     created_at: u64,
     created_by: String,
     updated_at: u64,
@@ -221,6 +238,13 @@ fn decode(project: &str, event: &TodoFoldEvent) -> Option<ProjectTodoOp> {
 fn set_field<T>(slot: &mut (OpKey, T), key: &OpKey, value: T) {
     if *key > slot.0 {
         *slot = (key.clone(), value);
+    }
+}
+
+/// [`set_field`] for a field that also records who wrote the winning op.
+fn set_field_by<T>(slot: &mut (OpKey, T, String), key: &OpKey, value: T, by: &str) {
+    if *key > slot.0 {
+        *slot = (key.clone(), value, by.to_owned());
     }
 }
 
@@ -309,9 +333,11 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                 ItemState {
                     text: (d.key.clone(), text.clone()),
                     rank: (d.key.clone(), rank.clone()),
-                    done: (d.key.clone(), false, None),
+                    state: (d.key.clone(), TodoStatus::Todo, d.pubkey.to_owned()),
                     assignee: (d.key.clone(), None),
                     due: (d.key.clone(), None),
+                    priority: (d.key.clone(), TodoPriority::None),
+                    description: (d.key.clone(), None),
                     created_at: d.key.0,
                     created_by: d.pubkey.to_owned(),
                     updated_at: d.key.0,
@@ -391,9 +417,12 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                     ignored += 1;
                     continue;
                 };
-                if d.key > item.done.0 {
-                    item.done = (d.key.clone(), *done, done.then(|| d.pubkey.to_owned()));
-                }
+                let status = if *done {
+                    TodoStatus::Done
+                } else {
+                    TodoStatus::Todo
+                };
+                set_field_by(&mut item.state, &d.key, status, d.pubkey);
                 item.updated_at = item.updated_at.max(d.key.0);
                 list.updated_at = list.updated_at.max(d.key.0);
             }
@@ -423,6 +452,48 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                 item.updated_at = item.updated_at.max(d.key.0);
                 list.updated_at = list.updated_at.max(d.key.0);
             }
+            ProjectTodoOpValue::ItemStatus { item_id, status } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field_by(&mut item.state, &d.key, *status, d.pubkey);
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemPriority { item_id, priority } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.priority, &d.key, *priority);
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
+            ProjectTodoOpValue::ItemDescription {
+                item_id,
+                description,
+            } => {
+                let target = (list_id, item_id.as_str());
+                if removed.contains(&target) {
+                    continue;
+                }
+                let Some(item) = items.get_mut(&target) else {
+                    ignored += 1;
+                    continue;
+                };
+                set_field(&mut item.description, &d.key, description.clone());
+                item.updated_at = item.updated_at.max(d.key.0);
+                list.updated_at = list.updated_at.max(d.key.0);
+            }
             ProjectTodoOpValue::ItemRank { item_id, rank } => {
                 let target = (list_id, item_id.as_str());
                 if removed.contains(&target) {
@@ -449,7 +520,7 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                 if owner != list_id || removed.contains(&(owner, item_id)) {
                     continue;
                 }
-                let done = item.done.1;
+                let done = item.state.1.is_closed();
                 let row = TodoItem {
                     id: (*item_id).to_owned(),
                     list_id: (*list_id).to_owned(),
@@ -458,14 +529,17 @@ pub fn fold_project_todos(project: &str, events: &[TodoFoldEvent]) -> ProjectTod
                     rank: item.rank.1.clone(),
                     assignee: item.assignee.1.clone(),
                     due: item.due.1.clone(),
+                    status: item.state.1.as_str().to_owned(),
+                    priority: item.priority.1.as_str().to_owned(),
+                    description: item.description.1.clone(),
                     created_at: item.created_at,
                     created_by: item.created_by.clone(),
                     updated_at: item.updated_at,
-                    completed_at: done.then_some(item.done.0 .0),
-                    completed_by: item.done.2.clone(),
+                    completed_at: done.then_some(item.state.0 .0),
+                    completed_by: done.then(|| item.state.2.clone()),
                 };
                 if done {
-                    completed.push((item.done.0.clone(), row));
+                    completed.push((item.state.0.clone(), row));
                 } else {
                     open.push((item.rank.1.clone(), row));
                 }

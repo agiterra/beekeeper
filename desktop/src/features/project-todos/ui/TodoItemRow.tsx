@@ -13,6 +13,14 @@ import type { TodoPerson } from "../lib/todoPeople";
 import { AssigneePicker } from "./AssigneePicker";
 import { DueDatePicker } from "./DueDatePicker";
 
+/** Statuses the checkbox does not already say; `todo` and `done` need no note. */
+const TODO_STATUS_NOTE: Partial<Record<TodoItem["status"], string>> = {
+  triage: "Triage",
+  backlog: "Backlog",
+  in_progress: "In progress",
+  canceled: "Canceled",
+};
+
 export type TodoRowActions = {
   setDone: (item: TodoItem, done: boolean) => void;
   setText: (item: TodoItem, text: string) => void;
@@ -133,6 +141,16 @@ export function TodoItemRow({
             onChange={(due) => actions.setDue(item, due)}
             testId="todo-item-due"
           />
+          {TODO_STATUS_NOTE[item.status] ? (
+            // Planning's workflow status, named where a checkbox alone would
+            // hide it: a canceled item is ticked here but was never done.
+            <span
+              className="rounded-sm border border-border px-1 text-2xs text-muted-foreground"
+              data-testid="todo-item-status"
+            >
+              {TODO_STATUS_NOTE[item.status]}
+            </span>
+          ) : null}
         </div>
       </div>
       {canEdit ? (

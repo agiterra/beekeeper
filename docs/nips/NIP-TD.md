@@ -37,7 +37,7 @@ Tags, position-independent, closed key set:
 
 Any other key — **including `h`** — is a rejection. A to-do op is never channel-scoped; unlike a Pulse entry there is no optional channel binding to reconcile, so the relay lists the kind as global-only outright.
 
-Content is JSON, at most 4096 bytes, with `schema` = `buzz-project-todo/v1` and an **exact** key set per op (every listed key present, no other key; `assignee` and `due` are `null` when cleared, never absent):
+Content is JSON, at most 4096 bytes, with `schema` = `buzz-project-todo/v1` and an **exact** key set per op (every listed key present, no other key; `assignee`, `due` and `description` are `null` when cleared, never absent):
 
 | `op` | keys |
 |---|---|
@@ -52,8 +52,13 @@ Content is JSON, at most 4096 bytes, with `schema` = `buzz-project-todo/v1` and 
 | `item.due` | `listId`, `itemId`, `due` (`YYYY-MM-DD`, a real calendar date, or null) |
 | `item.rank` | `listId`, `itemId`, `rank` |
 | `item.remove` | `listId`, `itemId` |
+| `item.status` | `listId`, `itemId`, `status` (`triage`, `backlog`, `todo`, `in_progress`, `done` or `canceled`) |
+| `item.priority` | `listId`, `itemId`, `priority` (`urgent`, `high`, `medium`, `low` or `none` — a string; a number is a rejection) |
+| `item.description` | `listId`, `itemId`, `description` (string, or null) |
 
-`listId` and `itemId` are 32 lowercase hex characters minted by the client (a UUID without hyphens). `title` and `text` are non-blank, at most 1024 bytes, with no control characters other than newline and tab. `rank` is a fractional-indexing order key (see § Ranks).
+`listId` and `itemId` are 32 lowercase hex characters minted by the client (a UUID without hyphens). `title` and `text` are non-blank, at most 1024 bytes, with no control characters other than newline and tab. `description` is non-blank (clear it with `null`, not an empty string), at most 3072 bytes, with no control characters other than newline and tab; the whole content is still capped at 4096 bytes, so a description whose JSON escaping pushes the op past that cap is refused too. `rank` is a fractional-indexing order key (see § Ranks).
+
+`item.done` and `item.status` write the same field, the item's **state**. `done` and `canceled` are the two closed statuses: an item in either is listed among the completed. A writer moving an item across the closed boundary SHOULD publish `item.done` first and then `item.status`, so a reader that predates `item.status` still agrees on whether the item is done.
 
 The single validator is `crates/beekeeper-core/src/project_todo.rs`; the relay, the SDK builder and `bee todos` call it and keep no copy.
 
@@ -81,7 +86,7 @@ Visibility is relay-enforced, not encrypted: like everything in a private projec
 
 ## Fold
 
-Normative text is `conformance/project-todo-fold/CONTRACT.md`, pinned by `fixtures/fold-vectors.json`, which the Rust (`beekeeper-core`), TypeScript (Desktop) and Dart (Mobile) folds all bind to. In one paragraph: decode every op for the coordinate (a malformed op, or one whose `td-vis` is missing or unknown, is counted in `ignored`); sort by `(created_at, id)`; the earliest `list.create` / `item.add` per id creates, and a list's visibility is its create's; an op whose `td-vis` disagrees with its list, or on a personal list is not signed by the list's creator, is ignored; any `item.remove` on an existing item is terminal; per field the greatest `(created_at, id)` wins, with the create's values taking part under the create's key; `item.done{true}` records `completedAt`/`completedBy` from the winning op; lists order by `(createdAt, id)`, open items by `(rank, id)`, completed items by the winning done op's key descending.
+Normative text is `conformance/project-todo-fold/CONTRACT.md`, pinned by `fixtures/fold-vectors.json`, which the Rust (`beekeeper-core`), TypeScript (Desktop) and Dart (Mobile) folds all bind to. In one paragraph: decode every op for the coordinate (a malformed op, or one whose `td-vis` is missing or unknown, is counted in `ignored`); sort by `(created_at, id)`; the earliest `list.create` / `item.add` per id creates, and a list's visibility is its create's; an op whose `td-vis` disagrees with its list, or on a personal list is not signed by the list's creator, is ignored; any `item.remove` on an existing item is terminal; per field the greatest `(created_at, id)` wins, with the create's values taking part under the create's key; `item.done` and `item.status` share one state field and the greatest key over both wins, `item.done{true}` reading as status `done` and `item.done{false}` as `todo`; an item is done when its status is `done` or `canceled`, and only then records `completedAt`/`completedBy` from the winning state op; an untouched item is `todo`, priority `none`, description null; lists order by `(createdAt, id)`, open items by `(rank, id)`, completed items by the winning state op's key descending.
 
 ## Ranks
 
@@ -96,6 +101,7 @@ The relay refuses any event whose `created_at` is more than 900 s from its clock
 - **Cold read is the whole log.** A reader replays every op for the coordinate (relay page cap 1000). Clients paginate with `until` and disclose truncation rather than presenting a list that silently lost history. A compaction record is a possible follow-up; it is not part of this NIP.
 - **Purging a project leaves its ops readable** to community members, inherited from Pulse: deleting the `kind:30621` head drops the project's ACL row, after which the coordinate is in nobody's hidden set, and `project_purge` does not touch channel-less `a`-tagged events. Recorded in the ledger; not fixed here.
 - **Authority is project-level on a project list.** Any writer may edit or remove anyone's item. This is the intended shape of a shared list, stated so nobody expects per-author ownership. A personal list is the opposite: its creator's alone, and a stray op from anyone else is ignored by the fold even though the relay would already have withheld the list from them.
+- **The status vocabulary is closed and native.** The six statuses and five priorities are Beekeeper's own. A provider with its own workflow — Linear's per-team states, say — keeps its own state ids in its own records and never writes `item.status` or `item.priority`; mapping one onto the other is the integration's concern, not this NIP's.
 - **A pin is shared.** `list.pinned` is a fact about the project, seen by every member; a private sidebar arrangement needs a personal list.
 
 ## Reference

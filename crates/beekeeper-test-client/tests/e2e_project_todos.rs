@@ -17,6 +17,8 @@
 //!   with **400**;
 //! - two writers' ops read back from the relay fold to one list with the
 //!   state the contract promises — the same fold `bee todos` and Desktop use;
+//! - the planning ops (`item.status`, `item.priority`, `item.description`)
+//!   round-trip and fold, and a numeric priority or unknown status is refused;
 //! - a community cannot retrieve another community's coordinate.
 //!
 //! See `docs/nips/NIP-TD.md` for the normative contract.
@@ -1169,4 +1171,181 @@ async fn test_todo_ops_do_not_cross_communities() {
         "unknown project coordinate",
     )
     .await;
+}
+
+/// The planning ops — `item.status`, `item.priority`, `item.description` —
+/// round-trip through the live relay and fold to the state NIP-TD promises:
+/// status shares one last-writer-wins field with `item.done`, so a later
+/// `item.status(canceled)` over `item.done{true}` leaves the item closed as
+/// canceled, in `completed`, stamped by the status op. Ingest refuses a
+/// numeric priority and a status outside the closed vocabulary.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn test_planning_ops_round_trip_and_fold() {
+    let owner = Keys::generate();
+    let writer = Keys::generate();
+    let d_tag = unique("todo-planning");
+    let coordinate = project_coordinate(&owner, &d_tag);
+
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
+        .await
+        .expect("owner connect");
+    send_ok(
+        &mut owner_client,
+        project_event(
+            &owner,
+            &d_tag,
+            Some("private"),
+            &[(&writer, "collaborator")],
+        ),
+        "private project",
+    )
+    .await;
+    let mut writer_client = BeekeeperTestClient::connect(&relay_url(), &writer)
+        .await
+        .expect("writer connect");
+
+    let list_id = todo_id();
+    let (issue, other) = (todo_id(), todo_id());
+    let base = nostr::Timestamp::now().as_secs();
+    let at = |offset: u64| Some(base + offset);
+    let op = |content: Value, created_at: Option<u64>| {
+        todo_op(&writer, &coordinate, content, &[], created_at)
+    };
+    let description = "Steps:\n\t1. open Planning\n\t2. set a status";
+
+    send_ok(
+        &mut writer_client,
+        op(
+            json!({ "op": "list.create", "listId": list_id, "title": "Planning" }),
+            at(0),
+        ),
+        "list.create",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.add", "listId": list_id, "itemId": issue, "text": "issue", "rank": "a0" }), at(1)),
+        "item.add issue",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.add", "listId": list_id, "itemId": other, "text": "other", "rank": "a1" }), at(1)),
+        "item.add other",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.status", "listId": list_id, "itemId": issue, "status": "in_progress" }), at(2)),
+        "item.status in_progress",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.priority", "listId": list_id, "itemId": issue, "priority": "high" }), at(3)),
+        "item.priority high",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.description", "listId": list_id, "itemId": issue, "description": description }), at(4)),
+        "item.description",
+    )
+    .await;
+    // The second item stops at in_progress, so the fold has an open item
+    // carrying a status, a priority and a description.
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.status", "listId": list_id, "itemId": other, "status": "in_progress" }), at(5)),
+        "other in_progress",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.priority", "listId": list_id, "itemId": other, "priority": "urgent" }), at(5)),
+        "other urgent",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.description", "listId": list_id, "itemId": other, "description": description }), at(5)),
+        "other description",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(
+            json!({ "op": "item.done", "listId": list_id, "itemId": issue, "done": true }),
+            at(6),
+        ),
+        "item.done issue",
+    )
+    .await;
+    send_ok(
+        &mut writer_client,
+        op(json!({ "op": "item.status", "listId": list_id, "itemId": issue, "status": "canceled" }), at(7)),
+        "item.status canceled",
+    )
+    .await;
+
+    // Ingest runs the same validator as the fold: a numeric priority and a
+    // status outside the vocabulary are refused, never stored.
+    send_refused(
+        &mut writer_client,
+        op(
+            json!({ "op": "item.priority", "listId": list_id, "itemId": other, "priority": 1 }),
+            at(8),
+        ),
+        "priority must be a string",
+    )
+    .await;
+    send_refused(
+        &mut writer_client,
+        op(
+            json!({ "op": "item.status", "listId": list_id, "itemId": other, "status": "started" }),
+            at(8),
+        ),
+        "todo status must be one of",
+    )
+    .await;
+
+    let events = query(&mut owner_client, "planning-fold", todo_filter(&coordinate)).await;
+    assert_eq!(events.len(), 11, "the two refused ops were not stored");
+    let inputs: Vec<TodoFoldEvent> = events.iter().map(TodoFoldEvent::from).collect();
+    let digest = fold_project_todos(&coordinate, &inputs);
+    assert_eq!(digest.ignored, 0);
+    assert_eq!(digest.lists.len(), 1);
+    let list = &digest.lists[0];
+    assert_eq!(list.id, list_id);
+
+    assert_eq!(list.open.len(), 1, "only the in-progress item is open");
+    let open = &list.open[0];
+    assert_eq!(open.id, other);
+    assert!(!open.done);
+    assert_eq!(open.status, "in_progress");
+    assert_eq!(open.priority, "urgent");
+    assert_eq!(open.description.as_deref(), Some(description));
+    assert_eq!(open.completed_at, None);
+
+    assert_eq!(list.completed.len(), 1, "the canceled item is closed");
+    let closed = &list.completed[0];
+    assert_eq!(closed.id, issue);
+    assert!(closed.done, "canceled counts as done");
+    assert_eq!(
+        closed.status, "canceled",
+        "the later item.status wins the shared state field over item.done"
+    );
+    assert_eq!(closed.priority, "high");
+    assert_eq!(closed.description.as_deref(), Some(description));
+    assert_eq!(
+        closed.completed_at,
+        Some(base + 7),
+        "the closing op is the status op, not the earlier done"
+    );
+    assert_eq!(
+        closed.completed_by.as_deref(),
+        Some(writer.public_key().to_hex().as_str())
+    );
+    assert_eq!(closed.updated_at, base + 7);
 }

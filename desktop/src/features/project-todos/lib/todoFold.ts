@@ -10,8 +10,11 @@
 import {
   PROJECT_TODO_OP_KIND,
   decodeTodoOp,
+  isClosedTodoStatus,
   isTodoVisibility,
   type TodoOp,
+  type TodoPriority,
+  type TodoStatus,
   type TodoVisibility,
 } from "./todoOp.ts";
 
@@ -35,6 +38,10 @@ export type TodoItem = {
   rank: string;
   assignee: string | null;
   due: string | null;
+  /** `done` is `true` exactly when this is `done` or `canceled`. */
+  status: TodoStatus;
+  priority: TodoPriority;
+  description: string | null;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -94,9 +101,12 @@ type ListState = {
 type ItemState = {
   text: Slot<string>;
   rank: Slot<string>;
-  done: Slot<{ done: boolean; by: string | null }>;
+  /** The one field `item.done` and `item.status` both write, and its writer. */
+  state: Slot<{ status: TodoStatus; by: string }>;
   assignee: Slot<string | null>;
   due: Slot<string | null>;
+  priority: Slot<TodoPriority>;
+  description: Slot<string | null>;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -210,9 +220,11 @@ export function foldProjectTodos(
     items.set(itemKey(d.op.listId, d.op.itemId), {
       text: { key: d.key, value: d.op.text },
       rank: { key: d.key, value: d.op.rank },
-      done: { key: d.key, value: { done: false, by: null } },
+      state: { key: d.key, value: { status: "todo", by: d.pubkey } },
       assignee: { key: d.key, value: null },
       due: { key: d.key, value: null },
+      priority: { key: d.key, value: "none" },
+      description: { key: d.key, value: null },
       createdAt: d.key.createdAt,
       createdBy: d.pubkey,
       updatedAt: d.key.createdAt,
@@ -276,10 +288,19 @@ export function foldProjectTodos(
         setField(item.text, d.key, op.text);
         break;
       case "item.done":
-        setField(item.done, d.key, {
-          done: op.done,
-          by: op.done ? d.pubkey : null,
+        setField(item.state, d.key, {
+          status: op.done ? "done" : "todo",
+          by: d.pubkey,
         });
+        break;
+      case "item.status":
+        setField(item.state, d.key, { status: op.status, by: d.pubkey });
+        break;
+      case "item.priority":
+        setField(item.priority, d.key, op.priority);
+        break;
+      case "item.description":
+        setField(item.description, d.key, op.description);
         break;
       case "item.assignee":
         setField(item.assignee, d.key, op.assignee);
@@ -302,7 +323,7 @@ export function foldProjectTodos(
     for (const [key, item] of items) {
       const [owner, itemId] = key.split("/") as [string, string];
       if (owner !== listId || removed.has(key)) continue;
-      const done = item.done.value.done;
+      const done = isClosedTodoStatus(item.state.value.status);
       const row: TodoItem = {
         id: itemId,
         listId,
@@ -311,13 +332,16 @@ export function foldProjectTodos(
         rank: item.rank.value,
         assignee: item.assignee.value,
         due: item.due.value,
+        status: item.state.value.status,
+        priority: item.priority.value,
+        description: item.description.value,
         createdAt: item.createdAt,
         createdBy: item.createdBy,
         updatedAt: item.updatedAt,
-        completedAt: done ? item.done.key.createdAt : null,
-        completedBy: item.done.value.by,
+        completedAt: done ? item.state.key.createdAt : null,
+        completedBy: done ? item.state.value.by : null,
       };
-      if (done) completed.push({ key: item.done.key, row });
+      if (done) completed.push({ key: item.state.key, row });
       else open.push({ rank: item.rank.value, row });
     }
     open.sort((a, b) =>

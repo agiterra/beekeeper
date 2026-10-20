@@ -5591,6 +5591,43 @@ pub enum TodosCmd {
         /// Due date, or `none`
         due: String,
     },
+    /// Set an item's status. `done` and `canceled` are closed: the item is
+    /// listed among the completed. Crossing that boundary publishes
+    /// `item.done` first, then `item.status`, so clients that predate
+    /// `item.status` agree on whether the item is done
+    Status {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// One of triage, backlog, todo, in_progress, done, canceled
+        status: String,
+    },
+    /// Set an item's priority
+    Priority {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// One of urgent, high, medium, low, none
+        priority: String,
+    },
+    /// Set an item's description (up to 3072 bytes), or clear it with --clear
+    Describe {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Item id or unique id prefix
+        item: String,
+        /// The description; newlines and tabs are kept
+        #[arg(required_unless_present = "clear", conflicts_with = "clear")]
+        description: Option<String>,
+        /// Clear the description instead of setting one
+        #[arg(long)]
+        clear: bool,
+    },
     /// Move an open item to a position (0 = first)
     Move {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
