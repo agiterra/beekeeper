@@ -207,13 +207,28 @@ the whole output (`502 contract-violation`):
 **member who invoked it, with their own key, in their own client** — never
 by the relay, never by the plugin, which holds no key or secret of any kind.
 That is why a member's issue edit stays that member's signed event, and it
-is not changing: Planning does not move to relay signing. A webhook plugin
-(the GitHub plan below) differs in one respect only — there is no member in
-the loop, so its adapter, not a client, is the signing side: it owns the
-tenant, the installation, HMAC verification and the relay's signature, and
-applies this same seal (constructed scope, per-kind allowlist, caps twice,
-stamp window) before the relay signs. The plugin proposes data in
-both worlds; authority is never the plugin's.
+is not changing: Planning does not move to relay signing. The plugin
+proposes data; authority is never the plugin's.
+
+This host loads **operation providers only** (`SUPPORTED_WORLDS`); there is
+no webhook world, and nothing below about one is built. The GitHub plan
+(below) differs from this page in more than who signs, and a webhook host
+must not be read as "the same seal, signed by the relay":
+
+- **Full validation before storage.** A webhook host's events are stored
+  through the plan's B1 storage path, which does not pass through ordinary
+  ingest. Ingest's checks are therefore not behind it: the webhook host
+  itself must perform the full application-event validation
+  (`docs/application-events.md` — envelope, tags, type, content, size,
+  community and channel) before B1 stores anything.
+- **The host stamps the time.** There is no member's clock and no plugin
+  clock to trust: a webhook event's `created_at` is the host's receive
+  time, never a plugin-proposed stamp. The `created_at` window in rule 8 is
+  for operation providers' user-signed drafts and is not a webhook rule.
+- **Its own seal.** The webhook seal — scope-aware `a`/`h` scope, reserved
+  routing and provenance tags, per-installation and global concurrency —
+  is that plan's work, not this branch's. Planning keeps the rules on this
+  page: user-signed drafts and the stamp window.
 
 The member's client is the last check, so it seals again rather than
 trusting the relay — `bee` (`plugins::seal_draft`) and the desktop
@@ -226,14 +241,15 @@ validator (the desktop re-derives the tags from the decoded content and
 requires an exact match). Only the sealed event is signed. Neither client
 repeats a roster check on assignees; there is none to repeat.
 
-Every draft in a reply is sealed — `bee` also signs every one — before the
-first is published, so a draft the client refuses anywhere in the list
-means nothing is published. That rules out a *preventable* partial write;
-it is not atomicity. The publishes that follow are separate network writes,
+Every draft in a reply is sealed and then signed — by `bee` and by the
+desktop alike — before the first is published, so a draft the client
+refuses, or cannot sign, anywhere in the list means nothing is
+published. That rules out a *preventable* partial write; it is not
+atomicity. The publishes that follow are separate network writes,
 and a relay refusal or a lost answer after the first is reported under the
 rules below.
 
-The client then signs and publishes the drafts in order — `bee`
+The client then publishes the signed drafts in order — `bee`
 (`plugins::execute_drafts`) and the desktop implement the same rules:
 
 - `abort` — stop. If nothing landed yet, the relay's refusal is the error. If
@@ -353,14 +369,19 @@ and live UI gates against a scratch database with two tenants.
 no WASI, a sha256-pinned registry under `BEEKEEPER_PLUGINS_FILE`, per-call
 fuel/deadline/memory, a fresh store per call, and the host owning secrets,
 HMAC and signing. This crate is that foundation (Wasmtime 48.0.6, no WASI,
-one host for both worlds); `SUPPORTED_WORLDS` is where a second world plugs
-in, with its own WIT world beside `operation-provider`. Its adapter reuses
-`drafts::seal_tags` and per-kind `DraftKind`s so the seal above is one
-implementation, not two. Agreed with that plan's owner (2026-10-21): one
+one host intended for both worlds); `SUPPORTED_WORLDS` is where a second
+world would plug in, with its own WIT world beside `operation-provider`.
+Nothing here is shared with a webhook world yet: `drafts::seal_tags` and the
+per-kind `DraftKind`s are shaped for operation providers' drafts, and
+whether a webhook adapter can reuse them, or needs the scope-aware seal
+that plan describes, is that plan's to settle — not something this branch
+supports today. Agreed with that plan's owner (2026-10-21): one
 shared host, two separate WIT worlds, and the generic `[[plugin]] world = "..."`
 registry (with its required sha256 pin) rather than a `[[webhook_plugin]]`
 table; this foundation lands first and the webhook adapter follows it. Unlike a
 webhook plugin, an operation provider never causes the relay to sign anything.
+Whether Planning itself runs unchanged under that work (the same component,
+byte for byte) is that work's claim to prove; this branch has not checked it.
 
 Three things an operator or that plan's implementer will meet:
 

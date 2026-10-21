@@ -96,4 +96,16 @@ mod draft_window_tests {
         assert!(check_draft_created_at(NOW + 86_400, NOW).is_err());
         assert!(check_draft_created_at(0, NOW).is_err());
     }
+
+    /// The cross-language contract: the desktop seals against the same
+    /// window, and its test (`desktop/src/shared/plugins/pluginDrafts.test.mjs`)
+    /// reads the same file, so a change on either side fails one of them.
+    #[test]
+    fn the_window_is_the_one_the_desktop_is_pinned_to() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../testdata/plugins/draft-window.json"))
+                .expect("the draft-window fixture is JSON");
+        assert_eq!(fixture["pastSecs"].as_u64(), Some(DRAFT_PAST_SECS));
+        assert_eq!(fixture["futureSecs"].as_u64(), Some(DRAFT_FUTURE_SECS));
+    }
 }

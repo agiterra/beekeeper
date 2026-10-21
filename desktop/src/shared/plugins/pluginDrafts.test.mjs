@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -77,6 +78,7 @@ function relay(refuse = []) {
     seen,
     effects: {
       now,
+      sign: async (d) => d,
       publish: async (d) => {
         seen.push(markerOf(d));
         if (refuse.includes(markerOf(d))) throw new Error("relay said no");
@@ -219,6 +221,7 @@ test("a publish that may still land stops the run and is reported as unconfirmed
   const seen = [];
   const effects = {
     now,
+    sign: async (d) => d,
     publish: async (d) => {
       seen.push(markerOf(d));
       if (markerOf(d) === "add")
@@ -264,6 +267,7 @@ test("a legitimate assignment and an unassignment are both signed", async () => 
     PROJECT,
     {
       now,
+      sign: async (d) => d,
       publish: async (d) => {
         r.seen.push(JSON.parse(d.content).assignee);
         return { id: `id-${r.seen.length}` };
@@ -329,4 +333,55 @@ test("a valid first draft and a stale second publish nothing at all", async () =
     /outside/,
   );
   assert.equal(later.seen.length, 0);
+});
+
+test("a valid first draft and a second this app cannot sign publish nothing at all", async () => {
+  const r = relay();
+  const signed = [];
+  await assert.rejects(
+    executePluginDrafts(
+      [draft("first", "abort"), draft("second", "abort")],
+      PROJECT,
+      {
+        ...r.effects,
+        sign: async (d) => {
+          if (markerOf(d) === "second") throw new Error("keychain locked");
+          signed.push(markerOf(d));
+          return d;
+        },
+      },
+    ),
+    /keychain locked/,
+  );
+  assert.deepEqual(signed, ["first"], "the first was signed");
+  assert.equal(r.seen.length, 0, "zero publish calls, not one");
+});
+
+/**
+ * The cross-language contract. `testdata/plugins/draft-window.json` is the
+ * window; `beekeeper_nip_td`'s test asserts its `DRAFT_PAST_SECS` /
+ * `DRAFT_FUTURE_SECS` against the same file (and the relay's plugin host
+ * and `bee` are tied to those), so neither side can drift alone.
+ */
+test("the window is the one the Rust checkers are pinned to", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../testdata/plugins/draft-window.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(DRAFT_PAST_SECS, fixture.pastSecs);
+  assert.equal(DRAFT_FUTURE_SECS, fixture.futureSecs);
+  const at = (createdAt) =>
+    sealDraft({ ...draft("x", "abort"), createdAt }, PROJECT, NOW);
+  assert.equal(at(NOW - fixture.pastSecs).createdAt, NOW - fixture.pastSecs);
+  assert.equal(
+    at(NOW + fixture.futureSecs).createdAt,
+    NOW + fixture.futureSecs,
+  );
+  assert.throws(() => at(NOW - fixture.pastSecs - 1), /outside/);
+  assert.throws(() => at(NOW + fixture.futureSecs + 1), /outside/);
 });

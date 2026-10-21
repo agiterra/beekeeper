@@ -170,6 +170,27 @@ fn a_digest_mismatch_refuses_the_plugin() {
 }
 
 #[test]
+fn an_entry_without_a_pin_is_refused_never_loaded_unpinned() {
+    // The real boundary: the operator's registry file, read the way the
+    // relay reads `BEEKEEPER_PLUGINS_FILE`. A missing `sha256` has no
+    // default — an unpinned component is never loaded on trust.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("p.wasm"), b"\0asm whatever").expect("write");
+    let file = dir.path().join("plugins.toml");
+    for text in [
+        "[[plugin]]\nname = \"p\"\nworld = \"operation-provider@1\"\npath = \"p.wasm\"\n",
+        "[[plugin]]\nname = \"p\"\nworld = \"operation-provider@1\"\npath = \"p.wasm\"\nsha256 = \"\"\n",
+    ] {
+        std::fs::write(&file, text).expect("write registry");
+        let error = Registry::from_file(&file).expect_err("an unpinned entry is refused");
+        assert!(
+            matches!(error, LoadError::Registry(_)) && error.to_string().contains("sha256"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn a_file_that_is_not_a_component_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = dir.path().join("p.wasm");
@@ -878,4 +899,20 @@ fn a_drafts_stamp_must_sit_in_the_window_ingest_will_still_accept_after_transpor
     // so the relay hands the caller nothing to sign.
     let message = violation(told_at(&host, NOW, &[NOW, NOW - 1_800]));
     assert!(message.starts_with("draft 1:"), "{message}");
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn more_drafts_than_the_limit_is_a_contract_violation_and_nothing_is_returned() {
+    let host = faults("[plugin.limits]\nmax_drafts = 2\n");
+    let now = now();
+    let at_limit = told_at(&host, now, &[now, now]).expect("two drafts fit a limit of two");
+    assert_eq!(at_limit.drafts.len(), 2);
+    let message = violation(told_at(&host, now, &[now, now, now]));
+    assert!(message.contains("3 drafts; the limit is 2"), "{message}");
+    // The default ceiling holds with no limit configured at all.
+    let host = faults("");
+    let stamps = vec![now; beekeeper_plugin_host::Limits::default().max_drafts + 1];
+    let message = violation(told_at(&host, now, &stamps));
+    assert!(message.contains("the limit is 16"), "{message}");
 }

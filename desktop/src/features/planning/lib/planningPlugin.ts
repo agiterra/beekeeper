@@ -265,8 +265,8 @@ export function usePluginPlanning(
       );
       try {
         const run = await executePluginDrafts(reply.drafts, coordinate, {
-          publish: async (draft) => {
-            const event = await signRelayEvent(draft);
+          sign: signRelayEvent,
+          publish: async (event) => {
             try {
               return await relayClient.publishEvent(
                 event,

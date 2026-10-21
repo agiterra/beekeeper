@@ -17,7 +17,8 @@
  * Nobody reviews a draft before it is signed — the user acted, the app
  * signs — so this module is the last check, not a person. Nothing is signed
  * until every draft has been sealed here ({@link sealDraft}), whatever the
- * relay already did: a kind this client signs for plugins, a `createdAt`
+ * relay already did, and nothing is published until every sealed draft
+ * has been signed. Sealing checks a kind this client signs for plugins, a `createdAt`
  * inside the window ingest will still accept, only that kind's data tags, the `a` tag written here from the project the call named (a
  * proposed one may only echo it, once), the tag caps before and after, and
  * the kind's own decoder, whose re-derived tags must be exactly the sealed
@@ -57,9 +58,15 @@ const MAX_DRAFT_TAG_BYTES = 16 * 1024;
 export const DRAFT_PAST_SECS = 600;
 export const DRAFT_FUTURE_SECS = 890;
 
-export type DraftEffects = {
-  /** Sign and publish one event; resolves once the relay accepted it. */
-  publish: (draft: SealedDraft) => Promise<{ id: string }>;
+export type DraftEffects<Signed = SealedDraft> = {
+  /**
+   * Sign one sealed draft as the user. Every draft is signed before the
+   * first is published, so a signer that fails anywhere in the list
+   * publishes nothing.
+   */
+  sign: (draft: SealedDraft) => Promise<Signed>;
+  /** Publish one signed event; resolves once the relay accepted it. */
+  publish: (event: Signed) => Promise<{ id: string }>;
   /** This app's clock in Unix seconds; the system clock unless a test pins it. */
   now?: () => number;
 };
@@ -218,17 +225,19 @@ export function sealDraft(
   };
 }
 
-export async function executePluginDrafts(
+export async function executePluginDrafts<Signed>(
   drafts: readonly PluginDraft[],
   project: string,
-  effects: DraftEffects,
+  effects: DraftEffects<Signed>,
 ): Promise<DraftRun> {
-  // Every draft is sealed before the first is published, so one this app
-  // refuses — anywhere in the list — means nothing is published. That
-  // avoids a preventable partial write; it is not atomicity across the
-  // network writes that follow.
+  // Every draft is sealed, then signed, before the first is published, so
+  // one this app refuses or cannot sign — anywhere in the list — means
+  // nothing is published. That avoids a preventable partial write; it is
+  // not atomicity across the network writes that follow.
   const now = (effects.now ?? systemNow)();
   const sealed = drafts.map((draft) => sealDraft(draft, project, now));
+  const signed: Signed[] = [];
+  for (const draft of sealed) signed.push(await effects.sign(draft));
   const published: DraftRun["published"] = [];
   const failed: DraftRun["failed"] = [];
   const savedGroups = new Set<string>();
@@ -236,7 +245,7 @@ export async function executePluginDrafts(
   for (const [index, draft] of drafts.entries()) {
     if (skipped.has(draft.group)) continue;
     try {
-      const event = await effects.publish(sealed[index] as SealedDraft);
+      const event = await effects.publish(signed[index] as Signed);
       published.push({ eventId: event.id, group: draft.group });
       savedGroups.add(draft.group);
     } catch (error) {

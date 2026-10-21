@@ -1,0 +1,5 @@
+{
+  "_comment": "The window a plugin draft's created_at must sit in around the checker's clock, in seconds. beekeeper-nip-td's DRAFT_PAST_SECS / DRAFT_FUTURE_SECS and desktop/src/shared/plugins/pluginDrafts.ts are each tested against this file, so neither can move without the other.",
+  "pastSecs": 600,
+  "futureSecs": 890
+}
