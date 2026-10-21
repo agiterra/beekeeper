@@ -2,9 +2,12 @@
 //! misbehaves when the delivery asks it to, so the host's webhook-world
 //! checks can be proven against a real component.
 //!
-//! - `authenticate` needs `x-signature` (hex), `x-delivery` and `x-event`; an
-//!   `x-timestamp` header is passed through as the vendor timestamp, and
-//!   `x-fault: spin` loops until the host stops it.
+//! - `authenticate` needs `x-signature` (hex), `x-delivery` and `x-event`.
+//!   With an `x-timestamp` header it signs Slack's way: the signed prefix is
+//!   `v0:<x-timestamp>:` and the timestamp span covers those digits, so the
+//!   signer must have MAC'd that prefix. `x-fault: spin` loops until the host
+//!   stops it; `x-fault: span-past-end` and `x-fault: span-not-digits` point
+//!   the span past the prefix or at `v0`.
 //! - `project` acts on the vendor event: `push` accepts `com.example.push`,
 //!   `ping` ignores, `bad` rejects, and the rest each try one thing the
 //!   contract forbids (`forge-*`, `wrong-prefix`, `not-object`, `spin`).
@@ -92,12 +95,27 @@ impl Guest for Webhook {
             .ok_or_else(|| types::AuthFailure::MissingHeader("x-delivery".to_owned()))?;
         let vendor_event = header(&headers, "x-event")
             .ok_or_else(|| types::AuthFailure::MissingHeader("x-event".to_owned()))?;
-        let timestamp = header(&headers, "x-timestamp").and_then(|t| text(t).parse().ok());
+        let (signed_prefix, timestamp_span) = match header(&headers, "x-timestamp") {
+            None => (Vec::new(), None),
+            Some(timestamp) => {
+                let prefix = [b"v0:", timestamp, b":"].concat();
+                let len = timestamp.len() as u32;
+                let span = match header(&headers, "x-fault") {
+                    Some(b"span-past-end") => types::ByteSpan {
+                        start: 3,
+                        len: len + 2,
+                    },
+                    Some(b"span-not-digits") => types::ByteSpan { start: 0, len: 2 },
+                    _ => types::ByteSpan { start: 3, len },
+                };
+                (prefix, Some(span))
+            }
+        };
         Ok(types::AuthPlan {
             algorithm: types::MacAlgorithm::HmacSha256,
             signature,
-            signed_prefix: Vec::new(),
-            timestamp,
+            signed_prefix,
+            timestamp_span,
             delivery_id: text(delivery_id),
             vendor_event: text(vendor_event),
         })

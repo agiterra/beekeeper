@@ -916,3 +916,141 @@ fn more_drafts_than_the_limit_is_a_contract_violation_and_nothing_is_returned() 
     let message = violation(told_at(&host, now, &stamps));
     assert!(message.contains("the limit is 16"), "{message}");
 }
+
+// ------------------------------------------- Planning against the pre-split host
+
+/// The host clock every fixed-input call runs at. With fixed entropy (from
+/// [`call`]) and fixed records, an operation's output is a function of the
+/// plugin and the host's checks alone.
+const FIXED_NOW: u64 = 1_800_000_000;
+
+fn fixed(operation: &str, input: Value, access: Access) -> Invocation {
+    Invocation {
+        now: FIXED_NOW,
+        ..call(operation, input, access)
+    }
+}
+
+/// Everything an embedder sees of a call except `fuel_used`, which measures
+/// the component build rather than the host's behaviour.
+fn observed(outcome: Result<beekeeper_plugin_host::InvokeOutcome, InvokeError>) -> Value {
+    match outcome {
+        Ok(o) => {
+            json!({ "result": o.result, "drafts": o.drafts, "people": o.people, "logs": o.logs })
+        }
+        Err(error) => json!({ "error": error.to_string() }),
+    }
+}
+
+/// Fixed inputs through Planning (create, edit, assign, read back) and
+/// through the fault plugin's draft path (a sealed echo, then each scope and
+/// allowlist refusal), one call at a time.
+fn planning_fixed_outputs() -> Value {
+    let dir = artifacts();
+    let host = PluginHost::load(
+        &Registry::from_file(&dir.join("registry.test.toml")).expect("test registry"),
+        validators(),
+    )
+    .expect("loads");
+    let none = || Arc::new(Source::default());
+    let mut out = Vec::new();
+
+    let created = host
+        .invoke(
+            "planning",
+            fixed(
+                "create-issue",
+                json!({ "title": "Fixed", "description": "d", "statusId": "todo",
+                        "priorityId": "urgent", "assignee": MEMBER, "containerId": null }),
+                Access::Write,
+            ),
+            none(),
+        )
+        .expect("create");
+    let records: Vec<StoredRecord> = created
+        .drafts
+        .iter()
+        .enumerate()
+        .map(|(i, d)| StoredRecord {
+            id: format!("{i:064x}"),
+            pubkey: CALLER.to_owned(),
+            created_at: d.created_at,
+            kind: d.kind,
+            tags: d.tags.clone(),
+            content: d.content.clone(),
+        })
+        .collect();
+    let key = created.result["key"].as_str().expect("key").to_owned();
+    out.push(observed(Ok(created)));
+    let (container, issue) = key.split_once('/').expect("list/item");
+    let stored = || {
+        Arc::new(Source {
+            records: records.clone(),
+            ..Source::default()
+        })
+    };
+    for (operation, extra) in [
+        ("set-title", json!({ "title": "Retitled" })),
+        ("set-assignee", json!({ "assignee": CALLER })),
+        ("set-assignee", json!({ "assignee": null })),
+    ] {
+        let mut input = json!({ "containerId": container, "issueId": issue });
+        for (k, v) in extra.as_object().expect("object") {
+            input[k] = v.clone();
+        }
+        out.push(observed(host.invoke(
+            "planning",
+            fixed(operation, input, Access::Write),
+            stored(),
+        )));
+    }
+    out.push(observed(host.invoke(
+        "planning",
+        fixed("read", json!({}), Access::Read),
+        stored(),
+    )));
+
+    let (data, content) = list_create_data();
+    let with = |extra: &[&[&str]]| {
+        let mut proposed = data.clone();
+        proposed.extend(tags(extra));
+        json!({ "kind": KIND, "tags": proposed, "content": content })
+    };
+    for drafts in [
+        vec![with(&[])],
+        vec![with(&[&["a", PROJECT]])],
+        vec![with(&[&["a", ELSEWHERE]])],
+        vec![with(&[&["a", PROJECT], &["a", PROJECT]])],
+        vec![with(&[&["p", MEMBER]])],
+        vec![with(&[&["h", "6f1c2b9e-3d4a-4f5b-8c7d-9e0f1a2b3c4d"]])],
+        vec![with(&[&["unknown", "x"]])],
+    ] {
+        out.push(observed(host.invoke(
+            "test-faults",
+            fixed("draft-as-told", json!({ "drafts": drafts }), Access::Write),
+            none(),
+        )));
+    }
+    Value::Array(out)
+}
+
+/// What the world split left identical for Planning: for these fixed inputs,
+/// every result, sealed draft (tags, content, stamp, group, policy), named
+/// person, log line and refusal text equals the pinned output, captured by
+/// running this same function on the host before the split (e8f2231b6,
+/// parent of af3670f51). `fuel_used` is not compared.
+///
+/// Not identical in general: admission. The split added the relay-wide cap
+/// (`host.max_concurrent_calls`, shared with webhook plugins), so a Planning
+/// call the old host would have run can now be refused `Busy` when other
+/// plugins' calls hold every relay-wide slot. These inputs run one call at a
+/// time, below every cap, so they cannot show that difference.
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn planning_output_for_fixed_inputs_matches_the_pre_split_host() {
+    let pinned: Value = serde_json::from_str(include_str!(
+        "../../../testdata/plugins/planning-fixed-outputs.json"
+    ))
+    .expect("pinned json");
+    assert_eq!(planning_fixed_outputs(), pinned);
+}

@@ -113,7 +113,7 @@ blocking thread in a fresh instance.
 | 500 | `plugin-trapped` (with `trap`: `fuel`/`deadline`/`memory`/`trap`), `plugin-internal`, `host-failure` | |
 | 501 | `unsupported` | The plugin does not do that (e.g. a read-only provider asked to write) |
 | 502 | `contract-violation` | The plugin returned something the contract forbids; its output was discarded whole |
-| 503 | `busy` / `host-refused` | At its concurrency limit / a host read failed |
+| 503 | `busy` / `host-refused` | The plugin, or the relay-wide `host.max_concurrent_calls`, is at its concurrency limit / a host read failed |
 
 **Why HTTP and not an event kind**: an invocation is a request with a reply
 and no lasting fact. The facts are the member-signed events the caller
@@ -266,20 +266,34 @@ signs, and is not "the same seal, signed by the relay":
 
 - **Fixed order: `authenticate` → host MAC check → `project`.**
   `WebhookCall::authenticate` hands the plugin the headers only; it returns an
-  auth plan (scheme, signature, signed prefix, optional vendor timestamp,
-  delivery id, vendor event). `WebhookCall::verify` — host code, not plugin
+  auth plan (scheme, signature, signed prefix, an optional span of the
+  signed prefix holding the vendor timestamp, delivery id, vendor event). `WebhookCall::verify` — host code, not plugin
   and not embedder code — takes that plan, the installation's webhook secret
   (passed in by the embedder, never shown to the plugin), the raw body and the
   receive time, and computes HMAC-SHA256 over `signed-prefix || body` with the
   `hmac` crate, comparing with `Mac::verify_slice` (constant time). It also
   re-checks the plan's shape, refuses a receive time of 0 and an empty
-  secret, and holds the vendor timestamp to ±300 s of that same receive
-  time. Only it builds a `VerifiedDelivery` (private fields; not `Default`,
-  `Clone` or `Deserialize`), which owns the body, the plan's vendor event and
-  delivery id, and the receive time, and is bound to its plugin and
-  installation. `WebhookCall::project` takes it by value, so projecting an
-  unverified body does not compile, and the vendor event the plugin sees and
-  the event's `created_at` can only be the verified ones.
+  secret, parses the vendor timestamp itself from the plan's span of the
+  signed prefix (1–20 ASCII digits; a span past the prefix's end or over
+  anything else refuses the plan — there is no plugin-reported timestamp to
+  trust), and holds it to ±300 s of that same receive time. Only it builds a
+  `VerifiedDelivery` (private fields; not `Default`, `Clone` or
+  `Deserialize`), which owns the body, the plan's vendor event and delivery
+  id, the parsed vendor timestamp and the receive time, and is bound to its
+  plugin and installation. `WebhookCall::project` takes it by value, so
+  projecting an unverified body does not compile, and the vendor event the
+  plugin sees and the event's `created_at` can only be the ones that went
+  through verification.
+- **What a `VerifiedDelivery` authenticates: `signed-prefix || body`, nothing
+  else.** The body and the vendor timestamp (read by the host from inside the
+  signed prefix) are covered by the MAC; the receive time is the host's own
+  clock. The delivery id and the vendor event are **not** authenticated: the
+  plugin read them from headers, and they are authentic only when the vendor
+  signs them — when the plugin took them from bytes inside the signed prefix
+  or body, which the host cannot check. GitHub signs the body alone, so
+  `X-GitHub-Event` and `X-GitHub-Delivery` can be rewritten in transit
+  without failing the MAC. Treat both as routing hints, never as an
+  authorization input; a delivery-id dedupe must allow for a forged id.
 - **The host owns the time.** There is no member's clock and no plugin clock
   to trust: the event's `created_at` is the receive time the delivery was
   verified at, never a plugin value. Rule 8's window is for operation
@@ -298,8 +312,9 @@ signs, and is not "the same seal, signed by the relay":
 - **Reserved tags.** `RESERVED_TAG_KEYS` is one set for every world and
   kind: `a`, `h`, `p`, `e`, `q`, `k`, `A`, `E`, `K`, `P`, `L`, `l`, and `-`
   (NIP-70 protected), `expiration` (NIP-40), `delegation` (NIP-26), `proxy`
-  (NIP-48). A host whose allowlist for any kind names one refuses to load;
-  Planning's `td-*` keys name none.
+  (NIP-48). A host whose allowlist for any kind names one refuses to load —
+  `a` included, though `DraftKind` also drops `a` from what the seal lets a
+  plugin propose; Planning's `td-*` keys name none.
 - **Limits.** An auth plan's delivery id is 1–128 printable ASCII bytes, its
   vendor event 1–64 bytes of `[A-Za-z0-9_.:-]`, an HMAC-SHA256 signature
   exactly 32 bytes, a signed prefix ≤ 4 KiB; at most 128 headers and 64 KiB of
@@ -403,7 +418,10 @@ and live UI gates against a scratch database with two tenants.
   how many rows it fetched.
 - **Concurrency is per plugin, not per community.** `max_concurrent` is one
   counter for the whole relay, so one busy community can make others see
-  `busy`.
+  `busy`. Above it sits one relay-wide cap, `[host] max_concurrent_calls`
+  (default 32), shared by every plugin of both worlds: a Planning call can
+  now be `busy` because webhook plugins hold every relay-wide slot, which the
+  host before the webhook world never answered.
 - **The desktop's mock specs grant write** to every call; the gate's
   `scope-forbidden` / `write-not-allowed` paths are proven by `e2e_plugins`
   and the live CLI check, not by the mock.
@@ -430,8 +448,16 @@ shared host, two separate WIT worlds, and the generic `[[plugin]] world = "..."`
 registry (with its required sha256 pin) rather than a `[[webhook_plugin]]`
 table; this foundation lands first and the webhook adapter follows it. Unlike a
 webhook plugin, an operation provider never causes the relay to sign anything.
-Whether Planning itself runs unchanged under that work (the same component,
-byte for byte) is that work's claim to prove; this branch has not checked it.
+What is unchanged for Planning, and what is not: for fixed inputs (create,
+edit, assign, read, and each scope and allowlist refusal), every result,
+sealed draft, named person, log line and refusal text equals the output of
+the host before the split — pinned in `testdata/plugins/planning-fixed-outputs.json`
+from e8f2231b6 and checked by `planning_output_for_fixed_inputs_matches_the_pre_split_host`.
+That is equal output for those inputs, not the same component byte for byte
+(`planning.wasm` rebuilt against the extended WIT package has a different
+sha256), and admission is not unchanged: the relay-wide
+`host.max_concurrent_calls` cap is new, so a Planning call can be refused
+`busy` when other plugins hold every relay-wide slot.
 
 Three things an operator or that plan's implementer will meet:
 

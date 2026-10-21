@@ -140,15 +140,21 @@ pub type DraftValidator =
 /// validator its sealed draft must pass.
 #[derive(Clone)]
 pub struct DraftKind {
+    /// The keys as the embedder declared them, before [`SCOPE_TAG`] is
+    /// dropped: what the load-time reserved-key check reads.
+    declared: Vec<String>,
     data_tags: Vec<String>,
     validate: DraftValidator,
 }
 
 impl DraftKind {
     /// `data_tags` are the keys a plugin may propose. [`SCOPE_TAG`] is never
-    /// one of them: listing it changes nothing, the host still constructs it.
+    /// one of them: the seal never lets a listed `a` through, and a host
+    /// refuses to load with a kind that lists it, like any other reserved key
+    /// ([`DraftKind::reserved_data_tag`]).
     pub fn new(data_tags: &[&str], validate: DraftValidator) -> Self {
         Self {
+            declared: data_tags.iter().map(|key| (*key).to_owned()).collect(),
             data_tags: data_tags
                 .iter()
                 .filter(|key| **key != SCOPE_TAG)
@@ -163,10 +169,11 @@ impl DraftKind {
         &self.data_tags
     }
 
-    /// The first data tag key that is reserved ([`RESERVED_TAG_KEYS`]), if
-    /// any. A host refuses to load with a kind that has one.
+    /// The first declared key that is reserved ([`RESERVED_TAG_KEYS`]), if
+    /// any — `a` included, though [`DraftKind::data_tags`] drops it. A host
+    /// refuses to load with a kind that has one.
     pub fn reserved_data_tag(&self) -> Option<&str> {
-        self.data_tags
+        self.declared
             .iter()
             .map(String::as_str)
             .find(|key| is_reserved_tag(key))
@@ -457,6 +464,17 @@ mod tests {
     }
 
     #[test]
+    fn every_reserved_key_a_kind_declares_is_reported_the_scope_key_included() {
+        for key in RESERVED_TAG_KEYS {
+            let kind = DraftKind::new(
+                &["td-op", key],
+                Arc::new(|_, _| Ok(DraftReferences::default())),
+            );
+            assert_eq!(kind.reserved_data_tag(), Some(*key), "{key}");
+        }
+    }
+
+    #[test]
     fn protection_expiry_delegation_and_proxy_are_reserved() {
         for key in ["-", "expiration", "delegation", "proxy"] {
             assert!(is_reserved_tag(key), "{key}");
@@ -488,6 +506,8 @@ mod tests {
             &["a", "td-op"],
             Arc::new(|_, _| Ok(DraftReferences::default())),
         );
+        // Reported for the load-time refusal, though the seal drops it too.
+        assert_eq!(kind.reserved_data_tag(), Some("a"));
         assert_eq!(kind.data_tags(), &["td-op".to_owned()]);
         assert!(seal_tags(kind.data_tags(), HERE, &[tag(&["a", ELSEWHERE])]).is_err());
     }

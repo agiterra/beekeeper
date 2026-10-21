@@ -1,0 +1,429 @@
+[
+  {
+    "drafts": [
+      {
+        "content": "{\"listId\":\"07070707070707070707070707070707\",\"op\":\"list.create\",\"schema\":\"buzz-project-todo/v1\",\"title\":\"Issues\",\"visibility\":\"project\"}",
+        "createdAt": 1800000000,
+        "group": "issue",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "list.create"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ]
+        ]
+      },
+      {
+        "content": "{\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.add\",\"rank\":\"a0\",\"schema\":\"buzz-project-todo/v1\",\"text\":\"Fixed\"}",
+        "createdAt": 1800000001,
+        "group": "issue",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "partialSummary": "Only part of the change was confirmed: the list “Issues” was created, but the relay did not confirm the issue itself",
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.add"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      },
+      {
+        "content": "{\"assignee\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.assignee\",\"schema\":\"buzz-project-todo/v1\"}",
+        "createdAt": 1800000002,
+        "group": "assignee",
+        "ifRefused": "skip-group",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.assignee"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      },
+      {
+        "content": "{\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.priority\",\"priority\":\"urgent\",\"schema\":\"buzz-project-todo/v1\"}",
+        "createdAt": 1800000003,
+        "group": "priority",
+        "ifRefused": "skip-group",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.priority"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      },
+      {
+        "content": "{\"description\":\"d\",\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.description\",\"schema\":\"buzz-project-todo/v1\"}",
+        "createdAt": 1800000004,
+        "group": "description",
+        "ifRefused": "skip-group",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.description"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      }
+    ],
+    "logs": [],
+    "people": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "result": {
+      "containerId": "07070707070707070707070707070707",
+      "issueId": "07070707070707070707070707070707",
+      "key": "07070707070707070707070707070707/07070707070707070707070707070707"
+    }
+  },
+  {
+    "drafts": [
+      {
+        "content": "{\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.text\",\"schema\":\"buzz-project-todo/v1\",\"text\":\"Retitled\"}",
+        "createdAt": 1800000005,
+        "group": "title",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.text"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      }
+    ],
+    "logs": [],
+    "people": [],
+    "result": {}
+  },
+  {
+    "drafts": [
+      {
+        "content": "{\"assignee\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.assignee\",\"schema\":\"buzz-project-todo/v1\"}",
+        "createdAt": 1800000005,
+        "group": "assignee",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.assignee"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      }
+    ],
+    "logs": [],
+    "people": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "result": {}
+  },
+  {
+    "drafts": [
+      {
+        "content": "{\"assignee\":null,\"itemId\":\"07070707070707070707070707070707\",\"listId\":\"07070707070707070707070707070707\",\"op\":\"item.assignee\",\"schema\":\"buzz-project-todo/v1\"}",
+        "createdAt": 1800000005,
+        "group": "assignee",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "item.assignee"
+          ],
+          [
+            "td-list",
+            "07070707070707070707070707070707"
+          ],
+          [
+            "td-vis",
+            "project"
+          ],
+          [
+            "td-item",
+            "07070707070707070707070707070707"
+          ]
+        ]
+      }
+    ],
+    "logs": [],
+    "people": [],
+    "result": {}
+  },
+  {
+    "drafts": [],
+    "logs": [],
+    "people": [],
+    "result": {
+      "containers": [
+        {
+          "id": "07070707070707070707070707070707",
+          "title": "Issues"
+        }
+      ],
+      "issues": [
+        {
+          "assignee": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "completedAt": null,
+          "containerId": "07070707070707070707070707070707",
+          "createdAt": 1800000001,
+          "createdBy": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "description": "d",
+          "due": null,
+          "issueId": "07070707070707070707070707070707",
+          "key": "07070707070707070707070707070707/07070707070707070707070707070707",
+          "priority": {
+            "id": "urgent",
+            "label": "Urgent",
+            "level": "urgent",
+            "order": 0
+          },
+          "rank": "a0",
+          "status": {
+            "category": "unstarted",
+            "id": "todo",
+            "label": "Todo"
+          },
+          "title": "Fixed",
+          "updatedAt": 1800000004
+        }
+      ],
+      "people": [],
+      "truncated": false,
+      "unreadable": 0
+    }
+  },
+  {
+    "drafts": [
+      {
+        "content": "{\"listId\":\"abcdefabcdefabcdefabcdefabcdefab\",\"op\":\"list.create\",\"schema\":\"buzz-project-todo/v1\",\"title\":\"Told\",\"visibility\":\"project\"}",
+        "createdAt": 1800000000,
+        "group": "fault",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "list.create"
+          ],
+          [
+            "td-list",
+            "abcdefabcdefabcdefabcdefabcdefab"
+          ],
+          [
+            "td-vis",
+            "project"
+          ]
+        ]
+      }
+    ],
+    "logs": [],
+    "people": [],
+    "result": {}
+  },
+  {
+    "drafts": [
+      {
+        "content": "{\"listId\":\"abcdefabcdefabcdefabcdefabcdefab\",\"op\":\"list.create\",\"schema\":\"buzz-project-todo/v1\",\"title\":\"Told\",\"visibility\":\"project\"}",
+        "createdAt": 1800000000,
+        "group": "fault",
+        "ifRefused": "abort",
+        "kind": 44248,
+        "tags": [
+          [
+            "a",
+            "30621:1111111111111111111111111111111111111111111111111111111111111111:demo"
+          ],
+          [
+            "td-v",
+            "td1-1"
+          ],
+          [
+            "td-op",
+            "list.create"
+          ],
+          [
+            "td-list",
+            "abcdefabcdefabcdefabcdefabcdefab"
+          ],
+          [
+            "td-vis",
+            "project"
+          ]
+        ]
+      }
+    ],
+    "logs": [],
+    "people": [],
+    "result": {}
+  },
+  {
+    "error": "plugin broke its contract: draft 0: proposes scope \"30621:2222222222222222222222222222222222222222222222222222222222222222:elsewhere\"; the host sets a draft's scope to the invocation's \"30621:1111111111111111111111111111111111111111111111111111111111111111:demo\""
+  },
+  {
+    "error": "plugin broke its contract: draft 0: proposes the scope tag more than once"
+  },
+  {
+    "error": "plugin broke its contract: draft 0: proposes a \"p\" tag; this kind's drafts may carry only [\"td-v\", \"td-op\", \"td-list\", \"td-vis\", \"td-item\"] (the host adds the scope)"
+  },
+  {
+    "error": "plugin broke its contract: draft 0: proposes a \"h\" tag; this kind's drafts may carry only [\"td-v\", \"td-op\", \"td-list\", \"td-vis\", \"td-item\"] (the host adds the scope)"
+  },
+  {
+    "error": "plugin broke its contract: draft 0: proposes a \"unknown\" tag; this kind's drafts may carry only [\"td-v\", \"td-op\", \"td-list\", \"td-vis\", \"td-item\"] (the host adds the scope)"
+  }
+]

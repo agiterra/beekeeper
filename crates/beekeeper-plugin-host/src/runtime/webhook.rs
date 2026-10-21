@@ -29,8 +29,8 @@ use super::{
 use crate::registry::{WebhookEntry, WEBHOOK_WORLD};
 use crate::webhook::{
     check_auth_plan, check_headers, check_settings, seal_application_event, verify_delivery,
-    AuthFailure, AuthPlan, Header, MacAlgorithm, ProposedEvent, VerifiedDelivery, VerifyError,
-    WebhookManifest, WebhookOutcome, MAX_REASON_BYTES,
+    AuthFailure, AuthPlan, ByteSpan, Header, MacAlgorithm, ProposedEvent, VerifiedDelivery,
+    VerifyError, WebhookManifest, WebhookOutcome, MAX_REASON_BYTES,
 };
 use crate::{sha256_hex, InvokeError, LogLevel};
 
@@ -397,7 +397,10 @@ impl WebhookCall<'_> {
                 },
                 signature: plan.signature,
                 signed_prefix: plan.signed_prefix,
-                timestamp: plan.timestamp,
+                timestamp_span: plan.timestamp_span.map(|span| ByteSpan {
+                    start: span.start,
+                    len: span.len,
+                }),
                 delivery_id: plan.delivery_id,
                 vendor_event: plan.vendor_event,
             },
@@ -410,11 +413,13 @@ impl WebhookCall<'_> {
     /// The host's MAC check: `plan` (from [`WebhookCall::authenticate`]),
     /// the installation's webhook `secret` — the embedder's, never shown to
     /// the plugin — the raw `body` and the host's `received_at` (unix
-    /// seconds, never 0). Checks the body cap, the plan's shape, the vendor
-    /// timestamp's skew against `received_at`, and the MAC over
+    /// seconds, never 0). Checks the body cap, the plan's shape, the skew
+    /// against `received_at` of the vendor timestamp it parses from the
+    /// plan's span of the signed prefix, and the MAC over
     /// `signed-prefix || body` in constant time. Runs no plugin code and
     /// takes no slot. The [`VerifiedDelivery`] it returns is the only way
-    /// into [`WebhookCall::project`].
+    /// into [`WebhookCall::project`]; it authenticates the signed prefix and
+    /// the body, not the plan's delivery id or vendor event (see its doc).
     pub fn verify(
         &self,
         plan: AuthPlan,

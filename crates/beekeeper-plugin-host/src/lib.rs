@@ -251,6 +251,10 @@ pub enum InvokeError {
     WriteNotAllowed(String),
     #[error("operation input is {size} bytes; this plugin accepts at most {limit}")]
     InputTooLarge { size: usize, limit: usize },
+    /// The plugin's own limit, an installation's, or the relay-wide
+    /// `host.max_concurrent_calls` is full. The relay-wide cap came with the
+    /// webhook world, so an operation-provider call can be `Busy` where the
+    /// host before it would have run the call.
     #[error("plugin {0:?} is at its concurrency limit; try again")]
     Busy(String),
     #[error("plugin stopped: {kind:?}: {detail}")]

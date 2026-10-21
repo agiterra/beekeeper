@@ -870,6 +870,11 @@ impl PluginHost {
 impl PluginHost {
     /// One slot of the relay-wide cap, or busy. Taken after the plugin's own
     /// slot, so a plugin at its limit never holds a relay slot it cannot use.
+    /// This is the one admission outcome an operation provider did not have
+    /// before the webhook world: with every relay-wide slot held (by any
+    /// plugin of either world), a Planning call is refused `Busy`. Its output
+    /// once admitted is unchanged (`tests/runtime.rs`,
+    /// `planning_output_for_fixed_inputs_matches_the_pre_split_host`).
     fn relay_permit(&self, plugin: &str) -> Result<Permit<'_>, InvokeError> {
         Permit::acquire(&self.running, self.max_concurrent_calls)
             .ok_or_else(|| InvokeError::Busy(plugin.to_owned()))

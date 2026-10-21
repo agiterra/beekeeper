@@ -15,8 +15,9 @@ use beekeeper_plugin_host::webhook::{
     APPLICATION_EVENT_NAMESPACE, KIND_APPLICATION_EVENT,
 };
 use beekeeper_plugin_host::{
-    sha256_hex, Delivery, DraftKind, DraftReferences, DraftValidators, HostConfig, InvokeError,
-    LoadError, PluginHost, Registry, TrapKind, WebhookCall,
+    sha256_hex, Access, Delivery, DraftKind, DraftReferences, DraftValidators, HostConfig,
+    Invocation, InvokeError, LoadError, PluginHost, RecordSource, Registry, Scope, SourceError,
+    StoredRecord, TrapKind, WebhookCall, RESERVED_TAG_KEYS,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -175,17 +176,10 @@ fn an_allowlist_naming_a_reserved_tag_refuses_the_host() {
     .expect("planning's allowlist is clean");
     PluginHost::load_with(&Registry::default(), config()).expect("an empty event allowlist");
 
-    for key in [
-        "p",
-        "e",
-        "h",
-        "l",
-        "L",
-        "-",
-        "expiration",
-        "delegation",
-        "proxy",
-    ] {
+    // Every reserved key, `a` (the project scope key, which `DraftKind`
+    // drops from the seal's allowlist) included.
+    assert!(RESERVED_TAG_KEYS.contains(&"a"));
+    for key in RESERVED_TAG_KEYS.iter().copied() {
         let error = PluginHost::load(
             &Registry::default(),
             DraftValidators::new().with(44248, DraftKind::new(&["td-op", key], Arc::new(ok))),
@@ -243,6 +237,17 @@ fn signed(event: &str, body: &[u8]) -> Vec<Header> {
         ("x-delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958"),
         ("x-event", event),
     ])
+}
+
+/// The fixture's headers for `push` with `x-timestamp: claimed`, MAC'd over
+/// `v0:<signed>:` and `body` — the vendor's real signature when `claimed` is
+/// `signed`, a header rewritten in transit when it is not.
+fn stamped(claimed: u64, signed: u64, body: &[u8]) -> Vec<Header> {
+    let message = [format!("v0:{signed}:").as_bytes(), body].concat();
+    let mut h = self::signed("push", b"");
+    h[0].value = hex::encode(mac(SECRET, &message)).into_bytes();
+    h.extend(headers(&[("x-timestamp", &claimed.to_string())]));
+    h
 }
 
 fn spinning() -> Vec<Header> {
@@ -453,6 +458,85 @@ fn the_relay_wide_cap_holds_across_installations_and_plugins() {
     );
 }
 
+/// A source with nothing in it.
+struct Empty;
+
+impl RecordSource for Empty {
+    fn query(
+        &self,
+        _: &[u32],
+        _: Option<u64>,
+        _: Option<&str>,
+        _: u32,
+    ) -> Result<(Vec<StoredRecord>, Option<String>), SourceError> {
+        Ok((Vec::new(), None))
+    }
+}
+
+/// The one admission outcome Planning did not have before the webhook world:
+/// with every relay-wide slot held by a webhook call, a Planning call is
+/// `Busy`, though Planning's own `max_concurrent` has room.
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn webhook_calls_holding_the_relay_wide_cap_make_planning_busy() {
+    let dir = artifacts();
+    let pinned = |name: &str, world: &str| {
+        let file = dir.join(format!("{name}.wasm"));
+        format!(
+            "[[plugin]]\nname = \"{name}\"\nworld = \"{world}\"\npath = \"{}\"\nsha256 = \"{}\"\n",
+            file.display(),
+            sha256_hex(&std::fs::read(&file).expect("read plugin"))
+        )
+    };
+    let text = format!(
+        "{}[plugin.grants]\nread_kinds = [44248]\ndraft_kinds = [44248]\n{}{GRANT}[plugin.limits]\n{SLOW}max_concurrent_per_installation = 1\n[host]\nmax_concurrent_calls = 1\n",
+        pinned("planning", "operation-provider@1"),
+        pinned("test-webhook", "webhook-plugin@1"),
+    );
+    let ok = |_: &[Vec<String>], _: &str| Ok(DraftReferences::default());
+    let host = PluginHost::load_with(
+        &Registry::from_toml(&text, Path::new("/")).expect("registry"),
+        HostConfig {
+            validators: DraftValidators::new().with(
+                44248,
+                DraftKind::new(
+                    &beekeeper_nip_td::project_todo::PROJECT_TODO_DATA_TAG_KEYS,
+                    Arc::new(ok),
+                ),
+            ),
+            ..config()
+        },
+    )
+    .expect("loads");
+    let read = || {
+        host.invoke(
+            "planning",
+            Invocation {
+                operation: "read".to_owned(),
+                input: serde_json::json!({}),
+                caller: "a".repeat(64),
+                scope: Scope::Project(format!("30621:{}:demo", "1".repeat(64))),
+                access: Access::Read,
+                now: NOW,
+                entropy: [7; 32],
+            },
+            Arc::new(Empty),
+        )
+    };
+    read().expect("planning runs while the relay-wide slot is free");
+    std::thread::scope(|scope| {
+        let spinner = scope.spawn(|| {
+            host.webhook_call("test-webhook", "i")
+                .expect("call")
+                .authenticate(&spinning())
+        });
+        wait_for_running(&host, 1);
+        assert!(matches!(read(), Err(InvokeError::Busy(ref p)) if p == "planning"));
+        assert!(spinner.join().expect("thread").is_err());
+    });
+    read().expect("the slot is freed");
+}
+
 #[test]
 #[ignore = "requires built plugins: just test-plugins"]
 fn no_slot_is_held_between_authenticate_and_project() {
@@ -498,7 +582,8 @@ fn authenticate_reads_headers_and_the_host_checks_the_plan() {
         .expect("plan");
     assert_eq!(plan.signature, mac(SECRET, b"hi"));
     assert_eq!(plan.vendor_event, "push");
-    assert_eq!(plan.timestamp, None);
+    assert_eq!(plan.timestamp_span, None);
+    assert!(plan.signed_prefix.is_empty());
 
     let missing = call
         .authenticate(&headers(&[("x-delivery", "d"), ("x-event", "push")]))
@@ -521,18 +606,18 @@ fn authenticate_reads_headers_and_the_host_checks_the_plan() {
 
     // The vendor timestamp's skew is checked by verify, against the receive
     // time the verified delivery carries.
-    let stamped = |at: u64| {
-        let mut h = signed("push", b"hi");
-        h.extend(headers(&[("x-timestamp", &at.to_string())]));
-        call.authenticate(&h).expect("ran").expect("plan")
+    let plan_at = |at: u64| {
+        call.authenticate(&stamped(at, at, b"hi"))
+            .expect("ran")
+            .expect("plan")
     };
-    let result = call.verify(stamped(NOW - 301), SECRET, b"hi".to_vec(), NOW);
+    let result = call.verify(plan_at(NOW - 301), SECRET, b"hi".to_vec(), NOW);
     assert!(
         matches!(result, Err(VerifyError::Malformed(ref m)) if m.contains("timestamp")),
         "{result:?}"
     );
     assert!(call
-        .verify(stamped(NOW - 300), SECRET, b"hi".to_vec(), NOW)
+        .verify(plan_at(NOW - 300), SECRET, b"hi".to_vec(), NOW)
         .is_ok());
 
     let error = call.authenticate(&spinning()).unwrap_err();
@@ -551,6 +636,42 @@ fn authenticate_reads_headers_and_the_host_checks_the_plan() {
         .authenticate(&signed("push", b""))
         .expect("ran")
         .is_ok());
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn the_vendor_timestamp_is_read_from_the_signed_prefix() {
+    let host = fixture("");
+    let call = host.webhook_call("test-webhook", "i").expect("call");
+    let verify = |h: Vec<Header>| {
+        let plan = call.authenticate(&h).expect("ran").expect("plan");
+        call.verify(plan, SECRET, b"hi".to_vec(), NOW)
+    };
+
+    let honest = verify(stamped(NOW - 10, NOW - 10, b"hi")).expect("fresh and signed");
+    assert_eq!(honest.vendor_timestamp(), Some(NOW - 10));
+    // A fresh time in the header over a stale signed one: the prefix the
+    // host MACs is built from the claim, so the vendor's MAC does not match.
+    assert_eq!(
+        verify(stamped(NOW, NOW - 1_000, b"hi")).unwrap_err(),
+        VerifyError::BadSignature
+    );
+    // The stale signed time, honestly reported, is past the skew.
+    let stale = verify(stamped(NOW - 1_000, NOW - 1_000, b"hi")).unwrap_err();
+    assert!(
+        matches!(stale, VerifyError::Malformed(ref m) if m.contains(&(NOW - 1_000).to_string())),
+        "{stale:?}"
+    );
+
+    for (fault, needle) in [("span-past-end", "outside"), ("span-not-digits", "digits")] {
+        let mut h = stamped(NOW, NOW, b"hi");
+        h.extend(headers(&[("x-fault", fault)]));
+        let result = call.authenticate(&h).expect("ran");
+        assert!(
+            matches!(result, Err(AuthFailure::Malformed(ref m)) if m.contains(needle)),
+            "{fault}: {result:?}"
+        );
+    }
 }
 
 #[test]

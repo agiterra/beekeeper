@@ -7,10 +7,18 @@
 //! and the receive time, computes the MAC over `signed-prefix || body` with
 //! the `hmac` crate and compares it with `Mac::verify_slice` (constant time).
 //! Only it builds a [`VerifiedDelivery`], which owns the body, the plan's
-//! vendor event and delivery id, and the receive time; `project` takes one by
-//! value, so an unverified body cannot reach a plugin's `project` at all —
-//! that is a compile error, not a rule — and the event's vendor name and
-//! `created_at` can only be the verified ones.
+//! vendor event and delivery id, the vendor timestamp parsed from the signed
+//! prefix, and the receive time; `project` takes one by value, so an
+//! unverified body cannot reach a plugin's `project` at all — that is a
+//! compile error, not a rule — and the event's vendor name and `created_at`
+//! can only be the ones that went through verification.
+//!
+//! **The MAC covers `signed-prefix || body` and nothing else.** The plan's
+//! delivery id and vendor event are the plugin's reading of the headers; the
+//! host carries them but cannot authenticate them, and does not. The vendor
+//! timestamp is the one plan field the host binds: the plan names where it
+//! sits inside the signed prefix ([`ByteSpan`]) and the host parses it from
+//! those bytes, so it is exactly as authentic as the MAC.
 //!
 //! The plugin proposes an event type, a schema number, a data object and
 //! (allowlisted) data tags. Everything else is the host's: the channel scope
@@ -81,18 +89,72 @@ pub enum MacAlgorithm {
     HmacSha256,
 }
 
+/// Where, inside an [`AuthPlan`]'s signed prefix, the vendor's unix
+/// timestamp sits: `len` ASCII decimal digits starting at byte `start`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteSpan {
+    pub start: u32,
+    pub len: u32,
+}
+
+/// Digits of a span-held timestamp: enough for any `u64`.
+pub const MAX_TIMESTAMP_DIGITS: u32 = 20;
+
 /// What the plugin says the host must verify, read from the headers. Checked
 /// for shape by `authenticate`; [`crate::WebhookCall::verify`] checks it again,
 /// with the timestamp skew, and computes the MAC. A plan is a claim, not a
 /// verification: nothing here lets a body reach `project`.
+///
+/// Only `signed_prefix` is covered by the MAC (with the body). There is no
+/// timestamp field: `timestamp_span` points into `signed_prefix`, and the
+/// host reads the value from there. `delivery_id` and `vendor_event` are
+/// unauthenticated unless the vendor signs them — see [`VerifiedDelivery`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthPlan {
     pub algorithm: MacAlgorithm,
     pub signature: Vec<u8>,
     pub signed_prefix: Vec<u8>,
-    pub timestamp: Option<u64>,
+    pub timestamp_span: Option<ByteSpan>,
     pub delivery_id: String,
     pub vendor_event: String,
+}
+
+impl AuthPlan {
+    /// The vendor timestamp the signed prefix holds at `timestamp_span`, or
+    /// why it cannot be read: a span that is empty, longer than
+    /// [`MAX_TIMESTAMP_DIGITS`] or past the prefix's end, or bytes that are
+    /// not a decimal `u64`. `None` when the plan names no span.
+    pub fn signed_timestamp(&self) -> Result<Option<u64>, String> {
+        let Some(span) = self.timestamp_span else {
+            return Ok(None);
+        };
+        if span.len == 0 || span.len > MAX_TIMESTAMP_DIGITS {
+            return Err(format!(
+                "timestamp span is {} bytes; it must be 1-{MAX_TIMESTAMP_DIGITS}",
+                span.len
+            ));
+        }
+        let start = span.start as usize;
+        let bytes = start
+            .checked_add(span.len as usize)
+            .and_then(|end| self.signed_prefix.get(start..end))
+            .ok_or_else(|| {
+                format!(
+                    "timestamp span {}..+{} is outside the {}-byte signed prefix",
+                    span.start,
+                    span.len,
+                    self.signed_prefix.len()
+                )
+            })?;
+        if !bytes.iter().all(u8::is_ascii_digit) {
+            return Err("timestamp span does not hold ASCII decimal digits".to_owned());
+        }
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|digits| digits.parse::<u64>().ok())
+            .map(Some)
+            .ok_or_else(|| "timestamp span does not hold a u64".to_owned())
+    }
 }
 
 /// Why a delivery could not be authenticated, as the plugin or the host's
@@ -124,25 +186,50 @@ pub enum VerifyError {
 /// `Deserialize` — and `project` consumes it, so a body reaches a plugin's
 /// `project` only after its MAC matched, and at most once. It is bound to the
 /// plugin and installation it was verified for.
+///
+/// **What it authenticates:** that the holder of the installation's secret
+/// produced the MAC over `signed_prefix || body` — those bytes and nothing
+/// else. So [`VerifiedDelivery::body`] and [`VerifiedDelivery::vendor_timestamp`]
+/// (parsed by the host from inside the signed prefix) are authenticated;
+/// [`VerifiedDelivery::received_at`] is the host's own clock.
+/// [`VerifiedDelivery::delivery_id`] and [`VerifiedDelivery::vendor_event`]
+/// are NOT: the plugin read them from headers, and they are authentic only
+/// when the vendor signs them, i.e. when the plugin took them from bytes in
+/// the signed prefix or body — which the host does not check. GitHub signs
+/// the body alone, so its `X-GitHub-Event` and `X-GitHub-Delivery` can be
+/// changed in transit without failing the MAC. Treat both as routing hints:
+/// never as an authorization input, and dedupe on a delivery id only with
+/// that in mind.
 pub struct VerifiedDelivery {
     plugin: String,
     installation: String,
     body: Vec<u8>,
     vendor_event: String,
     delivery_id: String,
+    vendor_timestamp: Option<u64>,
     received_at: u64,
 }
 
 impl VerifiedDelivery {
-    /// The vendor's delivery id, from the verified plan.
+    /// The vendor's delivery id, as the plugin read it. Not authenticated by
+    /// the MAC unless the vendor signs it (see the type's doc).
     pub fn delivery_id(&self) -> &str {
         &self.delivery_id
     }
 
-    /// The vendor's event name, from the verified plan. `project` hands the
-    /// plugin this, never a value the embedder passes.
+    /// The vendor's event name, as the plugin read it. Not authenticated by
+    /// the MAC unless the vendor signs it (see the type's doc). `project`
+    /// hands the plugin this, never a value the embedder passes.
     pub fn vendor_event(&self) -> &str {
         &self.vendor_event
+    }
+
+    /// The vendor's timestamp, parsed by the host from the plan's span of the
+    /// signed prefix — so covered by the MAC — and within
+    /// [`MAX_TIMESTAMP_SKEW_SECS`] of [`VerifiedDelivery::received_at`].
+    /// `None` when the scheme signs none (GitHub).
+    pub fn vendor_timestamp(&self) -> Option<u64> {
+        self.vendor_timestamp
     }
 
     /// The host's receive time the MAC and skew were checked at; it becomes
@@ -168,6 +255,7 @@ impl std::fmt::Debug for VerifiedDelivery {
             .field("body_bytes", &self.body.len())
             .field("vendor_event", &self.vendor_event)
             .field("delivery_id", &self.delivery_id)
+            .field("vendor_timestamp", &self.vendor_timestamp)
             .field("received_at", &self.received_at)
             .finish()
     }
@@ -266,13 +354,15 @@ pub(crate) fn check_auth_plan(plan: &AuthPlan) -> Result<(), String> {
             "signed prefix is over {MAX_SIGNED_PREFIX_BYTES} bytes"
         ));
     }
+    plan.signed_timestamp()?;
     Ok(())
 }
 
 /// Verify one delivery to `installation` of `plugin`: the plan's shape again,
-/// a real receive time, the vendor timestamp's skew against that same time,
-/// and the MAC of `signed-prefix || body` under `secret`. The secret is the
-/// embedder's to pass and is never shown to a plugin or put in an error.
+/// a real receive time, the skew of the vendor timestamp the host parses from
+/// the signed prefix against that same time, and the MAC of
+/// `signed-prefix || body` under `secret`. The secret is the embedder's to
+/// pass and is never shown to a plugin or put in an error.
 pub(crate) fn verify_delivery(
     plugin: &str,
     installation: &str,
@@ -292,7 +382,8 @@ pub(crate) fn verify_delivery(
         ));
     }
     check_auth_plan(&plan).map_err(VerifyError::Malformed)?;
-    if let Some(at) = plan.timestamp {
+    let vendor_timestamp = plan.signed_timestamp().map_err(VerifyError::Malformed)?;
+    if let Some(at) = vendor_timestamp {
         if at.abs_diff(received_at) > MAX_TIMESTAMP_SKEW_SECS {
             return Err(VerifyError::Malformed(format!(
                 "vendor timestamp {at} is more than {MAX_TIMESTAMP_SKEW_SECS} s from the receive time {received_at}"
@@ -315,6 +406,7 @@ pub(crate) fn verify_delivery(
         body,
         vendor_event: plan.vendor_event,
         delivery_id: plan.delivery_id,
+        vendor_timestamp,
         received_at,
     })
 }
@@ -517,7 +609,7 @@ mod tests {
             algorithm: MacAlgorithm::HmacSha256,
             signature: vec![1; HMAC_SHA256_BYTES],
             signed_prefix: vec![],
-            timestamp: None,
+            timestamp_span: None,
             delivery_id: "72d3162e-cc78-11e3-81ab-4c9367dc0958".to_owned(),
             vendor_event: "pull_request".to_owned(),
         }
@@ -659,16 +751,28 @@ mod tests {
         ));
     }
 
+    /// A plan whose signed prefix is `v0:<timestamp>:` (Slack's shape), signed
+    /// with the body, its span on the digits.
+    fn stamped_plan(timestamp: &str) -> AuthPlan {
+        let prefix = format!("v0:{timestamp}:").into_bytes();
+        AuthPlan {
+            signature: mac(SECRET, &[&prefix, BODY]),
+            signed_prefix: prefix,
+            timestamp_span: Some(ByteSpan {
+                start: 3,
+                len: timestamp.len() as u32,
+            }),
+            ..plan()
+        }
+    }
+
     #[test]
     fn the_vendor_timestamp_skew_is_checked_against_the_verified_receive_time() {
         let at = |timestamp: u64, received_at: u64| {
             verify_delivery(
                 "p",
                 "inst",
-                AuthPlan {
-                    timestamp: Some(timestamp),
-                    ..signed_plan()
-                },
+                stamped_plan(&timestamp.to_string()),
                 SECRET,
                 BODY.to_vec(),
                 received_at,
@@ -681,6 +785,98 @@ mod tests {
             VerifyError::Malformed(m) if m.contains("timestamp")
         ));
         assert!(at(1_000 - MAX_TIMESTAMP_SKEW_SECS - 1, 1_000).is_err());
+    }
+
+    #[test]
+    fn the_timestamp_is_the_signed_one_never_a_plugin_claim() {
+        const RECEIVED: u64 = 1_800_000_000;
+        // The vendor signed a stale time. A plugin has no field to claim a
+        // fresh one in; the host reads the signed digits and refuses.
+        let error = verify_delivery(
+            "p",
+            "inst",
+            stamped_plan("1799990000"),
+            SECRET,
+            BODY.to_vec(),
+            RECEIVED,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, VerifyError::Malformed(ref m) if m.contains("1799990000")),
+            "{error:?}"
+        );
+        // Rewriting the signed digits to a fresh time breaks the MAC.
+        let mut forged = stamped_plan("1799990000");
+        forged.signed_prefix = b"v0:1800000000:".to_vec();
+        assert_eq!(
+            verify_delivery("p", "inst", forged, SECRET, BODY.to_vec(), RECEIVED).unwrap_err(),
+            VerifyError::BadSignature
+        );
+        // A fresh signed time passes, and is the value the delivery carries.
+        let verified = verify_delivery(
+            "p",
+            "inst",
+            stamped_plan("1800000123"),
+            SECRET,
+            BODY.to_vec(),
+            RECEIVED,
+        )
+        .expect("fresh");
+        assert_eq!(verified.vendor_timestamp(), Some(1_800_000_123));
+        assert_eq!(verified.received_at(), RECEIVED);
+        // No span, no vendor timestamp.
+        let bare = verify(signed_plan(), SECRET, BODY).expect("no span");
+        assert_eq!(bare.vendor_timestamp(), None);
+    }
+
+    #[test]
+    fn a_timestamp_span_outside_the_signed_prefix_is_refused() {
+        let prefix_len = stamped_plan("1800000000").signed_prefix.len() as u32;
+        for (start, len) in [
+            (prefix_len, 1),
+            (prefix_len - 1, 2),
+            (3, prefix_len),
+            (u32::MAX, 10),
+            (3, 0),
+            (0, MAX_TIMESTAMP_DIGITS + 1),
+        ] {
+            let mut p = stamped_plan("1800000000");
+            p.timestamp_span = Some(ByteSpan { start, len });
+            let error = check_auth_plan(&p).unwrap_err();
+            assert!(
+                error.contains("outside") || error.contains("must be 1-"),
+                "{start}+{len}: {error}"
+            );
+            assert!(matches!(
+                verify_delivery("p", "inst", p, SECRET, BODY.to_vec(), 1_800_000_000),
+                Err(VerifyError::Malformed(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn an_unparseable_timestamp_span_is_refused() {
+        for (prefix, start, len) in [
+            ("v0:1800000000:", 0, 2),            // "v0"
+            ("v0:1800000000:", 2, 11),           // ":1800000000"
+            ("v0:18000000x0:", 3, 10),           // a letter among the digits
+            ("v0:+1800000000:", 3, 11),          // a sign
+            ("v0:99999999999999999999:", 3, 20), // past u64::MAX
+        ] {
+            let p = AuthPlan {
+                signature: mac(SECRET, &[prefix.as_bytes(), BODY]),
+                signed_prefix: prefix.as_bytes().to_vec(),
+                timestamp_span: Some(ByteSpan { start, len }),
+                ..plan()
+            };
+            assert!(check_auth_plan(&p).is_err(), "{prefix} {start}+{len}");
+            let error =
+                verify_delivery("p", "inst", p, SECRET, BODY.to_vec(), 1_800_000_000).unwrap_err();
+            assert!(
+                matches!(error, VerifyError::Malformed(ref m) if m.contains("timestamp span")),
+                "{prefix} {start}+{len}: {error:?}"
+            );
+        }
     }
 
     #[test]

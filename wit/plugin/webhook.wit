@@ -16,8 +16,16 @@
 //
 // The order is fixed: `authenticate` sees headers only; the host verifies the
 // MAC over the signed prefix and the raw body with the installation's secret
-// (HMAC-SHA256, constant-time compare), and checks the vendor timestamp's
-// skew against its own receive time; only then does `project` see the body.
+// (HMAC-SHA256, constant-time compare), reads the vendor timestamp from the
+// signed prefix itself and checks its skew against its own receive time; only
+// then does `project` see the body.
+//
+// The MAC authenticates `signed-prefix || body` and nothing else. The plan's
+// `delivery-id` and `vendor-event` are the plugin's reading of the headers:
+// they are authentic only when the vendor signs them (the plugin took them
+// from bytes inside the signed prefix or body), which the host cannot check.
+// GitHub signs the body alone, so its event and delivery headers are not
+// authenticated.
 // An unauthenticated body is never handed to plugin code: the host's
 // `project` call takes only what its own verification step produced.
 // Part of package beekeeper:plugin@1.0.0 (declared in world.wit).
@@ -47,6 +55,12 @@ interface webhook-types {
     /// computes or compares a MAC itself and never sees the secret.
     enum mac-algorithm { hmac-sha256 }
 
+    /// `len` bytes of the signed prefix starting at byte `start`.
+    record byte-span {
+        start: u32,
+        len: u32,
+    }
+
     /// What the host needs to authenticate a delivery, read from its headers.
     record auth-plan {
         algorithm: mac-algorithm,
@@ -54,16 +68,23 @@ interface webhook-types {
         /// for `hmac-sha256`. A shorter or longer one is refused unverified.
         signature: list<u8>,
         /// Bytes the host prepends to the raw body before the MAC (empty for
-        /// GitHub). At most 4 KiB.
+        /// GitHub; `v0:<timestamp>:` for Slack). At most 4 KiB. With the body,
+        /// the only bytes the MAC covers.
         signed-prefix: list<u8>,
-        /// A vendor-asserted unix time, when the scheme signs one; the host
-        /// enforces its skew. Never the event's time: the host stamps that.
-        timestamp: option<u64>,
-        /// The vendor's delivery id: 1-128 printable ASCII bytes.
+        /// Where in `signed-prefix` the vendor's signed unix time sits, when
+        /// the scheme signs one: 1-20 ASCII decimal digits. The host parses
+        /// the time from those bytes — there is no field to report it in —
+        /// and enforces its skew; a span past the prefix's end or over
+        /// anything but digits refuses the plan. Never the event's time: the
+        /// host stamps that.
+        timestamp-span: option<byte-span>,
+        /// The vendor's delivery id: 1-128 printable ASCII bytes. Not
+        /// authenticated by the MAC unless the vendor signs it.
         delivery-id: string,
         /// The vendor's event name (e.g. `pull_request`): 1-64 bytes of
-        /// `[A-Za-z0-9_.:-]`. `project` is handed this value, from the plan
-        /// the host verified.
+        /// `[A-Za-z0-9_.:-]`. `project` is handed this value from the plan
+        /// the host verified, but the MAC does not authenticate it unless
+        /// the vendor signs it.
         vendor-event: string,
     }
 
@@ -114,7 +135,8 @@ interface webhook {
     /// Headers only: read what the host needs to verify the delivery.
     authenticate: func(headers: list<header>) -> result<auth-plan, auth-failure>;
     /// Called only after the host verified the MAC over `body`.
-    /// `vendor-event` is the verified plan's. Returning `accept` proposes an
+    /// `vendor-event` is the verified plan's, which the MAC covers only if
+    /// the vendor signs it. Returning `accept` proposes an
     /// event; the host builds, validates and signs it, or refuses it whole.
     project: func(settings-json: string, vendor-event: string, headers: list<header>, body: list<u8>) -> disposition;
 }
