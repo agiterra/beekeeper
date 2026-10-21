@@ -53,7 +53,7 @@ const READABLE_KINDS: &[u32] = &[beekeeper_core::kind::KIND_PROJECT_TODO_OP];
 /// The drafts this relay will hand a caller to sign: for each kind, the data
 /// tags a plugin may propose (the host writes the `a` scope itself) and the
 /// same validator ingest runs on it, which also names the people a draft
-/// assigns so [`authorize_people`] can check them.
+/// assigns (logged with the call; not a gate — see `docs/plugins.md`).
 pub fn draft_validators() -> DraftValidators {
     let kind = beekeeper_core::kind::KIND_PROJECT_TODO_OP;
     DraftValidators::new().with(
@@ -252,55 +252,6 @@ async fn project_access(
             Ok(Some(Access::Write))
         }
     }
-}
-
-/// Whether every person a plugin's drafts name is a legitimate target in the
-/// project. A private project's targets are the people its roster admits —
-/// assigning anyone else would route its issue to someone who cannot see it.
-/// A public project's issues are readable by every relay member, and a to-do
-/// op carries no `p` tag, so it notifies no one: any well-formed pubkey (the
-/// validator already required 64 lowercase hex) is a target there. The scope
-/// itself is never in question: the host wrote it from `coordinate`.
-async fn authorize_people(
-    state: &AppState,
-    community: CommunityId,
-    coordinate: &str,
-    people: &[String],
-) -> Result<(), ApiError> {
-    if people.is_empty() {
-        return Ok(());
-    }
-    let gate = state
-        .db
-        .get_project_gate_by_coordinate(community, coordinate)
-        .await
-        .map_err(|e| {
-            tracing::error!("plugin targets: project gate lookup failed: {e}");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "host-failure",
-                "project lookup failed",
-            )
-        })?;
-    let Some(gate) = gate else {
-        return Ok(());
-    };
-    for person in people {
-        let admitted = hex::decode(person)
-            .ok()
-            .is_some_and(|bytes| gate.admits_read(&bytes));
-        if !admitted {
-            return Err(error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid-target",
-                format!(
-                    "{}… is not on this project's roster, so they could not see it; nothing was drafted",
-                    person.get(..12).unwrap_or(person)
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Reads for one invocation: the caller's view of one project's records.
@@ -588,19 +539,11 @@ pub async fn invoke_plugin(
             return Err(invoke_error(&e));
         }
     };
-    // The host wrote every draft's scope from `coordinate`; who a draft
-    // names is ours to authorize before anyone is handed it to sign.
-    if let Err(refused) =
-        authorize_people(&state, tenant.community(), &coordinate, &outcome.people).await
-    {
-        tracing::warn!(
-            plugin = %name,
-            operation = %request.operation,
-            caller = %caller.to_hex(),
-            "plugin drafts named a target outside the project"
-        );
-        return Err(refused);
-    }
+    // The host wrote every draft's scope from `coordinate`. A 44248 op's
+    // assignee is a folded field — no access grant, no `p`, no notification
+    // — so it is held to what ingest holds a directly signed op to (a
+    // well-formed pubkey, which the validator already required), not to a
+    // roster rule the To-Do tab and `bee todos` do not have.
     for (level, message) in &outcome.logs {
         tracing::debug!(plugin = %name, ?level, "{message}");
     }
@@ -611,6 +554,7 @@ pub async fn invoke_plugin(
         elapsed_ms,
         fuel = outcome.fuel_used,
         drafts = outcome.drafts.len(),
+        people = outcome.people.len(),
         "plugin call"
     );
     let plugin = state.plugins.get(&name).map(|p| {

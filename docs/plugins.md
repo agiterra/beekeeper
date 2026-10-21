@@ -110,7 +110,6 @@ blocking thread in a fresh instance.
 | 409 | `conflict` | e.g. the target's latest change is stamped too far ahead |
 | 413 | `input-too-large` | |
 | 422 | `invalid-input` | The plugin refused the input |
-| 422 | `invalid-target` | A draft names a person the project cannot route to (an assignee off a private project's roster); nothing was drafted |
 | 500 | `plugin-trapped` (with `trap`: `fuel`/`deadline`/`memory`/`trap`), `plugin-internal`, `host-failure` | |
 | 501 | `unsupported` | The plugin does not do that (e.g. a read-only provider asked to write) |
 | 502 | `contract-violation` | The plugin returned something the contract forbids; its output was discarded whole |
@@ -168,19 +167,41 @@ the whole output (`502 contract-violation`):
    ingest runs — over the sealed tags and content: tag and content agree
    (`td-list`/`td-item`/`td-op`/`td-vis` match the content), content keys are
    closed, an assignee is 64 lowercase hex.
-7. **References.** The validator names the people a draft routes to; the
-   relay authorizes each before handing anything out
-   (`api/plugins.rs::authorize_people`). In a private project an assignee
-   must be on the roster (`422 invalid-target` otherwise). In a public one
-   any well-formed pubkey may be assigned: every relay member can read it
-   and a to-do op has no `p` tag, so it notifies no one. A to-do op's other
-   references — its list and item ids — are local to the project its `a`
-   tag names, because the fold keys lists by that coordinate; they cannot
-   reach another project's objects. Free text (titles, descriptions) is
-   data, not routing.
-8. `created_at` within an hour behind and 890 s ahead of the host clock
-   (inside ingest's 900 s drift rule); `group` 1–64 bytes; `partialSummary`
-   ≤ 512 bytes.
+7. **References.** The validator reports the people a draft names (an
+   assignee) as `InvokeOutcome.people`; the relay logs the count and does
+   not gate on it. A 44248 assignee is data: it sets one folded field, and
+   grants no access, carries no `p` tag and notifies nobody. So a plugin's
+   assignment gets exactly the checks a directly signed one gets from the
+   To-Do tab or `bee todos` — a well-formed pubkey, from an author allowed
+   to write — and nothing more: an agent associated with a project but not
+   on its roster can be assigned through Planning as it can directly, and
+   still cannot read a private project's issues. (The roster is not an
+   exact read predicate anyway: a NIP-OA agent's relay membership comes
+   through its owner, but a project read checks the agent's own pubkey;
+   authors read their own ops; personal lists are their author's alone.)
+   A to-do op's other references — its list and item ids — are local to the
+   project its `a` tag names, because the fold keys lists by that
+   coordinate; they cannot reach another project's objects. Free text
+   (titles, descriptions) is data, not routing.
+
+   A future kind whose references *bear authority* — a grant, a `p`
+   notification, a cross-project link — must be checked where the effect
+   happens (ingest, or whatever acts on the event), not by a lookup here
+   before signing alone: a directly signed event never passes through the
+   plugin route, and a pre-sign check the effect boundary does not repeat
+   is a rule only one path obeys.
+8. **`created_at`** is a whole number of seconds within
+   `DRAFT_PAST_SECS` = 600 s behind and `DRAFT_FUTURE_SECS` = 890 s ahead of
+   the checker's clock, both ends inclusive
+   (`beekeeper_nip_td::check_draft_created_at`; the host's copy is
+   `drafts::check_created_at`, tied to it by a test). Ingest takes ±900 s of
+   the relay's clock but judges the event later — after the reply, the
+   signing and the publish — so the past edge leaves 300 s for that; a
+   later ingest only makes a future stamp safer, so the future edge sits
+   just inside 900. A stamp outside the window is refused, never re-stamped:
+   `created_at` orders an op against its rivals in the fold, so changing it
+   would change what the op means. `group` is 1–64 bytes and
+   `partialSummary` ≤ 512 bytes.
 
 **Who signs, exactly.** An operation provider's drafts are signed by the
 **member who invoked it, with their own key, in their own client** — never
@@ -191,7 +212,7 @@ is not changing: Planning does not move to relay signing. A webhook plugin
 the loop, so its adapter, not a client, is the signing side: it owns the
 tenant, the installation, HMAC verification and the relay's signature, and
 applies this same seal (constructed scope, per-kind allowlist, caps twice,
-references authorized) before the relay signs. The plugin proposes data in
+stamp window) before the relay signs. The plugin proposes data in
 both worlds; authority is never the plugin's.
 
 The member's client is the last check, so it seals again rather than
@@ -199,8 +220,18 @@ trusting the relay — `bee` (`plugins::seal_draft`) and the desktop
 (`shared/plugins/pluginDrafts.ts` `sealDraft`): a kind it signs for plugins,
 the same tag allowlist, its own `a` tag written from the project *it* asked
 for (a proposed one must echo it exactly, once), the caps before and after,
-and the kind's validator (the desktop re-derives the tags from the decoded
-content and requires an exact match). Only the sealed event is signed.
+the same `created_at` window against its own clock (a missing or
+non-integer stamp is refused, never read as 0 or as now), and the kind's
+validator (the desktop re-derives the tags from the decoded content and
+requires an exact match). Only the sealed event is signed. Neither client
+repeats a roster check on assignees; there is none to repeat.
+
+Every draft in a reply is sealed — `bee` also signs every one — before the
+first is published, so a draft the client refuses anywhere in the list
+means nothing is published. That rules out a *preventable* partial write;
+it is not atomicity. The publishes that follow are separate network writes,
+and a relay refusal or a lost answer after the first is reported under the
+rules below.
 
 The client then signs and publishes the drafts in order — `bee`
 (`plugins::execute_drafts`) and the desktop implement the same rules:

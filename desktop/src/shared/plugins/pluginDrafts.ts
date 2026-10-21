@@ -17,8 +17,8 @@
  * Nobody reviews a draft before it is signed — the user acted, the app
  * signs — so this module is the last check, not a person. Nothing is signed
  * until every draft has been sealed here ({@link sealDraft}), whatever the
- * relay already did: a kind this client signs for plugins, only that kind's
- * data tags, the `a` tag written here from the project the call named (a
+ * relay already did: a kind this client signs for plugins, a `createdAt`
+ * inside the window ingest will still accept, only that kind's data tags, the `a` tag written here from the project the call named (a
  * proposed one may only echo it, once), the tag caps before and after, and
  * the kind's own decoder, whose re-derived tags must be exactly the sealed
  * ones. The same rules as `bee`'s `seal_draft` and the relay's plugin host.
@@ -46,10 +46,25 @@ const MAX_TAG_VALUES = 8;
 const MAX_TAG_VALUE_BYTES = 1024;
 const MAX_DRAFT_TAG_BYTES = 16 * 1024;
 
+/**
+ * The window a draft's `createdAt` must sit in around this app's clock —
+ * the one the relay's plugin host and `bee` hold too
+ * (`beekeeper_nip_td::DRAFT_PAST_SECS` / `DRAFT_FUTURE_SECS`). Relay ingest
+ * takes ±900 s of its clock, judged after the reply, the signing and the
+ * publish; 600 s behind leaves 300 s for that. A stamp outside it is
+ * refused, never re-stamped: it orders the op against its rivals.
+ */
+export const DRAFT_PAST_SECS = 600;
+export const DRAFT_FUTURE_SECS = 890;
+
 export type DraftEffects = {
   /** Sign and publish one event; resolves once the relay accepted it. */
   publish: (draft: SealedDraft) => Promise<{ id: string }>;
+  /** This app's clock in Unix seconds; the system clock unless a test pins it. */
+  now?: () => number;
 };
+
+const systemNow = () => Math.floor(Date.now() / 1000);
 
 export type DraftRun = {
   published: { eventId: string; group: string }[];
@@ -141,11 +156,31 @@ function sameTags(a: readonly string[][], b: readonly string[][]): boolean {
  * must accept the content and re-derive exactly the sealed tags, so a tag
  * can never route somewhere the content does not say.
  */
-export function sealDraft(draft: PluginDraft, project: string): SealedDraft {
+export function sealDraft(
+  draft: PluginDraft,
+  project: string,
+  now: number = systemNow(),
+): SealedDraft {
   const dataKeys = DATA_TAG_KEYS[draft.kind];
   if (!PLUGIN_SIGNABLE_KINDS.includes(draft.kind) || !dataKeys) {
     refuse(
       `a kind ${draft.kind} event; this app signs only kinds ${PLUGIN_SIGNABLE_KINDS.join(", ")} for plugins`,
+    );
+  }
+  const createdAt: unknown = draft.createdAt;
+  if (
+    typeof createdAt !== "number" ||
+    !Number.isSafeInteger(createdAt) ||
+    createdAt < 0
+  ) {
+    refuse("a change without a whole-second createdAt");
+  }
+  if (
+    createdAt < now - DRAFT_PAST_SECS ||
+    createdAt > now + DRAFT_FUTURE_SECS
+  ) {
+    refuse(
+      `a change stamped ${createdAt}, outside ${DRAFT_PAST_SECS} s behind to ${DRAFT_FUTURE_SECS} s ahead of this app's clock (${now})`,
     );
   }
   if (!Array.isArray(draft.tags)) refuse("a change without tags");
@@ -178,7 +213,7 @@ export function sealDraft(draft: PluginDraft, project: string): SealedDraft {
   return {
     kind: draft.kind,
     content: draft.content,
-    createdAt: draft.createdAt,
+    createdAt,
     tags,
   };
 }
@@ -188,7 +223,12 @@ export async function executePluginDrafts(
   project: string,
   effects: DraftEffects,
 ): Promise<DraftRun> {
-  const sealed = drafts.map((draft) => sealDraft(draft, project));
+  // Every draft is sealed before the first is published, so one this app
+  // refuses — anywhere in the list — means nothing is published. That
+  // avoids a preventable partial write; it is not atomicity across the
+  // network writes that follow.
+  const now = (effects.now ?? systemNow)();
+  const sealed = drafts.map((draft) => sealDraft(draft, project, now));
   const published: DraftRun["published"] = [];
   const failed: DraftRun["failed"] = [];
   const savedGroups = new Set<string>();

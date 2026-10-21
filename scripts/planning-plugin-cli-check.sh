@@ -64,20 +64,32 @@ step "owner cancels it through the plugin: two signed events, both the owner's"
 as "${OWNER_KEY}" planning status --project "${PROJECT}" --provider planning --issue "${KEY}" --status canceled \
   | py 'assert [p["group"] for p in d["published"]]==["status","status"], d; print("published", len(d["published"]))'
 
-step "member assigns it to the owner: a roster member is a legitimate target"
+step "member assigns it to the owner"
 as "${MEMBER_KEY}" planning assign --project "${PROJECT}" --provider planning --issue "${KEY}" --assignee "${OWNER_PUB}" \
   | py 'assert [p["group"] for p in d["published"]]==["assignee"], d; print("assigned")'
 as "${OWNER_KEY}" planning read --project "${PROJECT}" --provider planning \
   | py "i=[x for x in d['result']['issues'] if x['key']=='${KEY}'][0]; assert i['assignee']=='${OWNER_PUB}', i; print('assignee', i['assignee'][:16])"
 
-step "assigning someone off this private project's roster is refused before anything is drafted"
-STRANGER_PUB="$(openssl rand -hex 32)"
-if out="$(as "${MEMBER_KEY}" planning assign --project "${PROJECT}" --provider planning --issue "${KEY}" --assignee "${STRANGER_PUB}" 2>&1)"; then
-  echo "expected invalid-target, got: ${out}"; exit 1
-fi
-echo "${out}" | grep -q "roster" || { echo "unexpected refusal: ${out}"; exit 1; }
+# An assignee is a folded field: no access grant, no p tag, no notification.
+# `bee todos` assigns any well-formed pubkey, so the plugin route does too —
+# an agent associated with the project but off its roster is a fair target.
+step "an off-roster assignee lands through the plugin, as it does through bee todos"
+AGENT_KEY="$(openssl rand -hex 32)"
+AGENT_REPO="$(as "${AGENT_KEY}" repos create --id "${DTAG}-agent" --name "${DTAG}-agent")"
+AGENT_PUB="$(echo "${AGENT_REPO}" | py 'import re; print(re.search(r"owner=([0-9a-f]{64})", d["link"]).group(1))')"
+as "${MEMBER_KEY}" planning assign --project "${PROJECT}" --provider planning --issue "${KEY}" --assignee "${AGENT_PUB}" \
+  | py 'assert [p["group"] for p in d["published"]]==["assignee"], d; print("assigned via plugin")'
 as "${OWNER_KEY}" planning read --project "${PROJECT}" --provider planning \
-  | py "i=[x for x in d['result']['issues'] if x['key']=='${KEY}'][0]; assert i['assignee']=='${OWNER_PUB}', i; print('unchanged')"
+  | py "i=[x for x in d['result']['issues'] if x['key']=='${KEY}'][0]; assert i['assignee']=='${AGENT_PUB}', i; print('assignee', i['assignee'][:16])"
+as "${MEMBER_KEY}" --format compact todos add --project "${PROJECT}" "${KEY%%/*}" "Assigned directly" --assignee "${AGENT_PUB}" >/dev/null
+as "${OWNER_KEY}" planning read --project "${PROJECT}" --provider planning \
+  | py "i=[x for x in d['result']['issues'] if x['title']=='Assigned directly'][0]; assert i['assignee']=='${AGENT_PUB}', i; print('direct assignee', i['assignee'][:16])"
+
+step "being assigned grants nothing: the agent still cannot read the private project"
+if out="$(as "${AGENT_KEY}" planning read --project "${PROJECT}" --provider planning 2>&1)"; then
+  echo "expected 403 for the assignee, got: ${out}"; exit 1
+fi
+echo "${out}" | grep -q "403" || { echo "unexpected: ${out}"; exit 1; }
 
 step "a provider's foreign scope or routing tag is never signed"
 TOLD_LIST="$(openssl rand -hex 16)"

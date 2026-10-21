@@ -3670,6 +3670,12 @@ async fn ingest_event_inner(
     let event = std::sync::Arc::try_unwrap(event).unwrap_or_else(|arc| (*arc).clone());
 
     const MAX_TIMESTAMP_DRIFT_SECS: i64 = 900; // ±15 minutes
+                                               // The window a plugin's drafts are checked against is derived from this
+                                               // rule (`beekeeper_core::project_todo::DRAFT_PAST_SECS`); keep them one.
+    const _: () = assert!(
+        MAX_TIMESTAMP_DRIFT_SECS as u64
+            == beekeeper_core::project_todo::INGEST_TIMESTAMP_DRIFT_SECS
+    );
     let now = chrono::Utc::now().timestamp();
     let event_ts = event.created_at.as_secs() as i64;
     if (event_ts - now).abs() > MAX_TIMESTAMP_DRIFT_SECS {

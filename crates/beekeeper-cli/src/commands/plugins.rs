@@ -154,16 +154,30 @@ struct SealedDraft {
 }
 
 /// Rebuild a draft for signing, or refuse it: a kind this client signs for
-/// plugins, the kind's data tags only, the `a` tag written here from
-/// `project` (a proposed one must echo it exactly, once), caps before and
-/// after, and the kind's validator over the sealed event.
-fn seal_draft(draft: &Value, project: &str) -> Result<SealedDraft, CliError> {
+/// plugins, a `createdAt` that is present, an integer and inside the window
+/// ingest will still accept (`beekeeper_core::project_todo::
+/// check_draft_created_at` at `now`; never re-stamped), the kind's data tags
+/// only, the `a` tag written here from `project` (a proposed one must echo
+/// it exactly, once), caps before and after, and the kind's validator over
+/// the sealed event.
+fn seal_draft(draft: &Value, project: &str, now: u64) -> Result<SealedDraft, CliError> {
     let kind = draft["kind"].as_u64().unwrap_or(0);
     if !SIGNABLE_KINDS.contains(&kind) {
         return Err(CliError::Other(format!(
             "the plugin returned a kind {kind} draft; this client signs only kinds {SIGNABLE_KINDS:?} for plugins"
         )));
     }
+    let created_at = draft["createdAt"].as_u64().ok_or_else(|| {
+        CliError::Other(
+            "the plugin returned a draft without a whole-second createdAt; nothing was signed"
+                .into(),
+        )
+    })?;
+    beekeeper_core::project_todo::check_draft_created_at(created_at, now).map_err(|e| {
+        CliError::Other(format!(
+            "the plugin returned a draft this client will not sign ({e}); nothing was signed"
+        ))
+    })?;
     let proposed = str_tags(draft)?;
     check_tag_caps("proposed", &proposed)?;
     let mut tags = vec![vec!["a".to_owned(), project.to_owned()]];
@@ -198,7 +212,7 @@ fn seal_draft(draft: &Value, project: &str) -> Result<SealedDraft, CliError> {
         })?;
     Ok(SealedDraft {
         kind: kind as u16,
-        created_at: draft["createdAt"].as_u64().unwrap_or(0),
+        created_at,
         tags,
         content,
     })
@@ -211,10 +225,50 @@ pub async fn execute_drafts(
     project: &str,
     drafts: &Value,
 ) -> Result<Value, CliError> {
-    let drafts = drafts.as_array().cloned().unwrap_or_default();
+    execute_drafts_at(client, project, drafts, nostr::Timestamp::now().as_secs()).await
+}
+
+/// [`execute_drafts`] against the clock `now`. Every draft is sealed before
+/// the first is signed, so one this client refuses — anywhere in the list —
+/// means nothing is published. That avoids a preventable partial write; it
+/// is not atomicity: a relay refusal or a lost answer after the first
+/// publish is still reported as partial or unconfirmed.
+async fn execute_drafts_at(
+    client: &BeekeeperClient,
+    project: &str,
+    drafts: &Value,
+    now: u64,
+) -> Result<Value, CliError> {
+    let Some(drafts) = drafts.as_array().cloned() else {
+        return Err(CliError::Other(
+            "the plugin's reply carried no drafts list; nothing was signed".into(),
+        ));
+    };
     let sealed = drafts
         .iter()
-        .map(|draft| seal_draft(draft, project))
+        .map(|draft| seal_draft(draft, project, now))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Sign every sealed draft before publishing the first, so nothing this
+    // client can refuse on its own is left to fail after a write landed.
+    let signed = sealed
+        .iter()
+        .map(|seal| {
+            let tags = seal
+                .tags
+                .iter()
+                .cloned()
+                .map(|t| {
+                    nostr::Tag::parse(t).map_err(|e| CliError::Other(format!("draft tag: {e}")))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let builder =
+                nostr::EventBuilder::new(nostr::Kind::Custom(seal.kind), seal.content.as_str())
+                    .tags(tags)
+                    .custom_created_at(nostr::Timestamp::from(seal.created_at));
+            // Signed verbatim (see `todos::publish`): the draft's tag set is
+            // closed, so the auth tag `sign_event` injects would be refused.
+            client.sign_event_unchecked(builder)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let mut published = Vec::new();
     let mut failed: Vec<Value> = Vec::new();
@@ -225,20 +279,7 @@ pub async fn execute_drafts(
         if skipped.contains(&group) {
             continue;
         }
-        let seal = &sealed[index];
-        let tags = seal
-            .tags
-            .iter()
-            .cloned()
-            .map(|t| nostr::Tag::parse(t).map_err(|e| CliError::Other(format!("draft tag: {e}"))))
-            .collect::<Result<Vec<_>, _>>()?;
-        let builder =
-            nostr::EventBuilder::new(nostr::Kind::Custom(seal.kind), seal.content.as_str())
-                .tags(tags)
-                .custom_created_at(nostr::Timestamp::from(seal.created_at));
-        // Signed verbatim (see `todos::publish`): the draft's tag set is
-        // closed, so the auth tag `sign_event` injects would be refused.
-        let event = client.sign_event_unchecked(builder)?;
+        let event = signed[index].clone();
         let event_id = event.id.to_hex();
         let outcome = match client.submit_event(event).await {
             Ok(raw) => super::parse_write_response(&raw, "plugin draft was superseded"),
@@ -375,6 +416,8 @@ mod tests {
         assert!(matches!(other, CliError::Usage(_)));
     }
 
+    /// The fixed clock every test seals against.
+    const NOW: u64 = 1_800_000_000;
     const LIST: &str = "abcdefabcdefabcdefabcdefabcdefab";
     const ITEM: &str = "1234567890abcdef1234567890abcdef";
 
@@ -392,7 +435,7 @@ mod tests {
             tags.as_array_mut().unwrap().push(tag);
         }
         json!({
-            "kind": 44248, "createdAt": 100, "group": "assignee", "ifRefused": "abort",
+            "kind": 44248, "createdAt": NOW, "group": "assignee", "ifRefused": "abort",
             "tags": tags,
             "content": json!({ "schema": "buzz-project-todo/v1", "op": "item.assignee",
                 "listId": LIST, "itemId": ITEM, "assignee": assignee }).to_string(),
@@ -402,14 +445,14 @@ mod tests {
     #[test]
     fn a_legitimate_assignment_is_sealed_with_this_clients_own_scope() {
         let member = "b".repeat(64);
-        let sealed = seal_draft(&assign(&member, json!([])), PROJECT).unwrap();
+        let sealed = seal_draft(&assign(&member, json!([])), PROJECT, NOW).unwrap();
         assert_eq!(sealed.tags[0], vec!["a".to_owned(), PROJECT.to_owned()]);
         assert_eq!(sealed.tags.iter().filter(|t| t[0] == "a").count(), 1);
         assert_eq!(sealed.kind, 44248);
         // A draft that leaves the scope to the signer seals identically.
         let mut bare = assign(&member, json!([]));
         bare["tags"].as_array_mut().unwrap().remove(0);
-        assert_eq!(seal_draft(&bare, PROJECT).unwrap().tags, sealed.tags);
+        assert_eq!(seal_draft(&bare, PROJECT, NOW).unwrap().tags, sealed.tags);
     }
 
     #[test]
@@ -417,7 +460,7 @@ mod tests {
         let member = "b".repeat(64);
         let mut other_kind = assign(&member, json!([]));
         other_kind["kind"] = json!(1);
-        assert!(seal_draft(&other_kind, PROJECT).is_err());
+        assert!(seal_draft(&other_kind, PROJECT, NOW).is_err());
         let elsewhere = format!("30621:{}:elsewhere", "2".repeat(64));
         for extra in [
             json!([["a", elsewhere]]),
@@ -429,16 +472,16 @@ mod tests {
             json!([["unknown", "x"]]),
         ] {
             assert!(
-                seal_draft(&assign(&member, extra.clone()), PROJECT).is_err(),
+                seal_draft(&assign(&member, extra.clone()), PROJECT, NOW).is_err(),
                 "{extra}"
             );
         }
         // Content that is not this kind's: a malformed assignee, a list id
         // the tag does not carry.
-        assert!(seal_draft(&assign("not-hex", json!([])), PROJECT).is_err());
+        assert!(seal_draft(&assign("not-hex", json!([])), PROJECT, NOW).is_err());
         let mut forged = assign(&member, json!([]));
         forged["tags"][3][1] = json!("f".repeat(32));
-        assert!(seal_draft(&forged, PROJECT).is_err());
+        assert!(seal_draft(&forged, PROJECT, NOW).is_err());
     }
 
     #[test]
@@ -448,11 +491,101 @@ mod tests {
         let mut full = assign(&member, json!([]));
         let filler: Vec<Value> = (0..64).map(|_| json!(["td-v", "td1-1"])).collect();
         full["tags"] = json!(filler);
-        let error = seal_draft(&full, PROJECT).unwrap_err().to_string();
+        let error = seal_draft(&full, PROJECT, NOW).unwrap_err().to_string();
         assert!(error.contains("constructed tags"), "{error}");
         let mut long = assign(&member, json!([]));
         long["tags"][1][1] = json!("x".repeat(2_000));
-        let error = seal_draft(&long, PROJECT).unwrap_err().to_string();
+        let error = seal_draft(&long, PROJECT, NOW).unwrap_err().to_string();
         assert!(error.contains("proposed tags"), "{error}");
+    }
+
+    #[test]
+    fn a_stamp_is_signed_only_inside_the_window_ingest_still_accepts() {
+        use beekeeper_core::project_todo::{DRAFT_FUTURE_SECS, DRAFT_PAST_SECS};
+        let member = "b".repeat(64);
+        let at = |stamp: Value| {
+            let mut draft = assign(&member, json!([]));
+            draft["createdAt"] = stamp;
+            seal_draft(&draft, PROJECT, NOW)
+        };
+        for edge in [NOW - DRAFT_PAST_SECS, NOW, NOW + DRAFT_FUTURE_SECS] {
+            assert_eq!(
+                at(json!(edge)).unwrap().created_at,
+                edge,
+                "never re-stamped"
+            );
+        }
+        for stamp in [
+            json!(NOW - DRAFT_PAST_SECS - 1),
+            json!(NOW - 1_800),
+            json!(NOW + DRAFT_FUTURE_SECS + 1),
+            json!(NOW + 86_400),
+            json!(0),
+        ] {
+            let error = at(stamp.clone()).unwrap_err().to_string();
+            assert!(error.contains("created_at"), "{stamp}: {error}");
+        }
+        // Missing or malformed is refused, never read as zero or as now.
+        let mut missing = assign(&member, json!([]));
+        missing.as_object_mut().unwrap().remove("createdAt");
+        let mut malformed = vec![missing];
+        for stamp in [json!("1800000000"), json!(-1), json!(1.8e9), Value::Null] {
+            let mut draft = assign(&member, json!([]));
+            draft["createdAt"] = stamp;
+            malformed.push(draft);
+        }
+        for draft in malformed {
+            let error = seal_draft(&draft, PROJECT, NOW).unwrap_err().to_string();
+            assert!(error.contains("createdAt"), "{draft}: {error}");
+        }
+    }
+
+    /// A relay stand-in that counts every request and accepts each event.
+    async fn counting_relay() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = hits.clone();
+        let app = axum::Router::new().fallback(move || {
+            let seen = seen.clone();
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                axum::Json(json!({ "event_id": "0".repeat(64), "accepted": true, "message": "" }))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), hits)
+    }
+
+    #[tokio::test]
+    async fn one_unsignable_draft_anywhere_means_nothing_is_published() {
+        use std::sync::atomic::Ordering;
+        let member = "b".repeat(64);
+        let (url, hits) = counting_relay().await;
+        let client =
+            BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+        let mut stale = assign(&member, json!([]));
+        stale["createdAt"] = json!(NOW - 1_800);
+        let drafts = json!([assign(&member, json!([])), stale]);
+        let error = execute_drafts_at(&client, PROJECT, &drafts, NOW)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("nothing was signed"), "{error}");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "not even the valid first draft"
+        );
+
+        // The same stand-in does see a run that seals: the zero above is
+        // the executor refusing, not the relay unreachable.
+        let good = json!([assign(&member, json!([])), assign(&member, json!([]))]);
+        let ran = execute_drafts_at(&client, PROJECT, &good, NOW)
+            .await
+            .expect("published");
+        assert_eq!(ran["published"].as_array().map(Vec::len), Some(2));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
 }

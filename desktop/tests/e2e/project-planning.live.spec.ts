@@ -196,9 +196,9 @@ test.describe("project planning (live relay)", () => {
         .toBe("in_progress");
     });
 
-    await test.step("the detail assigns it to alice, a collaborator on the roster", async () => {
-      // An assignee is a reference the relay authorizes (a private project's
-      // roster) and the app re-seals before signing: a legitimate one lands.
+    await test.step("the detail assigns it to alice", async () => {
+      // An assignee is data — no access grant, no p tag — held to the same
+      // rule as a direct To-Do assignment; the app re-seals before signing.
       await page.getByTestId("planning-detail-assignee").click();
       await page
         .getByTestId(`todo-assignee-option-${TEST_IDENTITIES.alice.pubkey}`)

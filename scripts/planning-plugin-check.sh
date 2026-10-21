@@ -3,9 +3,12 @@
 #
 # Composes the real beekeeper-relay binary with the test plugin registry
 # (target/plugins/registry.test.toml: planning, planning-fixture,
-# test-faults) on a scratch Postgres database in the dev `buzz-postgres`
-# container (dropped on exit) and Redis logical DB 13 (never 0 or the dev
-# database), with TWO host→community mappings on one relay:
+# test-faults) on its own throwaway Postgres and Redis containers, started on
+# free loopback ports and removed on exit, so it shares no database or Redis
+# with the dev stack or anything else running here. (`--shared-dev` instead
+# uses a scratch database in the dev `buzz-postgres`, dropped on exit, and
+# Redis logical DB 13 of `buzz-redis`.) TWO host→community mappings on one
+# relay:
 #
 #   localhost:<port>  → community A   (RELAY_URL)
 #   127.0.0.1:<port>  → community B   (RELAY_URL_B)
@@ -19,10 +22,12 @@
 #                             member, read back by `bee todos`
 #   4. (with --desktop) the Playwright live spec, UI → CLI → UI
 #
-# Usage: scripts/planning-plugin-check.sh [--out <dir>] [--desktop] [--keep]
+# Usage: scripts/planning-plugin-check.sh [--out <dir>] [--desktop] [--keep] [--shared-dev]
 #   --out      where logs go (default: a fresh temp dir, kept on failure)
 #   --desktop  also run desktop/tests/e2e/project-planning.live.spec.ts
 #   --keep     leave the relay running at the end (prints how to stop it)
+#   --shared-dev  use the dev buzz-postgres / buzz-redis (DB 13) instead of
+#              dedicated containers
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,11 +35,13 @@ cd "${ROOT}"
 OUT=""
 DESKTOP=false
 KEEP=false
+DEDICATED=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
     --desktop) DESKTOP=true; shift ;;
     --keep) KEEP=true; shift ;;
+    --shared-dev) DEDICATED=false; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -48,6 +55,23 @@ RESULTS="${OUT}/results.txt"
 log() { echo "[planning-check] $*"; }
 record() { echo "$*" | tee -a "${RESULTS}"; }
 
+free_port() {
+  python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'
+}
+if [[ "${DEDICATED}" == true ]]; then
+  PG_CONTAINER="planning-check-$$-postgres"
+  REDIS_CONTAINER="planning-check-$$-redis"
+  PG_PORT="$(free_port)"
+  REDIS_PORT="$(free_port)"
+  REDIS_URL_VALUE="redis://127.0.0.1:${REDIS_PORT}/0"
+else
+  PG_CONTAINER="buzz-postgres"
+  REDIS_CONTAINER=""
+  PG_PORT=5432
+  REDIS_URL_VALUE="redis://localhost:6379/13"
+fi
+pg() { docker exec -e PGPASSWORD=buzz_dev "${PG_CONTAINER}" psql -U buzz -q "$@"; }
+
 RELAY_PID=""
 cleanup() {
   local status=$?
@@ -56,8 +80,12 @@ cleanup() {
     return
   fi
   [[ -n "${RELAY_PID}" ]] && kill "${RELAY_PID}" 2>/dev/null && wait "${RELAY_PID}" 2>/dev/null || true
-  docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
-    -c "DROP DATABASE IF EXISTS ${DB_NAME};" >/dev/null 2>&1 || true
+  if [[ "${DEDICATED}" == true ]]; then
+    # Only the two containers this run started, by the names it gave them.
+    docker rm -f "${PG_CONTAINER}" "${REDIS_CONTAINER}" >/dev/null 2>&1 || true
+  else
+    pg -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};" >/dev/null 2>&1 || true
+  fi
   echo
   echo "── planning plugin check ─────────────────────────────────────────────"
   cat "${RESULTS}"
@@ -73,16 +101,26 @@ cargo build -p beekeeper-relay -p beekeeper-cli >"${OUT}/build.log" 2>&1
 cargo test -p beekeeper-test-client --test e2e_plugins --test e2e_project_todos --no-run >>"${OUT}/build.log" 2>&1
 grep '^plugin ' "${OUT}/build-plugins.log" | tee -a "${RESULTS}"
 
-free_port() {
-  python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'
-}
+if [[ "${DEDICATED}" == true ]]; then
+  log "dedicated postgres ${PG_CONTAINER} on :${PG_PORT}, redis ${REDIS_CONTAINER} on :${REDIS_PORT}"
+  docker run -d --rm --name "${PG_CONTAINER}" -p "127.0.0.1:${PG_PORT}:5432" \
+    -e POSTGRES_USER=buzz -e POSTGRES_PASSWORD=buzz_dev -e POSTGRES_DB=postgres \
+    postgres:17-alpine >/dev/null
+  docker run -d --rm --name "${REDIS_CONTAINER}" -p "127.0.0.1:${REDIS_PORT}:6379" \
+    redis:7-alpine >/dev/null
+  for _ in $(seq 1 60); do
+    pg -d postgres -c "SELECT 1" >/dev/null 2>&1 \
+      && docker exec "${REDIS_CONTAINER}" redis-cli ping >/dev/null 2>&1 && break
+    sleep 1
+  done
+  pg -d postgres -c "SELECT 1" >/dev/null
+fi
 PORT="$(free_port)"
 log "scratch database ${DB_NAME}, relay on :${PORT}"
-docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
-  -c "CREATE DATABASE ${DB_NAME};" >/dev/null
+pg -d postgres -c "CREATE DATABASE ${DB_NAME};" >/dev/null
 
-DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/${DB_NAME}" \
-  REDIS_URL="redis://localhost:6379/13" \
+DATABASE_URL="postgres://buzz:buzz_dev@127.0.0.1:${PG_PORT}/${DB_NAME}" \
+  REDIS_URL="${REDIS_URL_VALUE}" \
   RELAY_URL="ws://localhost:${PORT}" \
   BEEKEEPER_BIND_ADDR="127.0.0.1:${PORT}" \
   BEEKEEPER_HEALTH_PORT="$(free_port)" \
@@ -103,7 +141,7 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 [[ "${ready}" == 200 ]] || { log "relay never became ready"; tail -40 "${OUT}/relay.log"; exit 1; }
-docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d "${DB_NAME}" -c "
+pg -d "${DB_NAME}" -c "
   INSERT INTO communities (id, host) VALUES
     ('00000000-0000-4000-8000-00000000000a', 'localhost:${PORT}'),
     ('00000000-0000-4000-8000-00000000000b', '127.0.0.1:${PORT}')

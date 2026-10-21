@@ -173,9 +173,9 @@ pub struct Draft {
 pub struct InvokeOutcome {
     pub result: serde_json::Value,
     pub drafts: Vec<Draft>,
-    /// Every person a returned draft names (an assignee), sorted. The
-    /// embedder must decide each is a legitimate target in the invocation's
-    /// scope before handing the drafts to anyone to sign.
+    /// Every person a returned draft names (an assignee), sorted. A
+    /// disclosure, not a gate: see `drafts` § references for why an
+    /// authority-bearing reference is checked at its effect boundary.
     pub people: Vec<String>,
     /// Fuel the call consumed.
     pub fuel_used: u64,

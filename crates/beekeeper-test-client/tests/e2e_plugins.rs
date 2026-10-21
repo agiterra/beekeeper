@@ -775,6 +775,25 @@ async fn the_relay_writes_each_drafts_scope_and_refuses_routing_it_did_not_allow
         );
     }
 
+    // A valid first draft and one stamped half an hour ago — inside the old
+    // hour-long window, outside what ingest takes after transport: the
+    // caller gets nothing to sign, so not even the first can land.
+    let now = nostr::Timestamp::now().as_secs();
+    let mut two = told_list_create(json!([]));
+    let mut stale = two["drafts"][0].clone();
+    stale["createdAt"] = json!(now - 1_800);
+    two["drafts"].as_array_mut().unwrap().push(stale);
+    let (status, body) = invoke(&member, "test-faults", "draft-as-told", &project, two).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(body.get("drafts").is_none(), "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("draft 1: created_at"),
+        "{body}"
+    );
+
     // 64 proposed tags pass the proposal's cap; with the relay's scope they
     // would be 65.
     let filler: Vec<Value> = (0..60).map(|_| json!(["td-v", "td1-1"])).collect();
@@ -796,17 +815,54 @@ async fn the_relay_writes_each_drafts_scope_and_refuses_routing_it_did_not_allow
     );
 }
 
-/// Assigning is a reference to a person, so the relay checks it: in a
-/// private project the assignee must be on the roster — anyone else is
-/// refused before a draft is handed out — while a roster member, the caller
-/// themselves and clearing the assignee all draft normally.
+/// The latest kind 30621 head of `project`, as `owner` reads it: its id and
+/// its roster (`p` tags), which is what the project's gate is built from.
+async fn project_head(owner: &Keys, project: &str) -> (String, Vec<Vec<String>>) {
+    let d_tag = project.splitn(3, ':').nth(2).expect("d tag");
+    let mut client = BeekeeperTestClient::connect(&relay_url(), owner)
+        .await
+        .expect("connect");
+    let sid = unique("head");
+    let filter = nostr::Filter::new()
+        .kind(Kind::Custom(PROJECT_KIND))
+        .author(owner.public_key())
+        .identifier(d_tag);
+    client
+        .subscribe(&sid, vec![filter])
+        .await
+        .expect("subscribe");
+    let events = client
+        .collect_until_eose(&sid, Duration::from_secs(10))
+        .await
+        .expect("collect");
+    let head = events
+        .into_iter()
+        .max_by_key(|e| e.created_at)
+        .expect("project head");
+    let roster = head
+        .tags
+        .iter()
+        .map(|t| t.as_slice().to_vec())
+        .filter(|t| t[0] == "p")
+        .collect();
+    (head.id.to_hex(), roster)
+}
+
+/// An assignee is data: an `item.assignee` op sets one folded field. It
+/// grants no access, carries no `p` tag and notifies no one, and ingest
+/// takes it from anyone allowed to write — the To-Do tab and `bee todos`
+/// assign any well-formed pubkey. So the plugin route holds it to the same
+/// rule. An agent associated with a project but not on its roster (which
+/// the AssigneePicker offers) can be assigned through Planning exactly as
+/// through a direct op, and assigning it changes nothing about who reads.
 #[tokio::test]
 #[ignore = "requires running relay"]
-async fn a_private_projects_assignee_must_be_someone_its_roster_admits() {
+async fn an_off_roster_assignee_lands_through_the_plugin_as_it_does_directly() {
     let owner = Keys::generate();
     let collaborator = Keys::generate();
     let viewer = Keys::generate();
-    let stranger = Keys::generate();
+    let agent = Keys::generate();
+    let agent_hex = agent.public_key().to_hex();
     let project = create_project(
         &relay_url(),
         &owner,
@@ -814,68 +870,32 @@ async fn a_private_projects_assignee_must_be_someone_its_roster_admits() {
         &[(&collaborator, "collaborator"), (&viewer, "viewer")],
     )
     .await;
-    let create = |assignee: Option<String>| {
-        json!({ "title": "Assigned", "description": null, "statusId": "todo",
-                "priorityId": "none", "assignee": assignee, "containerId": null })
-    };
+    let before = project_head(&owner, &project).await;
 
-    let (status, body) = invoke(
-        &collaborator,
-        "planning",
-        "create-issue",
-        &project,
-        create(Some(stranger.public_key().to_hex())),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["code"], "invalid-target");
-    assert!(body.get("drafts").is_none());
-
+    // Through the plugin: create an issue assigned to the agent, then clear
+    // it and assign it again with set-assignee.
     let created = ok(
         &collaborator,
         "planning",
         "create-issue",
         &project,
-        create(Some(viewer.public_key().to_hex())),
+        json!({ "title": "For the agent", "description": null, "statusId": "todo",
+                "priorityId": "none", "assignee": agent_hex, "containerId": null }),
     )
     .await;
-    publish_drafts(&relay_url(), &collaborator, &created["drafts"]).await;
-    let read = ok(&owner, "planning", "read", &project, json!({})).await;
+    let mut published = publish_drafts(&relay_url(), &collaborator, &created["drafts"]).await;
+    let read = ok(&viewer, "planning", "read", &project, json!({})).await;
     let issue = issues(&read)
         .into_iter()
         .find(|i| i["key"] == created["result"]["key"])
         .expect("created");
-    assert_eq!(issue["assignee"], viewer.public_key().to_hex());
-
+    assert_eq!(issue["assignee"], agent_hex);
     let target = json!({ "containerId": issue["containerId"], "issueId": issue["issueId"] });
-    let with = |assignee: Value| {
+    for assignee in [Value::Null, json!(agent_hex)] {
         let mut input = target.clone();
-        input["assignee"] = assignee;
-        input
-    };
-    let (status, body) = invoke(
-        &owner,
-        "planning",
-        "set-assignee",
-        &project,
-        with(json!(stranger.public_key().to_hex())),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    for (who, assignee) in [
-        (&owner, json!(owner.public_key().to_hex())),
-        (&owner, json!(collaborator.public_key().to_hex())),
-        (&collaborator, Value::Null),
-    ] {
-        let edit = ok(
-            who,
-            "planning",
-            "set-assignee",
-            &project,
-            with(assignee.clone()),
-        )
-        .await;
-        publish_drafts(&relay_url(), who, &edit["drafts"]).await;
+        input["assignee"] = assignee.clone();
+        let edit = ok(&owner, "planning", "set-assignee", &project, input).await;
+        published.extend(publish_drafts(&relay_url(), &owner, &edit["drafts"]).await);
         let read = ok(&viewer, "planning", "read", &project, json!({})).await;
         let issue = issues(&read)
             .into_iter()
@@ -884,15 +904,69 @@ async fn a_private_projects_assignee_must_be_someone_its_roster_admits() {
         assert_eq!(issue["assignee"], assignee);
     }
 
-    // A public project's issues are readable by every relay member and a
-    // to-do op notifies no one, so any well-formed pubkey may be assigned.
-    let public = create_project(&relay_url(), &owner, None, &[]).await;
-    ok(
-        &owner,
-        "planning",
-        "create-issue",
-        &public,
-        create(Some(stranger.public_key().to_hex())),
+    // Directly, as the To-Do tab and `bee todos` sign it: the same op from
+    // the same collaborator, with no plugin in the path, is accepted too.
+    let list = issue["containerId"].as_str().expect("list id");
+    let item = issue["issueId"].as_str().expect("item id");
+    let direct = EventBuilder::new(
+        Kind::Custom(44248),
+        json!({ "schema": "buzz-project-todo/v1", "op": "item.assignee",
+                "listId": list, "itemId": item, "assignee": agent_hex })
+        .to_string(),
     )
-    .await;
+    .tags([
+        Tag::parse(["a", &project]).unwrap(),
+        Tag::parse(["td-v", "td1-1"]).unwrap(),
+        Tag::parse(["td-op", "item.assignee"]).unwrap(),
+        Tag::parse(["td-list", list]).unwrap(),
+        Tag::parse(["td-vis", "project"]).unwrap(),
+        Tag::parse(["td-item", item]).unwrap(),
+    ])
+    .sign_with_keys(&collaborator)
+    .unwrap();
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &collaborator)
+        .await
+        .expect("connect");
+    let accepted = client.send_event(direct.clone()).await.expect("send");
+    assert!(accepted.accepted, "direct assign: {}", accepted.message);
+    published.push(direct);
+
+    // No routing: no op names the agent in a tag, so nothing addressed by
+    // `p` (mentions, notifications, DMs) ever reaches it.
+    for event in &published {
+        assert!(
+            event
+                .tags
+                .iter()
+                .all(|t| t.as_slice()[0] != "p" && !t.as_slice().iter().any(|v| v == &agent_hex)),
+            "an assignment op must not route to its assignee: {:?}",
+            event.tags
+        );
+    }
+    // No access: the roster is the same head, and the agent still cannot
+    // read the project through the plugin or over a raw REQ.
+    assert_eq!(project_head(&owner, &project).await, before);
+    let (status, body) = invoke(&agent, "planning", "read", &project, json!({})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["code"], "scope-forbidden");
+    let mut agent_client = BeekeeperTestClient::connect(&relay_url(), &agent)
+        .await
+        .expect("agent connect");
+    let sid = unique("agent-read");
+    let filter = nostr::Filter::new().kind(Kind::Custom(44248)).custom_tags(
+        nostr::SingleLetterTag::lowercase(nostr::Alphabet::A),
+        [project.as_str()],
+    );
+    agent_client
+        .subscribe(&sid, vec![filter])
+        .await
+        .expect("subscribe");
+    let seen = agent_client
+        .collect_until_eose(&sid, Duration::from_secs(10))
+        .await
+        .expect("collect");
+    assert!(
+        seen.is_empty(),
+        "a private project's ops stay withheld from its assignee"
+    );
 }

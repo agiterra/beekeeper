@@ -17,10 +17,14 @@
 //!   passed through.
 //! - **Caps hold twice:** on what the plugin proposed and on what the host
 //!   built from it, so construction cannot push a draft past them.
-//! - **References are the embedder's to authorize.** A kind's validator
-//!   reports the people a draft names in its content (an assignee); the
-//!   embedder decides whether each is a legitimate target in the scope before
-//!   any draft reaches a signer.
+//! - **References are reported, not authorized here.** A kind's validator
+//!   reports the people a draft names in its content (an assignee). For
+//!   kind 44248 that name is data: it sets a folded field, and grants no
+//!   access, carries no `p` tag and notifies nobody, so it gets exactly the
+//!   checks a directly signed op gets (well-formed pubkey). A future kind
+//!   whose reference *bears authority* must be checked where the effect
+//!   happens — ingest, or whatever acts on it — not only by a lookup here
+//!   before signing, which a directly signed event never passes through.
 //!
 //! A signer (the member's client) applies the same rule again before it
 //! signs: it rebuilds the scope tag from the scope it asked for. It does not
@@ -42,8 +46,32 @@ pub const MAX_DRAFT_TAG_BYTES: usize = 16 * 1_024;
 /// Bytes of a draft's content.
 pub const MAX_DRAFT_CONTENT_BYTES: usize = 64 * 1_024;
 
+/// How far behind the host clock a draft may be stamped. Relay ingest takes
+/// ±900 s of its clock, judged after the reply, the signing and the publish;
+/// the 300 s left over is that transport margin, so a draft the host passes
+/// is not refused as stale on arrival. Every signer holds the same window
+/// (`beekeeper_nip_td::DRAFT_PAST_SECS`; a test here keeps them equal).
+pub const DRAFT_PAST_SECS: u64 = 600;
+/// How far ahead of the host clock a draft may be stamped: just inside
+/// ingest's 900 s, which a later ingest only makes safer.
+pub const DRAFT_FUTURE_SECS: u64 = 890;
+
+/// Refuse a draft stamped outside `now − DRAFT_PAST_SECS ..= now +
+/// DRAFT_FUTURE_SECS` (inclusive). The stamp is never rewritten: it orders
+/// the op against its rivals, so changing it would change what it means.
+pub fn check_created_at(created_at: u64, now: u64) -> Result<(), String> {
+    if created_at.saturating_add(DRAFT_PAST_SECS) < now
+        || created_at > now.saturating_add(DRAFT_FUTURE_SECS)
+    {
+        return Err(format!(
+            "created_at {created_at} is outside {DRAFT_PAST_SECS} s behind ..= {DRAFT_FUTURE_SECS} s ahead of the host clock ({now})"
+        ));
+    }
+    Ok(())
+}
+
 /// What a valid draft names outside its own data: the people its content
-/// routes to. The embedder authorizes each against the invocation's scope.
+/// names. Reported for the embedder's log and its caller, not a gate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DraftReferences {
     /// Pubkeys (64 lowercase hex) the draft names, e.g. an assignee.
@@ -168,6 +196,21 @@ pub fn seal_tags(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hosts_stamp_window_is_the_one_every_signer_holds() {
+        assert_eq!(DRAFT_PAST_SECS, beekeeper_nip_td::DRAFT_PAST_SECS);
+        assert_eq!(DRAFT_FUTURE_SECS, beekeeper_nip_td::DRAFT_FUTURE_SECS);
+        const NOW: u64 = 1_800_000_000;
+        for at in [0, NOW - 1_800, NOW - 601, NOW + 891, NOW + 86_400] {
+            assert!(check_created_at(at, NOW).is_err(), "{at}");
+            assert!(beekeeper_nip_td::check_draft_created_at(at, NOW).is_err());
+        }
+        for at in [NOW - 600, NOW, NOW + 890] {
+            assert!(check_created_at(at, NOW).is_ok(), "{at}");
+            assert!(beekeeper_nip_td::check_draft_created_at(at, NOW).is_ok());
+        }
+    }
 
     const HERE: &str =
         "30621:1111111111111111111111111111111111111111111111111111111111111111:here";

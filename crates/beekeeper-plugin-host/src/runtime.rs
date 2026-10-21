@@ -8,7 +8,9 @@ use std::time::Duration;
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 
-use crate::drafts::{seal_tags, DraftKind, DraftReferences, MAX_DRAFT_CONTENT_BYTES};
+use crate::drafts::{
+    check_created_at, seal_tags, DraftKind, DraftReferences, MAX_DRAFT_CONTENT_BYTES,
+};
 use crate::registry::{PluginEntry, Registry};
 use crate::{
     sha256_hex, Access, Draft, IfRefused, Invocation, InvokeError, InvokeOutcome, LoadError,
@@ -42,11 +44,6 @@ const MAX_CURSOR_BYTES: usize = 256;
 const EPOCH_TICK: Duration = Duration::from_millis(10);
 /// Fuel for `describe()`, which should do almost nothing.
 const MANIFEST_FUEL: u64 = 200_000_000;
-/// A draft's `created_at` must sit inside this window around the host's
-/// clock. The future edge stays inside the relay's ingest drift rule so a
-/// draft the host passes is not one ingest will refuse for its timestamp.
-const DRAFT_PAST_SECS: u64 = 3_600;
-const DRAFT_FUTURE_SECS: u64 = 890;
 const MAX_LOGS: usize = 32;
 const MAX_LOG_BYTES: usize = 1_024;
 
@@ -724,15 +721,7 @@ impl PluginHost {
             .validators
             .get(draft.kind)
             .ok_or_else(|| format!("this host has no validator for kind {}", draft.kind))?;
-        let now = invocation.now;
-        if draft.created_at.saturating_add(DRAFT_PAST_SECS) < now
-            || draft.created_at > now.saturating_add(DRAFT_FUTURE_SECS)
-        {
-            return Err(format!(
-                "created_at {} is outside {}..={} of the host clock",
-                draft.created_at, DRAFT_PAST_SECS, DRAFT_FUTURE_SECS
-            ));
-        }
+        check_created_at(draft.created_at, invocation.now)?;
         if draft.content.len() > MAX_DRAFT_CONTENT_BYTES {
             return Err(format!("content is over {MAX_DRAFT_CONTENT_BYTES} bytes"));
         }

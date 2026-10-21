@@ -48,8 +48,8 @@ pub const DEFAULT_CONTAINER_TITLE: &str = "Issues";
 /// Pages of 1000 ops read before the read says it is truncated.
 const PAGE: u32 = 1_000;
 const MAX_PAGES: usize = 10;
-/// Stay inside the relay's 900 s timestamp drift rule.
-const MAX_FUTURE_SKEW_SECS: u64 = 890;
+/// Stay inside the window every checker holds a draft to.
+const MAX_FUTURE_SKEW_SECS: u64 = beekeeper_nip_td::DRAFT_FUTURE_SECS;
 
 /// One operation's declaration.
 pub struct Operation {

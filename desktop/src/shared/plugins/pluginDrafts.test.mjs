@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DRAFT_FUTURE_SECS,
+  DRAFT_PAST_SECS,
   DraftUnconfirmedError,
   PluginPartialWriteError,
   executePluginDrafts,
@@ -14,6 +16,9 @@ const LIST = "abcdefabcdefabcdefabcdefabcdefab";
 const ITEM = "1234567890abcdef1234567890abcdef";
 const MEMBER = "b".repeat(64);
 const SCHEMA = "buzz-project-todo/v1";
+/** The fixed clock every test seals against. */
+const NOW = 1_800_000_000;
+const now = () => NOW;
 
 const listTags = (op) => [
   ["a", PROJECT],
@@ -31,7 +36,7 @@ function draft(group, ifRefused, extra = {}) {
   const { content: marker = group, ...rest } = extra;
   return {
     kind: 44248,
-    createdAt: 100,
+    createdAt: NOW,
     tags: listTags("list.title"),
     content: JSON.stringify({
       schema: SCHEMA,
@@ -49,7 +54,7 @@ function draft(group, ifRefused, extra = {}) {
 function assignDraft(assignee, extraTags = []) {
   return {
     kind: 44248,
-    createdAt: 100,
+    createdAt: NOW,
     tags: [...listTags("item.assignee"), ["td-item", ITEM], ...extraTags],
     content: JSON.stringify({
       schema: SCHEMA,
@@ -71,6 +76,7 @@ function relay(refuse = []) {
   return {
     seen,
     effects: {
+      now,
       publish: async (d) => {
         seen.push(markerOf(d));
         if (refuse.includes(markerOf(d))) throw new Error("relay said no");
@@ -212,6 +218,7 @@ test("nothing is signed when any draft is a foreign kind, scope, route or shape"
 test("a publish that may still land stops the run and is reported as unconfirmed, never refused", async () => {
   const seen = [];
   const effects = {
+    now,
     publish: async (d) => {
       seen.push(markerOf(d));
       if (markerOf(d) === "add")
@@ -238,11 +245,11 @@ test("a publish that may still land stops the run and is reported as unconfirmed
 
 test("a draft is signed with this app's own scope, whether or not the plugin proposed one", () => {
   const proposed = assignDraft(MEMBER);
-  const sealed = sealDraft(proposed, PROJECT);
+  const sealed = sealDraft(proposed, PROJECT, NOW);
   assert.deepEqual(sealed.tags[0], ["a", PROJECT]);
   assert.equal(sealed.tags.filter((t) => t[0] === "a").length, 1);
   const bare = { ...proposed, tags: proposed.tags.slice(1) };
-  assert.deepEqual(sealDraft(bare, PROJECT).tags, sealed.tags);
+  assert.deepEqual(sealDraft(bare, PROJECT, NOW).tags, sealed.tags);
   assert.equal(
     sealed.content,
     proposed.content,
@@ -256,6 +263,7 @@ test("a legitimate assignment and an unassignment are both signed", async () => 
     [assignDraft(MEMBER), assignDraft(null)],
     PROJECT,
     {
+      now,
       publish: async (d) => {
         r.seen.push(JSON.parse(d.content).assignee);
         return { id: `id-${r.seen.length}` };
@@ -264,4 +272,61 @@ test("a legitimate assignment and an unassignment are both signed", async () => 
   );
   assert.deepEqual(r.seen, [MEMBER, null]);
   assert.equal(run.published.length, 2);
+});
+
+test("a draft is signed only when its stamp sits in the window ingest still accepts", () => {
+  const at = (createdAt) =>
+    sealDraft({ ...draft("x", "abort"), createdAt }, PROJECT, NOW);
+  for (const edge of [NOW - DRAFT_PAST_SECS, NOW, NOW + DRAFT_FUTURE_SECS]) {
+    assert.equal(at(edge).createdAt, edge, "never re-stamped");
+  }
+  for (const stamp of [
+    NOW - DRAFT_PAST_SECS - 1,
+    NOW - 1800,
+    NOW + DRAFT_FUTURE_SECS + 1,
+    NOW + 86_400,
+    0,
+  ]) {
+    assert.throws(
+      () => at(stamp),
+      /outside .* of this app's clock/,
+      String(stamp),
+    );
+  }
+  // Missing or malformed is refused, never read as zero or as now.
+  const { createdAt: _, ...missing } = draft("x", "abort");
+  assert.throws(
+    () => sealDraft(missing, PROJECT, NOW),
+    /whole-second createdAt/,
+  );
+  for (const stamp of [String(NOW), NOW + 0.5, -1, Number.NaN, null]) {
+    assert.throws(() => at(stamp), /whole-second createdAt/, String(stamp));
+  }
+});
+
+test("a valid first draft and a stale second publish nothing at all", async () => {
+  const r = relay();
+  await assert.rejects(
+    executePluginDrafts(
+      [
+        draft("first", "abort"),
+        draft("second", "abort", { createdAt: NOW - 1800 }),
+      ],
+      PROJECT,
+      r.effects,
+    ),
+    /Nothing was saved/,
+  );
+  assert.equal(r.seen.length, 0, "zero publish calls, not one");
+  // The run's clock is the effects' clock, not the system's: the same pair
+  // judged an hour later refuses the first draft too.
+  const later = relay();
+  await assert.rejects(
+    executePluginDrafts([draft("first", "abort")], PROJECT, {
+      ...later.effects,
+      now: () => NOW + 3600,
+    }),
+    /outside/,
+  );
+  assert.equal(later.seen.length, 0);
 });

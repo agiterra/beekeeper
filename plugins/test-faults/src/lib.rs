@@ -207,8 +207,9 @@ impl Guest for Faults {
                 drafts: vec![list_create(&coordinate, inv.now + 3_600)],
             }),
             // Proposes exactly the drafts the input names — `{"drafts": [{kind,
-            // tags, content}]}` stamped with the host clock — so a test can
-            // put any proposal through the host's checks.
+            // tags, content, createdAt?}]}`, stamped with the host clock
+            // unless `createdAt` says otherwise — so a test can put any
+            // proposal through the host's checks.
             "draft-as-told" => {
                 let input: serde_json::Value = serde_json::from_str(&inv.input_json)
                     .map_err(|e| types::OpError::InvalidInput(e.to_string()))?;
@@ -223,7 +224,7 @@ impl Guest for Faults {
                             tags,
                             d["content"].as_str().unwrap_or(""),
                             d["kind"].as_u64().unwrap_or(u64::from(KIND)) as u32,
-                            inv.now,
+                            d["createdAt"].as_u64().unwrap_or(inv.now),
                         ))
                     })
                     .collect::<Result<Vec<_>, types::OpError>>()?;

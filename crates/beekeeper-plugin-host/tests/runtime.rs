@@ -622,6 +622,23 @@ fn told(
     )
 }
 
+/// Ask the fault plugin, at a fixed host clock `now`, to propose list
+/// creates stamped exactly `stamps`.
+fn told_at(
+    host: &PluginHost,
+    now: u64,
+    stamps: &[u64],
+) -> Result<beekeeper_plugin_host::InvokeOutcome, InvokeError> {
+    let (tags, content) = list_create_data();
+    let drafts: Vec<Value> = stamps
+        .iter()
+        .map(|at| json!({ "kind": KIND, "tags": tags, "content": content, "createdAt": at }))
+        .collect();
+    let mut invocation = call("draft-as-told", json!({ "drafts": drafts }), Access::Write);
+    invocation.now = now;
+    host.invoke("test-faults", invocation, Arc::new(Source::default()))
+}
+
 fn violation(result: Result<beekeeper_plugin_host::InvokeOutcome, InvokeError>) -> String {
     match result {
         Err(InvokeError::ContractViolation(message)) => message,
@@ -833,4 +850,32 @@ fn planning_creates_edits_and_assigns_through_the_sealed_contract() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn a_drafts_stamp_must_sit_in_the_window_ingest_will_still_accept_after_transport() {
+    use beekeeper_nip_td::{DRAFT_FUTURE_SECS, DRAFT_PAST_SECS};
+    let host = faults("");
+    const NOW: u64 = 1_800_000_000;
+    for at in [NOW, NOW - DRAFT_PAST_SECS, NOW + DRAFT_FUTURE_SECS] {
+        let outcome = told_at(&host, NOW, &[at]).expect("inside the window");
+        assert_eq!(outcome.drafts[0].created_at, at, "never re-stamped");
+    }
+    // Half an hour stale was admitted by the old hour-long window; ingest
+    // would refuse it at +-900 s. A day ahead, and zero, likewise.
+    for at in [
+        NOW - 1_800,
+        NOW - DRAFT_PAST_SECS - 1,
+        NOW + DRAFT_FUTURE_SECS + 1,
+        NOW + 86_400,
+        0,
+    ] {
+        let message = violation(told_at(&host, NOW, &[at]));
+        assert!(message.contains("created_at"), "{at}: {message}");
+    }
+    // A valid first draft and a stale second: the whole output is refused,
+    // so the relay hands the caller nothing to sign.
+    let message = violation(told_at(&host, NOW, &[NOW, NOW - 1_800]));
+    assert!(message.starts_with("draft 1:"), "{message}");
 }
