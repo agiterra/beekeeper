@@ -122,7 +122,7 @@ mod tests {
     fn plugin_names_cannot_carry_a_path() {
         assert!(valid_plugin_name("planning"));
         assert!(valid_plugin_name("planning-fixture"));
-        assert!(!valid_plugin_name("../events"));
+        assert!(!valid_plugin_name("../admin"));
         assert!(!valid_plugin_name("a/b"));
         assert!(!valid_plugin_name(""));
     }
