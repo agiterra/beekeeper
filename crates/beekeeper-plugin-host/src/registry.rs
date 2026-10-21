@@ -17,7 +17,24 @@
 //! draft_kinds = [44248]
 //! [plugin.limits]                       # every field optional
 //! fuel = 2_000_000_000
+//!
+//! [[plugin]]
+//! name   = "github"
+//! world  = "webhook-plugin@1"
+//! path   = "github.wasm"
+//! sha256 = "<64 hex>"
+//! [plugin.grants]
+//! type_prefix = "com.github"            # required; the manifest must ask for exactly this
+//! [plugin.limits]                       # every field optional
+//! max_body_bytes = 2_097_152
+//!
+//! [host]                                # optional; relay-wide
+//! max_concurrent_calls = 32
 //! ```
+//!
+//! The `world` selects the shape of `grants` and `limits`: each world has its
+//! own structs, each refusing unknown fields, so a field that means something
+//! in one world is an error in another rather than silently ignored.
 
 use std::path::{Path, PathBuf};
 
@@ -25,10 +42,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::LoadError;
 
-/// The worlds this build can load. `webhook-plugin@1` is planned
-/// (agents repo `plans/GITHUB_PLUGIN_SLICE_PLAN.md`) and would be a second
-/// arm here, sharing the loader, the pin and the limits.
-pub const SUPPORTED_WORLDS: &[&str] = &["operation-provider@1"];
+/// The operation-provider world (Planning): a member invokes an operation and
+/// signs the drafts it returns.
+pub const OPERATION_PROVIDER_WORLD: &str = "operation-provider@1";
+/// The inbound-webhook world: a vendor delivery is authenticated by the host
+/// and projected by the plugin into one application event the relay signs.
+pub const WEBHOOK_WORLD: &str = "webhook-plugin@1";
+
+/// The worlds this build can load. Each has its own grants, limits, import
+/// allowlist and loaded-plugin type; an entry naming any other world refuses
+/// the registry.
+pub const SUPPORTED_WORLDS: &[&str] = &[OPERATION_PROVIDER_WORLD, WEBHOOK_WORLD];
 
 /// Per-call limits. Every default is a ceiling a plugin may lower but the
 /// registry may not raise past [`Limits::HARD_CEILINGS`].
@@ -93,15 +117,7 @@ impl Limits {
 
     fn check(&self, plugin: &str) -> Result<(), LoadError> {
         let c = &Self::HARD_CEILINGS;
-        let over = |field: &str, value: u64, ceiling: u64, floor: u64| {
-            if value < floor || value > ceiling {
-                Err(LoadError::Registry(format!(
-                    "plugin {plugin:?}: limits.{field} = {value} is outside {floor}..={ceiling}"
-                )))
-            } else {
-                Ok(())
-            }
-        };
+        let over = range_check(plugin);
         over(
             "memory_bytes",
             self.memory_bytes,
@@ -151,6 +167,127 @@ impl Limits {
     }
 }
 
+/// Per-call limits for a `webhook-plugin@1` plugin. Every field optional;
+/// none may pass [`WebhookLimits::HARD_CEILINGS`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct WebhookLimits {
+    /// Linear memory one call may hold, summed over every memory.
+    pub memory_bytes: u64,
+    /// Instructions a call may execute (wasmtime fuel).
+    pub fuel: u64,
+    /// Wall-clock backstop per call, in milliseconds.
+    pub deadline_ms: u64,
+    /// Calls of this plugin, across every installation, that may run at once.
+    pub max_concurrent: usize,
+    /// Calls for one installation that may run at once — a supplement to
+    /// `max_concurrent` and the relay-wide cap, so one noisy installation
+    /// cannot take every slot of its plugin.
+    pub max_concurrent_per_installation: usize,
+    /// Bytes of raw request body. The host applies the smaller of this and
+    /// the plugin manifest's own request.
+    pub max_body_bytes: usize,
+}
+
+impl Default for WebhookLimits {
+    fn default() -> Self {
+        Self {
+            memory_bytes: 64 * 1024 * 1024,
+            fuel: 2_000_000_000,
+            deadline_ms: 2_000,
+            max_concurrent: 8,
+            max_concurrent_per_installation: 2,
+            max_body_bytes: 1024 * 1024,
+        }
+    }
+}
+
+impl WebhookLimits {
+    /// What no registry entry may exceed.
+    pub const HARD_CEILINGS: WebhookLimits = WebhookLimits {
+        memory_bytes: 512 * 1024 * 1024,
+        fuel: 50_000_000_000,
+        deadline_ms: 15_000,
+        max_concurrent: 64,
+        max_concurrent_per_installation: 64,
+        max_body_bytes: 25 * 1024 * 1024,
+    };
+
+    fn check(&self, plugin: &str) -> Result<(), LoadError> {
+        let c = &Self::HARD_CEILINGS;
+        let over = range_check(plugin);
+        over(
+            "memory_bytes",
+            self.memory_bytes,
+            c.memory_bytes,
+            1024 * 1024,
+        )?;
+        over("fuel", self.fuel, c.fuel, 1)?;
+        over("deadline_ms", self.deadline_ms, c.deadline_ms, 10)?;
+        over(
+            "max_concurrent",
+            self.max_concurrent as u64,
+            c.max_concurrent as u64,
+            1,
+        )?;
+        over(
+            "max_concurrent_per_installation",
+            self.max_concurrent_per_installation as u64,
+            self.max_concurrent as u64,
+            1,
+        )?;
+        over(
+            "max_body_bytes",
+            self.max_body_bytes as u64,
+            c.max_body_bytes as u64,
+            1,
+        )?;
+        Ok(())
+    }
+}
+
+/// The range check every limit goes through: `floor..=ceiling` or a
+/// registry error naming the field.
+fn range_check(plugin: &str) -> impl Fn(&str, u64, u64, u64) -> Result<(), LoadError> + '_ {
+    move |field: &str, value: u64, ceiling: u64, floor: u64| {
+        if value < floor || value > ceiling {
+            Err(LoadError::Registry(format!(
+                "plugin {plugin:?}: limits.{field} = {value} is outside {floor}..={ceiling}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// What the operator lets a `webhook-plugin@1` plugin emit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebhookGrants {
+    /// Every application-event type the plugin emits starts with this plus
+    /// `.`. Granted by the operator; the plugin's manifest must request
+    /// exactly this or the plugin is refused at load. Two or more
+    /// dot-separated labels of `[a-z0-9-]` (e.g. `com.github`).
+    pub type_prefix: String,
+}
+
+/// `true` for a type prefix of 2+ labels of `[a-z0-9-]{1,63}`, not starting or
+/// ending with `-`, at most 64 bytes, so `prefix.name` can be a valid
+/// application-event type (3+ labels, at most 128 bytes).
+pub fn valid_type_prefix(prefix: &str) -> bool {
+    prefix.len() <= 64
+        && prefix.split('.').count() >= 2
+        && prefix.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
 /// What the operator lets a plugin touch. A plugin's manifest *asks*; a
 /// request outside these grants refuses the plugin at load, it is never
 /// silently narrowed.
@@ -163,11 +300,13 @@ pub struct Grants {
     pub draft_kinds: Vec<u32>,
 }
 
-/// One registered plugin.
+/// One registered `operation-provider@1` plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginEntry {
     pub name: String,
+    /// Always [`OPERATION_PROVIDER_WORLD`]; other worlds have their own entry
+    /// type ([`WebhookEntry`]).
     pub world: String,
     /// Resolved against the registry file's directory when relative.
     pub path: PathBuf,
@@ -179,19 +318,99 @@ pub struct PluginEntry {
     pub limits: Limits,
 }
 
+/// One registered `webhook-plugin@1` plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebhookEntry {
+    pub name: String,
+    /// Resolved against the registry file's directory when relative.
+    pub path: PathBuf,
+    /// Lowercase hex sha256 of the component file.
+    pub sha256: String,
+    pub grants: WebhookGrants,
+    pub limits: WebhookLimits,
+}
+
+/// Relay-wide limits: across every plugin of every world.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct HostLimits {
+    /// Plugin calls, of any plugin in any world, that may run at once. A
+    /// call past it is refused as busy, whatever its plugin's own limit.
+    pub max_concurrent_calls: usize,
+}
+
+impl Default for HostLimits {
+    fn default() -> Self {
+        Self {
+            max_concurrent_calls: 32,
+        }
+    }
+}
+
+impl HostLimits {
+    /// The most a registry may set.
+    pub const MAX_CONCURRENT_CALLS_CEILING: usize = 256;
+}
+
+/// One `[[plugin]]` table before its world is known: the world decides which
+/// structs its `grants` and `limits` must parse as.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEntry {
+    name: String,
+    world: String,
+    path: PathBuf,
+    sha256: String,
+    #[serde(default)]
+    grants: Option<toml::Value>,
+    #[serde(default)]
+    limits: Option<toml::Value>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RegistryFile {
     #[serde(default)]
-    plugin: Vec<PluginEntry>,
+    plugin: Vec<RawEntry>,
+    #[serde(default)]
+    host: HostLimits,
 }
 
 /// A parsed, checked registry.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
+    /// `operation-provider@1` plugins, in file order.
     pub entries: Vec<PluginEntry>,
+    /// `webhook-plugin@1` plugins, in file order.
+    pub webhooks: Vec<WebhookEntry>,
+    /// Relay-wide limits (`[host]`).
+    pub host: HostLimits,
     /// The file it came from, for status reporting.
     pub source: Option<PathBuf>,
+}
+
+/// Parse one world-specific table, naming the plugin, world and table when
+/// it does not fit (an unknown field included).
+fn world_table<T: serde::de::DeserializeOwned>(
+    entry: &RawEntry,
+    table: &str,
+    value: Option<toml::Value>,
+    default: Option<T>,
+) -> Result<T, LoadError> {
+    match value {
+        Some(value) => value.try_into().map_err(|error| {
+            LoadError::Registry(format!(
+                "plugin {:?}: [plugin.{table}] is not valid for world {:?}: {error}",
+                entry.name, entry.world
+            ))
+        }),
+        None => default.ok_or_else(|| {
+            LoadError::Registry(format!(
+                "plugin {:?}: world {:?} requires [plugin.{table}]",
+                entry.name, entry.world
+            ))
+        }),
+    }
 }
 
 /// `true` for a name a URL path segment can carry unescaped:
@@ -225,8 +444,18 @@ impl Registry {
     pub fn from_toml(text: &str, base: &Path) -> Result<Self, LoadError> {
         let file: RegistryFile = toml::from_str(text)
             .map_err(|error| LoadError::Registry(format!("invalid plugin registry: {error}")))?;
+        if file.host.max_concurrent_calls == 0
+            || file.host.max_concurrent_calls > HostLimits::MAX_CONCURRENT_CALLS_CEILING
+        {
+            return Err(LoadError::Registry(format!(
+                "host.max_concurrent_calls = {} is outside 1..={}",
+                file.host.max_concurrent_calls,
+                HostLimits::MAX_CONCURRENT_CALLS_CEILING
+            )));
+        }
         let mut seen = std::collections::BTreeSet::new();
-        let mut entries = Vec::with_capacity(file.plugin.len());
+        let mut entries = Vec::new();
+        let mut webhooks = Vec::new();
         for mut entry in file.plugin {
             if !valid_plugin_name(&entry.name) {
                 return Err(LoadError::Registry(format!(
@@ -259,14 +488,72 @@ impl Registry {
                     entry.name
                 )));
             }
-            entry.limits.check(&entry.name)?;
             if entry.path.is_relative() {
                 entry.path = base.join(&entry.path);
             }
-            entries.push(entry);
+            if entry.world == OPERATION_PROVIDER_WORLD {
+                let grants = world_table(
+                    &entry,
+                    "grants",
+                    entry.grants.clone(),
+                    Some(Grants::default()),
+                )?;
+                let limits = world_table(
+                    &entry,
+                    "limits",
+                    entry.limits.clone(),
+                    Some(Limits::default()),
+                )?;
+                limits.check(&entry.name)?;
+                entries.push(PluginEntry {
+                    name: entry.name,
+                    world: entry.world,
+                    path: entry.path,
+                    sha256: entry.sha256,
+                    grants,
+                    limits,
+                });
+            } else {
+                // The only other supported world. The type prefix is the
+                // operator's grant, so there is no default for it.
+                let grants: WebhookGrants =
+                    world_table(&entry, "grants", entry.grants.clone(), None)?;
+                if !valid_type_prefix(&grants.type_prefix) {
+                    return Err(LoadError::Registry(format!(
+                        "plugin {:?}: grants.type_prefix {:?} must be 2+ dot-separated labels of [a-z0-9-], at most 64 bytes",
+                        entry.name, grants.type_prefix
+                    )));
+                }
+                let limits: WebhookLimits = world_table(
+                    &entry,
+                    "limits",
+                    entry.limits.clone(),
+                    Some(WebhookLimits::default()),
+                )?;
+                limits.check(&entry.name)?;
+                // A per-installation limit the relay-wide cap could never
+                // grant would be a limit that never applies.
+                if limits.max_concurrent_per_installation > file.host.max_concurrent_calls {
+                    return Err(LoadError::Registry(format!(
+                        "plugin {:?}: limits.max_concurrent_per_installation = {} is over host.max_concurrent_calls = {}",
+                        entry.name,
+                        limits.max_concurrent_per_installation,
+                        file.host.max_concurrent_calls
+                    )));
+                }
+                webhooks.push(WebhookEntry {
+                    name: entry.name,
+                    path: entry.path,
+                    sha256: entry.sha256,
+                    grants,
+                    limits,
+                });
+            }
         }
         Ok(Self {
             entries,
+            webhooks,
+            host: file.host,
             source: None,
         })
     }
@@ -306,9 +593,146 @@ mod tests {
 
     #[test]
     fn refuses_an_unknown_world() {
-        let text = entry("").replace("operation-provider@1", "webhook-plugin@1");
+        // Was `webhook-plugin@1` before that world existed; any name this
+        // build does not know is still refused.
+        let text = entry("").replace("operation-provider@1", "webhook-plugin@2");
         let error = Registry::from_toml(&text, Path::new(".")).unwrap_err();
         assert!(error.to_string().contains("not supported"), "{error}");
+    }
+
+    fn webhook(extra: &str) -> String {
+        format!(
+            "[[plugin]]\nname = \"github\"\nworld = \"webhook-plugin@1\"\npath = \"g.wasm\"\nsha256 = \"{PIN}\"\n{extra}"
+        )
+    }
+
+    const PREFIX: &str = "[plugin.grants]\ntype_prefix = \"com.github\"\n";
+
+    #[test]
+    fn a_webhook_entry_parses_into_its_own_world() {
+        let text = format!(
+            "{}{}",
+            entry(""),
+            webhook(&format!(
+                "{PREFIX}[plugin.limits]\nmax_body_bytes = 2097152\nmax_concurrent_per_installation = 3\n"
+            ))
+        );
+        let registry = Registry::from_toml(&text, Path::new("/srv")).expect("parses");
+        assert_eq!(registry.entries.len(), 1);
+        assert_eq!(registry.webhooks.len(), 1);
+        let w = &registry.webhooks[0];
+        assert_eq!(w.path, PathBuf::from("/srv/g.wasm"));
+        assert_eq!(w.grants.type_prefix, "com.github");
+        assert_eq!(w.limits.max_body_bytes, 2_097_152);
+        assert_eq!(w.limits.max_concurrent_per_installation, 3);
+        assert_eq!(w.limits.fuel, WebhookLimits::default().fuel);
+        assert_eq!(registry.host, HostLimits::default());
+    }
+
+    #[test]
+    fn a_webhook_entry_needs_a_valid_type_prefix_grant() {
+        let error = Registry::from_toml(&webhook(""), Path::new(".")).unwrap_err();
+        assert!(
+            error.to_string().contains("requires [plugin.grants]"),
+            "{error}"
+        );
+        for bad in ["github", "com..github", "Com.github", "com.-x", ""] {
+            let text = webhook(&format!("[plugin.grants]\ntype_prefix = \"{bad}\"\n"));
+            let error = Registry::from_toml(&text, Path::new(".")).unwrap_err();
+            assert!(error.to_string().contains("type_prefix"), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn each_worlds_tables_refuse_the_other_worlds_fields() {
+        // An operation-provider field in a webhook entry, and back.
+        for text in [
+            webhook(&format!("{PREFIX}read_kinds = [44248]\n")),
+            webhook(&format!("{PREFIX}[plugin.limits]\nmax_queries = 3\n")),
+            entry("[plugin.grants]\ntype_prefix = \"com.github\"\n"),
+            entry("[plugin.limits]\nmax_body_bytes = 10\n"),
+        ] {
+            let error = Registry::from_toml(&text, Path::new(".")).unwrap_err();
+            assert!(
+                error.to_string().contains("unknown field"),
+                "{text}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn webhook_limits_hold_their_ceilings() {
+        let error = Registry::from_toml(
+            &webhook(&format!(
+                "{PREFIX}[plugin.limits]\nmax_body_bytes = 26214401\n"
+            )),
+            Path::new("."),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("max_body_bytes"), "{error}");
+        // A per-installation limit above its plugin's cap would be a limit
+        // that never applies.
+        let error = Registry::from_toml(
+            &webhook(&format!(
+                "{PREFIX}[plugin.limits]\nmax_concurrent = 2\nmax_concurrent_per_installation = 3\n"
+            )),
+            Path::new("."),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("max_concurrent_per_installation"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_per_installation_limit_is_within_the_relay_wide_cap() {
+        let limits = "[plugin.limits]\nmax_concurrent = 8\nmax_concurrent_per_installation = 4\n";
+        let text = format!(
+            "[host]\nmax_concurrent_calls = 3\n{}",
+            webhook(&format!("{PREFIX}{limits}"))
+        );
+        let error = Registry::from_toml(&text, Path::new(".")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("is over host.max_concurrent_calls = 3"),
+            "{error}"
+        );
+        let text = format!(
+            "[host]\nmax_concurrent_calls = 4\n{}",
+            webhook(&format!("{PREFIX}{limits}"))
+        );
+        let registry = Registry::from_toml(&text, Path::new(".")).expect("equal is allowed");
+        assert_eq!(
+            registry.webhooks[0].limits.max_concurrent_per_installation,
+            4
+        );
+    }
+
+    #[test]
+    fn a_name_is_unique_across_worlds() {
+        let text = format!(
+            "{}{}",
+            entry(""),
+            webhook(PREFIX).replace("\"github\"", "\"planning\"")
+        );
+        let error = Registry::from_toml(&text, Path::new(".")).unwrap_err();
+        assert!(error.to_string().contains("registered twice"), "{error}");
+    }
+
+    #[test]
+    fn the_relay_wide_cap_is_configurable_and_bounded() {
+        let registry =
+            Registry::from_toml("[host]\nmax_concurrent_calls = 4\n", Path::new(".")).unwrap();
+        assert_eq!(registry.host.max_concurrent_calls, 4);
+        for bad in ["0", "257"] {
+            let text = format!("[host]\nmax_concurrent_calls = {bad}\n");
+            assert!(Registry::from_toml(&text, Path::new(".")).is_err(), "{bad}");
+        }
+        assert!(Registry::from_toml("[host]\nsurprise = 1\n", Path::new(".")).is_err());
     }
 
     #[test]

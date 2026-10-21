@@ -210,25 +210,8 @@ That is why a member's issue edit stays that member's signed event, and it
 is not changing: Planning does not move to relay signing. The plugin
 proposes data; authority is never the plugin's.
 
-This host loads **operation providers only** (`SUPPORTED_WORLDS`); there is
-no webhook world, and nothing below about one is built. The GitHub plan
-(below) differs from this page in more than who signs, and a webhook host
-must not be read as "the same seal, signed by the relay":
-
-- **Full validation before storage.** A webhook host's events are stored
-  through the plan's B1 storage path, which does not pass through ordinary
-  ingest. Ingest's checks are therefore not behind it: the webhook host
-  itself must perform the full application-event validation
-  (`docs/application-events.md` — envelope, tags, type, content, size,
-  community and channel) before B1 stores anything.
-- **The host stamps the time.** There is no member's clock and no plugin
-  clock to trust: a webhook event's `created_at` is the host's receive
-  time, never a plugin-proposed stamp. The `created_at` window in rule 8 is
-  for operation providers' user-signed drafts and is not a webhook rule.
-- **Its own seal.** The webhook seal — scope-aware `a`/`h` scope, reserved
-  routing and provenance tags, per-installation and global concurrency —
-  is that plan's work, not this branch's. Planning keeps the rules on this
-  page: user-signed drafts and the stamp window.
+The host also loads a second world whose events the **relay** signs; it is
+not this seal — see [The webhook world](#the-webhook-world-webhook-plugin1).
 
 The member's client is the last check, so it seals again rather than
 trusting the relay — `bee` (`plugins::seal_draft`) and the desktop
@@ -269,6 +252,74 @@ name suggests (a `set-title` could draft any NIP-TD op in the project). The
 plugin owns what an operation means — that is the point — so registering a
 plugin is trusting it with the caller's *data* writes in that kind and
 project. It is never trusting it with scope, routing or anyone's key.
+
+## The webhook world: `webhook-plugin@1`
+
+The same host also loads a second world, `webhook-plugin`
+(`wit/plugin/webhook.wit`; host side `crates/beekeeper-plugin-host/src/webhook.rs`
+and `src/runtime/webhook.rs`). A webhook plugin turns one vendor delivery
+(GitHub first) into at most one application event (kind 50000). It shares the
+package, the `[[plugin]]` registry with its sha256 pin, the no-WASI rule and
+the per-call fuel/deadline/memory limits with operation providers; it may
+import only `log`, never `records`. It differs from this page in more than who
+signs, and is not "the same seal, signed by the relay":
+
+- **Fixed order: `authenticate` → host MAC check → `project`.**
+  `WebhookCall::authenticate` hands the plugin the headers only; it returns an
+  auth plan (scheme, signature, signed prefix, optional vendor timestamp,
+  delivery id, vendor event). `WebhookCall::verify` — host code, not plugin
+  and not embedder code — takes that plan, the installation's webhook secret
+  (passed in by the embedder, never shown to the plugin), the raw body and the
+  receive time, and computes HMAC-SHA256 over `signed-prefix || body` with the
+  `hmac` crate, comparing with `Mac::verify_slice` (constant time). It also
+  re-checks the plan's shape, refuses a receive time of 0 and an empty
+  secret, and holds the vendor timestamp to ±300 s of that same receive
+  time. Only it builds a `VerifiedDelivery` (private fields; not `Default`,
+  `Clone` or `Deserialize`), which owns the body, the plan's vendor event and
+  delivery id, and the receive time, and is bound to its plugin and
+  installation. `WebhookCall::project` takes it by value, so projecting an
+  unverified body does not compile, and the vendor event the plugin sees and
+  the event's `created_at` can only be the verified ones.
+- **The host owns the time.** There is no member's clock and no plugin clock
+  to trust: the event's `created_at` is the receive time the delivery was
+  verified at, never a plugin value. Rule 8's window is for operation
+  providers' user-signed drafts and is not a webhook rule.
+- **The host builds the event.** The plugin proposes an event type (which
+  must start with the registry's granted `type_prefix` and a `.`), a schema
+  ≥ 1, a JSON object `data` (≤ 64 KiB) and data tags. The host writes the
+  installation's channel as `h` (a plugin may only echo it, once), the
+  `L`/`l` namespace and type labels and the `{"schema", "data"}` content, holds
+  the tag caps on the proposal and on the result, and then runs the
+  embedder's kind-50000 validator — ingest's application-event rules
+  (`docs/application-events.md`) — on the finished event. Any failure
+  refuses the whole delivery's output; nothing is repaired. This is the only
+  check: the relay will sign the result with its own key and store it
+  through the plan's B1 path, which does not pass through ordinary ingest.
+- **Reserved tags.** `RESERVED_TAG_KEYS` is one set for every world and
+  kind: `a`, `h`, `p`, `e`, `q`, `k`, `A`, `E`, `K`, `P`, `L`, `l`, and `-`
+  (NIP-70 protected), `expiration` (NIP-40), `delegation` (NIP-26), `proxy`
+  (NIP-48). A host whose allowlist for any kind names one refuses to load;
+  Planning's `td-*` keys name none.
+- **Limits.** An auth plan's delivery id is 1–128 printable ASCII bytes, its
+  vendor event 1–64 bytes of `[A-Za-z0-9_.:-]`, an HMAC-SHA256 signature
+  exactly 32 bytes, a signed prefix ≤ 4 KiB; at most 128 headers and 64 KiB of
+  them reach a plugin; settings are a JSON object ≤ 64 KiB; the body cap is
+  the smaller of the registry's `max_body_bytes` (≤ 25 MiB) and the
+  manifest's. Concurrency has three caps: the relay-wide
+  `host.max_concurrent_calls` (shared with operation providers), the
+  plugin's `max_concurrent`, and `max_concurrent_per_installation`, which
+  must be ≤ both or the registry is refused. The slots are taken around each
+  plugin call (`authenticate`, `project`) and freed when it returns — never
+  across the embedder's body read or the MAC check — so a slow
+  unauthenticated sender cannot starve Planning of relay-wide slots.
+
+**Not built yet: the relay wiring.** Nothing serves a webhook route.
+`crates/beekeeper-relay/src/api/plugins.rs` still loads the host without an
+application-event validator, so a registry holding a webhook entry makes the
+relay refuse to start — it fails closed. `scripts/build-plugins.sh` builds the
+`test-webhook` fixture but puts it in neither registry. Secret storage,
+installations, delivery-id dedupe, relay signing and B1 storage are the
+GitHub plan's work, not this branch's.
 
 ## Planning: `beekeeper.planning/1`
 
@@ -369,13 +420,12 @@ and live UI gates against a scratch database with two tenants.
 no WASI, a sha256-pinned registry under `BEEKEEPER_PLUGINS_FILE`, per-call
 fuel/deadline/memory, a fresh store per call, and the host owning secrets,
 HMAC and signing. This crate is that foundation (Wasmtime 48.0.6, no WASI,
-one host intended for both worlds); `SUPPORTED_WORLDS` is where a second
-world would plug in, with its own WIT world beside `operation-provider`.
-Nothing here is shared with a webhook world yet: `drafts::seal_tags` and the
-per-kind `DraftKind`s are shaped for operation providers' drafts, and
-whether a webhook adapter can reuse them, or needs the scope-aware seal
-that plan describes, is that plan's to settle — not something this branch
-supports today. Agreed with that plan's owner (2026-10-21): one
+one host for both worlds), and it now carries the host side of that world
+([The webhook world](#the-webhook-world-webhook-plugin1)): both worlds are in
+`SUPPORTED_WORLDS`, each with its own WIT world, import allowlist, grants and
+limits, and the scope-aware seal (`drafts::seal_scoped_tags`, `a` or `h`)
+serves both. The relay route, secrets and storage are still that plan's.
+Agreed with that plan's owner (2026-10-21): one
 shared host, two separate WIT worlds, and the generic `[[plugin]] world = "..."`
 registry (with its required sha256 pin) rather than a `[[webhook_plugin]]`
 table; this foundation lands first and the webhook adapter follows it. Unlike a
@@ -390,11 +440,11 @@ Three things an operator or that plan's implementer will meet:
   start. One shape (`[[plugin]]`) serves both worlds, not a parser that
   ignores what it does not know (a relay silently skipping a registered plugin would be a
   control that lies).
-- The loader dispatches on one world today. `world` is checked against
-  `SUPPORTED_WORLDS`, but a loaded plugin always holds an operation-provider
-  pre-instance, and `limits`/`grants` are shaped for operation providers. A
-  second world adds a variant there, its own linker allowlist, and its own
-  limits.
+- The loader dispatches on `world`: an operation provider and a webhook
+  plugin each get their own pre-instance, linker allowlist, `grants` and
+  `limits` table, and a field from the other world's table is refused. A
+  webhook entry needs an application-event validator the relay does not pass
+  yet, so a relay registry with one refuses to start.
 - The relay already has a compiled-in Rust webhook surface,
   `crates/beekeeper-relay/src/webhook_plugin.rs` (`/webhooks/<name>`, a
   `WebhookVerifier` trait). That plan's step 8 replaces its handler with a

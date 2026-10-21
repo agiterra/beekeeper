@@ -1,4 +1,14 @@
 //! Loading components and running calls.
+//!
+//! Each world has its own bindings, import allowlist and loaded-plugin type:
+//! [`LoadedPlugin`] for `operation-provider@1` (here) and
+//! [`LoadedWebhookPlugin`] for `webhook-plugin@1` (`webhook`). They share the
+//! engine, the epoch ticker, the per-call store and limiter, and the
+//! relay-wide concurrency cap.
+
+mod webhook;
+
+pub use webhook::{Delivery, LoadedWebhookPlugin, WebhookCall};
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -9,9 +19,9 @@ use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 
 use crate::drafts::{
-    check_created_at, seal_tags, DraftKind, DraftReferences, MAX_DRAFT_CONTENT_BYTES,
+    check_created_at, seal_scoped_tags, DraftKind, DraftReferences, MAX_DRAFT_CONTENT_BYTES,
 };
-use crate::registry::{PluginEntry, Registry};
+use crate::registry::{PluginEntry, Registry, OPERATION_PROVIDER_WORLD};
 use crate::{
     sha256_hex, Access, Draft, IfRefused, Invocation, InvokeError, InvokeOutcome, LoadError,
     LogLevel, Manifest, OpEffect, OpError, OperationDecl, RecordSource, Scope, SourceError,
@@ -28,9 +38,9 @@ mod bindings {
 use bindings::beekeeper::plugin::{log as wit_log, records as wit_records, types as wit};
 use bindings::{OperationProvider, OperationProviderPre};
 
-/// The interfaces a component may import. Anything else — every `wasi:*`
-/// interface included — refuses the plugin at load.
-const ALLOWED_IMPORTS: &[&str] = &[
+/// The interfaces an `operation-provider@1` component may import. Anything
+/// else — every `wasi:*` interface included — refuses the plugin at load.
+const OPERATION_PROVIDER_IMPORTS: &[&str] = &[
     "beekeeper:plugin/types",
     "beekeeper:plugin/records",
     "beekeeper:plugin/log",
@@ -65,6 +75,22 @@ impl DraftValidators {
     fn get(&self, kind: u32) -> Option<&DraftKind> {
         self.0.get(&kind)
     }
+
+    fn iter(&self) -> impl Iterator<Item = (&u32, &DraftKind)> {
+        self.0.iter()
+    }
+}
+
+/// What the embedder gives a host besides the registry.
+#[derive(Clone, Default)]
+pub struct HostConfig {
+    /// The kinds an operation provider may draft.
+    pub validators: DraftValidators,
+    /// The data-tag allowlist and validator for application events (kind
+    /// 50000), the one kind a webhook plugin emits. The relay passes
+    /// ingest's own validator. Required when the registry has a webhook
+    /// plugin; a host without it refuses to load one.
+    pub application_event: Option<DraftKind>,
 }
 
 /// A plugin that passed every load check.
@@ -86,8 +112,15 @@ impl LoadedPlugin {
 /// The loaded registry.
 pub struct PluginHost {
     engine: Engine,
+    /// `operation-provider@1` plugins.
     plugins: BTreeMap<String, Arc<LoadedPlugin>>,
+    /// `webhook-plugin@1` plugins.
+    webhooks: BTreeMap<String, Arc<LoadedWebhookPlugin>>,
     validators: DraftValidators,
+    application_event: Option<DraftKind>,
+    /// Calls running now, of every plugin in every world.
+    running: Arc<AtomicUsize>,
+    max_concurrent_calls: usize,
     ticker_stop: Arc<AtomicBool>,
 }
 
@@ -317,27 +350,49 @@ fn new_store(
     fuel: u64,
 ) -> Result<Store<CallState>, wasmtime::Error> {
     let limits = &entry.limits;
+    new_store_with(
+        engine,
+        limits.memory_bytes,
+        limits.deadline_ms,
+        fuel,
+        source,
+        read_kinds,
+        Budget {
+            queries_left: limits.max_queries,
+            records_left: limits.max_records,
+            bytes_left: limits.max_record_bytes,
+        },
+    )
+}
+
+/// A fresh store for one call of any world. A world without `records` passes
+/// no source, no kinds and an empty budget.
+fn new_store_with(
+    engine: &Engine,
+    memory_bytes: u64,
+    deadline_ms: u64,
+    fuel: u64,
+    source: Option<Arc<dyn RecordSource>>,
+    read_kinds: Vec<u32>,
+    budget: Budget,
+) -> Result<Store<CallState>, wasmtime::Error> {
     let mut store = Store::new(
         engine,
         CallState {
             limiter: CallLimiter {
-                memory_bytes: limits.memory_bytes as usize,
+                memory_bytes: memory_bytes as usize,
                 granted: 0,
                 denied: false,
             },
             source,
             read_kinds,
-            budget: Budget {
-                queries_left: limits.max_queries,
-                records_left: limits.max_records,
-                bytes_left: limits.max_record_bytes,
-            },
+            budget,
             logs: Vec::new(),
         },
     );
     store.limiter(|state| &mut state.limiter);
     store.set_fuel(fuel)?;
-    store.set_epoch_deadline(deadline_ticks(limits.deadline_ms));
+    store.set_epoch_deadline(deadline_ticks(deadline_ms));
     Ok(store)
 }
 
@@ -361,13 +416,22 @@ fn classify(error: &wasmtime::Error, memory_denied: bool) -> InvokeError {
     InvokeError::Trapped { kind, detail }
 }
 
-fn check_imports(engine: &Engine, component: &Component) -> Result<(), String> {
+/// Refuse a component importing anything outside `allowed` at major 1. Runs
+/// before linking, so a refused import is named rather than reported as a
+/// link failure.
+fn check_imports(
+    engine: &Engine,
+    component: &Component,
+    world: &str,
+    allowed: &[&str],
+) -> Result<(), String> {
     for (name, _) in component.component_type().imports(engine) {
         let (base, version) = name.split_once('@').unwrap_or((name, ""));
         let major_one = version.split('.').next() == Some("1");
-        if !ALLOWED_IMPORTS.contains(&base) || !major_one {
+        if !allowed.contains(&base) || !major_one {
             return Err(format!(
-                "imports {name:?}; a plugin may import only beekeeper:plugin@1 interfaces (no WASI)"
+                "imports {name:?}; a {world} plugin may import only {} at major 1 (no WASI)",
+                allowed.join(", ")
             ));
         }
     }
@@ -469,7 +533,11 @@ impl Default for PluginHost {
         Self {
             engine: Engine::default(),
             plugins: BTreeMap::new(),
+            webhooks: BTreeMap::new(),
             validators: DraftValidators::new(),
+            application_event: None,
+            running: Arc::new(AtomicUsize::new(0)),
+            max_concurrent_calls: crate::registry::HostLimits::default().max_concurrent_calls,
             ticker_stop: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -482,11 +550,46 @@ impl PluginHost {
     }
 
     /// Load every registry entry or fail naming the first that cannot load.
+    /// No application-event kind: a registry with a webhook plugin needs
+    /// [`PluginHost::load_with`].
     pub fn load(registry: &Registry, validators: DraftValidators) -> Result<Self, LoadError> {
+        Self::load_with(
+            registry,
+            HostConfig {
+                validators,
+                application_event: None,
+            },
+        )
+    }
+
+    /// Load every registry entry, of every world, or fail naming the first
+    /// that cannot load.
+    pub fn load_with(registry: &Registry, config: HostConfig) -> Result<Self, LoadError> {
+        // Routing and provenance are never a plugin's: a kind whose
+        // allowlist names a reserved key refuses the host, whether or not a
+        // registered plugin drafts it.
+        let kinds = config
+            .validators
+            .iter()
+            .map(|(kind, draft_kind)| (*kind, draft_kind))
+            .chain(
+                config
+                    .application_event
+                    .iter()
+                    .map(|draft_kind| (crate::webhook::KIND_APPLICATION_EVENT, draft_kind)),
+            );
+        for (kind, draft_kind) in kinds {
+            if let Some(key) = draft_kind.reserved_data_tag() {
+                return Err(LoadError::Registry(format!(
+                    "the host's allowlist for kind {kind} names {key:?}, a reserved routing or provenance tag ({:?}); no plugin may propose one",
+                    crate::drafts::RESERVED_TAG_KEYS
+                )));
+            }
+        }
         let engine = engine()?;
         // No plugins, no ticker thread: an embedder that registered nothing
         // pays for nothing but an idle engine.
-        let ticker_stop = if registry.entries.is_empty() {
+        let ticker_stop = if registry.entries.is_empty() && registry.webhooks.is_empty() {
             Arc::new(AtomicBool::new(true))
         } else {
             spawn_ticker(&engine)?
@@ -494,9 +597,22 @@ impl PluginHost {
         let mut host = Self {
             engine,
             plugins: BTreeMap::new(),
-            validators,
+            webhooks: BTreeMap::new(),
+            validators: config.validators,
+            application_event: config.application_event,
+            running: Arc::new(AtomicUsize::new(0)),
+            max_concurrent_calls: registry.host.max_concurrent_calls,
             ticker_stop,
         };
+        for entry in &registry.webhooks {
+            let loaded = host
+                .load_webhook_entry(entry)
+                .map_err(|message| LoadError::Plugin {
+                    plugin: entry.name.clone(),
+                    message,
+                })?;
+            host.webhooks.insert(entry.name.clone(), Arc::new(loaded));
+        }
         for entry in &registry.entries {
             let loaded = host
                 .load_entry(entry)
@@ -522,7 +638,12 @@ impl PluginHost {
         }
         let component = Component::new(&self.engine, &bytes)
             .map_err(|error| format!("not a loadable component: {error}"))?;
-        check_imports(&self.engine, &component)?;
+        check_imports(
+            &self.engine,
+            &component,
+            OPERATION_PROVIDER_WORLD,
+            OPERATION_PROVIDER_IMPORTS,
+        )?;
         let mut linker = Linker::<CallState>::new(&self.engine);
         OperationProvider::add_to_linker::<CallState, HasSelf<CallState>>(&mut linker, |s| s)
             .map_err(|error| format!("linker: {error}"))?;
@@ -555,7 +676,9 @@ impl PluginHost {
         })
     }
 
-    /// Every loaded plugin, by name.
+    /// Every loaded operation-provider plugin, by name. Webhook plugins are
+    /// [`PluginHost::webhook_plugins`]; they have no operations to list or
+    /// invoke.
     pub fn plugins(&self) -> impl Iterator<Item = &LoadedPlugin> {
         self.plugins.values().map(Arc::as_ref)
     }
@@ -595,6 +718,11 @@ impl PluginHost {
         if decl.effect == OpEffect::Draft && invocation.access != Access::Write {
             return Err(InvokeError::WriteNotAllowed(decl.name));
         }
+        let Scope::Project(coordinate) = &invocation.scope else {
+            return Err(InvokeError::Host(
+                "an operation provider acts on a project scope".to_owned(),
+            ));
+        };
         let input = serde_json::to_string(&invocation.input)
             .map_err(|error| InvokeError::Host(format!("input: {error}")))?;
         let limits = &loaded.entry.limits;
@@ -606,6 +734,7 @@ impl PluginHost {
         }
         let _permit = Permit::acquire(&loaded.running, limits.max_concurrent)
             .ok_or_else(|| InvokeError::Busy(plugin.to_owned()))?;
+        let _relay_permit = self.relay_permit(plugin)?;
 
         let mut store = new_store(
             &self.engine,
@@ -619,9 +748,7 @@ impl PluginHost {
             operation: invocation.operation.clone(),
             input_json: input,
             caller: invocation.caller.clone(),
-            scope: match &invocation.scope {
-                Scope::Project(coordinate) => wit::Scope::Project(coordinate.clone()),
-            },
+            scope: wit::Scope::Project(coordinate.clone()),
             access: match invocation.access {
                 Access::Read => wit::Access::Read,
                 Access::Write => wit::Access::Write,
@@ -725,11 +852,7 @@ impl PluginHost {
         if draft.content.len() > MAX_DRAFT_CONTENT_BYTES {
             return Err(format!("content is over {MAX_DRAFT_CONTENT_BYTES} bytes"));
         }
-        draft.tags = seal_tags(
-            draft_kind.data_tags(),
-            invocation.scope.coordinate(),
-            &draft.tags,
-        )?;
+        draft.tags = seal_scoped_tags(draft_kind.data_tags(), &invocation.scope, &draft.tags)?;
         if draft.group.is_empty() || draft.group.len() > 64 {
             return Err("group must be 1-64 bytes".to_owned());
         }
@@ -741,6 +864,20 @@ impl PluginHost {
             return Err("partial_summary is over 512 bytes".to_owned());
         }
         draft_kind.validate(&draft.tags, &draft.content)
+    }
+}
+
+impl PluginHost {
+    /// One slot of the relay-wide cap, or busy. Taken after the plugin's own
+    /// slot, so a plugin at its limit never holds a relay slot it cannot use.
+    fn relay_permit(&self, plugin: &str) -> Result<Permit<'_>, InvokeError> {
+        Permit::acquire(&self.running, self.max_concurrent_calls)
+            .ok_or_else(|| InvokeError::Busy(plugin.to_owned()))
+    }
+
+    /// Plugin calls running now, across every plugin and world.
+    pub fn running_calls(&self) -> usize {
+        self.running.load(Ordering::Acquire)
     }
 }
 

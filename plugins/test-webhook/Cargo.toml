@@ -1,0 +1,23 @@
+[package]
+name = "beekeeper-test-webhook"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0"
+publish = false
+description = "Test only: a webhook-plugin@1 component whose behaviour the request picks, to prove the host's webhook-world checks"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.63", default-features = false, features = ["macros", "realloc"] }
+serde_json  = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+strip = true

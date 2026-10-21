@@ -22,10 +22,18 @@
 pub mod drafts;
 mod registry;
 mod runtime;
+pub mod webhook;
 
-pub use drafts::{DraftKind, DraftReferences, DraftValidator};
-pub use registry::{valid_plugin_name, Grants, Limits, PluginEntry, Registry, SUPPORTED_WORLDS};
-pub use runtime::{DraftValidators, LoadedPlugin, PluginHost};
+pub use drafts::{DraftKind, DraftReferences, DraftValidator, RESERVED_TAG_KEYS};
+pub use registry::{
+    valid_plugin_name, valid_type_prefix, Grants, HostLimits, Limits, PluginEntry, Registry,
+    WebhookEntry, WebhookGrants, WebhookLimits, OPERATION_PROVIDER_WORLD, SUPPORTED_WORLDS,
+    WEBHOOK_WORLD,
+};
+pub use runtime::{
+    Delivery, DraftValidators, HostConfig, LoadedPlugin, LoadedWebhookPlugin, PluginHost,
+    WebhookCall,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -79,19 +87,33 @@ pub trait RecordSource: Send + Sync {
     ) -> Result<(Vec<StoredRecord>, Option<String>), SourceError>;
 }
 
-/// What an operation acts on.
+/// What a call acts on, and so the one scope tag the host writes on every
+/// draft it seals for that call ([`drafts`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
 pub enum Scope {
-    /// A canonical project coordinate.
+    /// A canonical project coordinate; drafts carry it as `a`. The scope of
+    /// every operation-provider call.
     Project(String),
+    /// A channel id; drafts carry it as `h`. The scope of a webhook
+    /// installation's application events.
+    Channel(String),
 }
 
 impl Scope {
-    /// The `a` tag value a draft in this scope must carry.
-    pub fn coordinate(&self) -> &str {
+    /// The scope tag a draft in this scope carries: its key and value.
+    pub fn tag(&self) -> (&'static str, &str) {
         match self {
-            Scope::Project(coordinate) => coordinate,
+            Scope::Project(coordinate) => (drafts::SCOPE_TAG, coordinate),
+            Scope::Channel(channel) => (drafts::CHANNEL_SCOPE_TAG, channel),
+        }
+    }
+
+    /// The project coordinate, for a project scope.
+    pub fn coordinate(&self) -> Option<&str> {
+        match self {
+            Scope::Project(coordinate) => Some(coordinate),
+            Scope::Channel(_) => None,
         }
     }
 }

@@ -1,0 +1,125 @@
+// The inbound-webhook world: a WebAssembly component that turns a vendor's
+// webhook delivery (GitHub first) into one application event, without
+// holding a key, a secret, a socket, a database handle or a clock.
+//
+// It shares the package, the registry, the pin, the no-WASI rule and the
+// per-call limits with `operation-provider`, and differs in what the host
+// hands it and what it may import: only `log`. It never reads records.
+//
+// What the host owns, on every delivery: the route, the tenant, the
+// installation (and its channel), the body-size cap, the webhook secret and
+// the MAC check, the receive time, every tag, the event content envelope,
+// application-event validation, the relay's signature and storage. What the
+// plugin owns: reading the vendor's headers, choosing the signature scheme
+// the host then verifies, settings validation, filtering, and projecting
+// the verified body into an event type and data.
+//
+// The order is fixed: `authenticate` sees headers only; the host verifies the
+// MAC over the signed prefix and the raw body with the installation's secret
+// (HMAC-SHA256, constant-time compare), and checks the vendor timestamp's
+// skew against its own receive time; only then does `project` see the body.
+// An unauthenticated body is never handed to plugin code: the host's
+// `project` call takes only what its own verification step produced.
+// Part of package beekeeper:plugin@1.0.0 (declared in world.wit).
+
+interface webhook-types {
+    /// One request header. The value is bytes: HTTP does not promise UTF-8.
+    record header {
+        /// Lowercase.
+        name: string,
+        value: list<u8>,
+    }
+
+    record webhook-manifest {
+        /// Must equal the name the plugin is registered under.
+        name: string,
+        version: string,
+        /// Every event type the plugin emits starts with this plus `.`
+        /// (e.g. `com.github`). The operator grants it in the registry; a
+        /// manifest asking for anything else refuses the plugin at load.
+        type-prefix: string,
+        /// The largest body the plugin wants. The host applies the smaller
+        /// of this and the registry's `max_body_bytes`.
+        max-body-bytes: u32,
+    }
+
+    /// The MAC schemes the host implements. The plugin picks one; it never
+    /// computes or compares a MAC itself and never sees the secret.
+    enum mac-algorithm { hmac-sha256 }
+
+    /// What the host needs to authenticate a delivery, read from its headers.
+    record auth-plan {
+        algorithm: mac-algorithm,
+        /// The signature bytes, decoded from the vendor's header: exactly 32
+        /// for `hmac-sha256`. A shorter or longer one is refused unverified.
+        signature: list<u8>,
+        /// Bytes the host prepends to the raw body before the MAC (empty for
+        /// GitHub). At most 4 KiB.
+        signed-prefix: list<u8>,
+        /// A vendor-asserted unix time, when the scheme signs one; the host
+        /// enforces its skew. Never the event's time: the host stamps that.
+        timestamp: option<u64>,
+        /// The vendor's delivery id: 1-128 printable ASCII bytes.
+        delivery-id: string,
+        /// The vendor's event name (e.g. `pull_request`): 1-64 bytes of
+        /// `[A-Za-z0-9_.:-]`. `project` is handed this value, from the plan
+        /// the host verified.
+        vendor-event: string,
+    }
+
+    variant auth-failure {
+        missing-header(string),
+        malformed(string),
+        unsupported(string),
+    }
+
+    /// One application event (kind 50000) the plugin proposes. The host
+    /// builds the content as `{"schema": schema, "data": data}`, writes the
+    /// installation's channel as `h` and the namespace and type labels
+    /// (`L`, `l`), stamps the receive time, validates the whole event as
+    /// ingest would, and signs it. There is no `created-at`: time is the
+    /// host's.
+    record app-event {
+        /// `<granted type-prefix>.<name>`, an application-event type.
+        event-type: string,
+        /// 1 or more.
+        schema: u32,
+        /// A JSON object, at most 64 KiB.
+        data-json: string,
+        /// Proposed data tags, sealed like a draft's: only keys the host's
+        /// allowlist for application events names pass (none, today), the
+        /// channel may be echoed exactly once, and the reserved routing,
+        /// scope and provenance keys (`a`, `h`, `p`, `e`, `q`, `k`, `A`,
+        /// `E`, `K`, `P`, `L`, `l`, `-`, `expiration`, `delegation`,
+        /// `proxy`) are refused.
+        tags: list<list<string>>,
+    }
+
+    variant disposition {
+        /// Store this event.
+        accept(app-event),
+        /// Authentic but not wanted (a filter miss, a ping). Recorded.
+        ignore(string),
+        /// Authentic but unprocessable. Recorded.
+        reject(string),
+    }
+}
+
+interface webhook {
+    use webhook-types.{header, webhook-manifest, auth-plan, auth-failure, disposition};
+
+    describe: func() -> webhook-manifest;
+    /// Check an installation's settings (a JSON object) when it is created.
+    validate-settings: func(settings-json: string) -> result<_, string>;
+    /// Headers only: read what the host needs to verify the delivery.
+    authenticate: func(headers: list<header>) -> result<auth-plan, auth-failure>;
+    /// Called only after the host verified the MAC over `body`.
+    /// `vendor-event` is the verified plan's. Returning `accept` proposes an
+    /// event; the host builds, validates and signs it, or refuses it whole.
+    project: func(settings-json: string, vendor-event: string, headers: list<header>, body: list<u8>) -> disposition;
+}
+
+world webhook-plugin {
+    import log;
+    export webhook;
+}

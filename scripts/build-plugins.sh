@@ -5,6 +5,11 @@
 #   registry.toml       first-party plugins only — what a relay ships with
 #   registry.test.toml  first-party plus the test plugins (fixture, faults)
 #
+# The webhook-plugin@1 fixture (test-webhook.wasm) is built but in neither
+# registry: loading a webhook plugin needs an application-event validator,
+# which the relay and `beekeeper-plugin-run` do not configure yet. Its tests
+# write their own registry for it.
+#
 # Each entry pins the component's sha256, so a registry and the files beside
 # it are only valid together. A relay that is pointed at a registry and finds a
 # different file refuses to start.
@@ -37,11 +42,12 @@ else
   pack="$target/debug/beekeeper-plugin-pack"
 fi
 
-# name:dir:first-party
+# name:dir:first-party (yes / no / unregistered)
 plugins=(
   "planning:plugins/planning:yes"
   "planning-fixture:plugins/test-planning-fixture:no"
   "test-faults:plugins/test-faults:no"
+  "test-webhook:plugins/test-webhook:unregistered"
 )
 
 first_party=""
@@ -58,6 +64,7 @@ for spec in "${plugins[@]}"; do
   core="$build_dir/wasm32-unknown-unknown/release/${crate//-/_}.wasm"
   sha="$("$pack" "$core" "$out/$name.wasm")"
   echo "plugin $name: $out/$name.wasm sha256 $sha"
+  world="operation-provider@1"
   case "$name" in
     planning)
       grants=$'[plugin.grants]\nread_kinds = [44248]\ndraft_kinds = [44248]'
@@ -72,15 +79,24 @@ for spec in "${plugins[@]}"; do
       # Small enough that `spin` and `grow` stop quickly.
       limits=$'[plugin.limits]\nfuel = 200000000\nmemory_bytes = 33554432\nmax_queries = 5\nmax_output_bytes = 1048576'
       ;;
+    test-webhook)
+      world="webhook-plugin@1"
+      grants=$'[plugin.grants]\ntype_prefix = "com.example"'
+      # Small enough that `spin` stops quickly.
+      limits=$'[plugin.limits]\nfuel = 200000000\nmemory_bytes = 33554432'
+      ;;
   esac
   entry="[[plugin]]
 name = \"$name\"
-world = \"operation-provider@1\"
+world = \"$world\"
 path = \"$name.wasm\"
 sha256 = \"$sha\"
 $grants
 $limits
 "
+  if [[ "$shipped" == unregistered ]]; then
+    continue
+  fi
   if [[ "$shipped" == yes ]]; then
     first_party+="$entry"$'\n'
   fi
