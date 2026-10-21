@@ -104,6 +104,11 @@ interface types {
     record event-draft {
         kind: u32,
         created-at: u64,
+        /// Proposed data tags. Only the kind's allowlisted keys pass; the
+        /// host writes the scope (`a`) tag itself from the invocation, so a
+        /// plugin may omit it or echo it exactly once, and anything else in
+        /// it refuses the whole output. Routing (`p`, `e`, `h`, …) is never
+        /// the plugin's to propose. See `docs/plugins.md` § Drafts.
         tags: list<list<string>>,
         content: string,
         /// A label for reporting ("issue", "status"); drafts sharing a group

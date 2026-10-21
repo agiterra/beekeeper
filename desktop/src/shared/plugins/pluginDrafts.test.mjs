@@ -5,34 +5,75 @@ import {
   DraftUnconfirmedError,
   PluginPartialWriteError,
   executePluginDrafts,
+  sealDraft,
 } from "./pluginDrafts.ts";
 
 const PROJECT = `30621:${"1".repeat(64)}:demo`;
+const ELSEWHERE = `30621:${"2".repeat(64)}:other`;
+const LIST = "abcdefabcdefabcdefabcdefabcdefab";
+const ITEM = "1234567890abcdef1234567890abcdef";
+const MEMBER = "b".repeat(64);
+const SCHEMA = "buzz-project-todo/v1";
 
+const listTags = (op) => [
+  ["a", PROJECT],
+  ["td-v", "td1-1"],
+  ["td-op", op],
+  ["td-list", LIST],
+  ["td-vis", "project"],
+];
+
+/**
+ * A valid `list.title` draft whose title is `marker` (default: the group),
+ * so a test can tell drafts apart by what was published.
+ */
 function draft(group, ifRefused, extra = {}) {
+  const { content: marker = group, ...rest } = extra;
   return {
     kind: 44248,
     createdAt: 100,
-    tags: [
-      ["a", PROJECT],
-      ["td-op", group],
-    ],
-    content: `{"g":"${group}"}`,
+    tags: listTags("list.title"),
+    content: JSON.stringify({
+      schema: SCHEMA,
+      op: "list.title",
+      listId: LIST,
+      title: marker,
+    }),
     group,
     ifRefused,
-    ...extra,
+    ...rest,
   };
 }
 
-/** Publishes in order; refuses the drafts whose content is in `refuse`. */
+/** An `item.assignee` draft as a relay returns it. */
+function assignDraft(assignee, extraTags = []) {
+  return {
+    kind: 44248,
+    createdAt: 100,
+    tags: [...listTags("item.assignee"), ["td-item", ITEM], ...extraTags],
+    content: JSON.stringify({
+      schema: SCHEMA,
+      op: "item.assignee",
+      listId: LIST,
+      itemId: ITEM,
+      assignee,
+    }),
+    group: "assignee",
+    ifRefused: "abort",
+  };
+}
+
+const markerOf = (d) => JSON.parse(d.content).title;
+
+/** Publishes in order; refuses the drafts whose marker is in `refuse`. */
 function relay(refuse = []) {
   const seen = [];
   return {
     seen,
     effects: {
       publish: async (d) => {
-        seen.push(d.content);
-        if (refuse.includes(d.content)) throw new Error("relay said no");
+        seen.push(markerOf(d));
+        if (refuse.includes(markerOf(d))) throw new Error("relay said no");
         return { id: `id-${seen.length}` };
       },
     },
@@ -55,7 +96,7 @@ test("every draft lands in order and each is reported with its group", async () 
 });
 
 test("an abort refusal before anything landed is the relay's own error, nothing more", async () => {
-  const r = relay(['{"g":"issue"}']);
+  const r = relay(["issue"]);
   await assert.rejects(
     executePluginDrafts(
       [draft("issue", "abort"), draft("x", "abort")],
@@ -135,17 +176,29 @@ test("a skip-group refusal after part of its group landed uses the partial summa
   ]);
 });
 
-test("nothing is signed when any draft is a foreign kind or outside the project", async () => {
+test("nothing is signed when any draft is a foreign kind, scope, route or shape", async () => {
+  const withTags = (tags) => draft("x", "abort", { tags });
+  const base = listTags("list.title");
   for (const bad of [
     draft("x", "abort", { kind: 1 }),
-    draft("x", "abort", { tags: [["a", `30621:${"2".repeat(64)}:other`]] }),
-    draft("x", "abort", {
-      tags: [
-        ["a", PROJECT],
-        ["a", PROJECT],
-      ],
-    }),
-    draft("x", "abort", { tags: [] }),
+    withTags([...base.slice(1), ["a", ELSEWHERE]]),
+    withTags([...base, ["a", PROJECT]]),
+    withTags([...base, ["a", ELSEWHERE]]),
+    withTags([["a", PROJECT, "wss://elsewhere"], ...base.slice(1)]),
+    withTags([...base, ["p", MEMBER]]),
+    withTags([...base, ["e", "e".repeat(64)]]),
+    withTags([...base, ["h", "a-channel"]]),
+    withTags([...base, ["client", "plugin"]]),
+    // Tags that disagree with the content: another list, a missing op tag.
+    withTags([...base.slice(0, 3), ["td-list", "f".repeat(32)], base[4]]),
+    withTags(base.filter((t) => t[0] !== "td-op")),
+    // Content that is not a to-do op, or a malformed assignee.
+    { ...draft("x", "abort"), content: 42 },
+    { ...draft("x", "abort"), content: '{"g":"x"}' },
+    assignDraft("not-hex"),
+    // Caps: 64 proposed tags become 65 with the scope; a value over 1 KiB.
+    withTags(Array.from({ length: 64 }, () => ["td-v", "td1-1"])),
+    withTags([...base.slice(0, 4), ["td-vis", "x".repeat(2000)]]),
   ]) {
     const r = relay();
     await assert.rejects(
@@ -160,8 +213,8 @@ test("a publish that may still land stops the run and is reported as unconfirmed
   const seen = [];
   const effects = {
     publish: async (d) => {
-      seen.push(d.content);
-      if (d.content === "add")
+      seen.push(markerOf(d));
+      if (markerOf(d) === "add")
         throw new DraftUnconfirmedError("no answer in time");
       return { id: `id-${seen.length}` };
     },
@@ -181,4 +234,34 @@ test("a publish that may still land stops the run and is reported as unconfirmed
   assert.match(run.unconfirmed?.message ?? "", /may still land/);
   assert.deepEqual(run.notAttempted, ["status", "priority"]);
   assert.deepEqual(run.failed, []);
+});
+
+test("a draft is signed with this app's own scope, whether or not the plugin proposed one", () => {
+  const proposed = assignDraft(MEMBER);
+  const sealed = sealDraft(proposed, PROJECT);
+  assert.deepEqual(sealed.tags[0], ["a", PROJECT]);
+  assert.equal(sealed.tags.filter((t) => t[0] === "a").length, 1);
+  const bare = { ...proposed, tags: proposed.tags.slice(1) };
+  assert.deepEqual(sealDraft(bare, PROJECT).tags, sealed.tags);
+  assert.equal(
+    sealed.content,
+    proposed.content,
+    "content is signed as drafted",
+  );
+});
+
+test("a legitimate assignment and an unassignment are both signed", async () => {
+  const r = { seen: [] };
+  const run = await executePluginDrafts(
+    [assignDraft(MEMBER), assignDraft(null)],
+    PROJECT,
+    {
+      publish: async (d) => {
+        r.seen.push(JSON.parse(d.content).assignee);
+        return { id: `id-${r.seen.length}` };
+      },
+    },
+  );
+  assert.deepEqual(r.seen, [MEMBER, null]);
+  assert.equal(run.published.length, 2);
 });

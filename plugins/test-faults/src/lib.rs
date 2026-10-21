@@ -30,6 +30,7 @@ const OPS: &[(&str, bool)] = &[
     ("draft-invalid-op", true),
     ("draft-far-future", true),
     ("draft-ok", true),
+    ("draft-as-told", true),
 ];
 
 fn draft(tags: Vec<Vec<String>>, content: &str, kind: u32, created_at: u64) -> types::EventDraft {
@@ -205,6 +206,32 @@ impl Guest for Faults {
                 result_json: "{}".to_owned(),
                 drafts: vec![list_create(&coordinate, inv.now + 3_600)],
             }),
+            // Proposes exactly the drafts the input names — `{"drafts": [{kind,
+            // tags, content}]}` stamped with the host clock — so a test can
+            // put any proposal through the host's checks.
+            "draft-as-told" => {
+                let input: serde_json::Value = serde_json::from_str(&inv.input_json)
+                    .map_err(|e| types::OpError::InvalidInput(e.to_string()))?;
+                let drafts = input["drafts"]
+                    .as_array()
+                    .ok_or_else(|| types::OpError::InvalidInput("drafts".to_owned()))?
+                    .iter()
+                    .map(|d| {
+                        let tags = serde_json::from_value::<Vec<Vec<String>>>(d["tags"].clone())
+                            .map_err(|e| types::OpError::InvalidInput(e.to_string()))?;
+                        Ok(draft(
+                            tags,
+                            d["content"].as_str().unwrap_or(""),
+                            d["kind"].as_u64().unwrap_or(u64::from(KIND)) as u32,
+                            inv.now,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, types::OpError>>()?;
+                Ok(types::OpOutput {
+                    result_json: "{}".to_owned(),
+                    drafts,
+                })
+            }
             "draft-ok" => Ok(types::OpOutput {
                 result_json: "{}".to_owned(),
                 drafts: vec![list_create(&coordinate, inv.now)],

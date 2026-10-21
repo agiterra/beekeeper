@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use beekeeper_plugin_host::{
-    sha256_hex, Access, DraftValidators, Invocation, InvokeError, LoadError, OpError, PluginHost,
-    RecordSource, Registry, Scope, SourceError, StoredRecord, TrapKind,
+    sha256_hex, Access, DraftKind, DraftReferences, DraftValidators, Invocation, InvokeError,
+    LoadError, OpError, PluginHost, RecordSource, Registry, Scope, SourceError, StoredRecord,
+    TrapKind,
 };
 use serde_json::{json, Value};
 
@@ -33,10 +34,17 @@ fn artifacts() -> PathBuf {
 fn validators() -> DraftValidators {
     DraftValidators::new().with(
         KIND,
-        Arc::new(|tags, content| {
-            beekeeper_nip_td::project_todo::validate_project_todo_parts(KIND, tags, content)
-                .map(|_| ())
-        }),
+        DraftKind::new(
+            &beekeeper_nip_td::project_todo::PROJECT_TODO_DATA_TAG_KEYS,
+            Arc::new(|tags, content| {
+                let op = beekeeper_nip_td::project_todo::validate_project_todo_parts(
+                    KIND, tags, content,
+                )?;
+                Ok(DraftReferences {
+                    people: op.person().map(str::to_owned).into_iter().collect(),
+                })
+            }),
+        ),
     )
 }
 
@@ -406,8 +414,8 @@ fn output_outside_the_contract_is_discarded_whole() {
             "draft-ungranted-kind",
             "kind 1 is not one this plugin drafts",
         ),
-        ("draft-other-scope", "exactly one a tag"),
-        ("draft-invalid-op", "must not carry an h tag"),
+        ("draft-other-scope", "proposes scope"),
+        ("draft-invalid-op", "proposes a \"h\" tag"),
         ("draft-far-future", "outside"),
         ("not-json", "not JSON"),
         ("huge-result", "the limit is"),
@@ -548,5 +556,281 @@ fn the_fixture_provider_loads_through_the_same_registry_and_refuses_writes_hones
             assert!(message.contains("read-only"), "{message}")
         }
         other => panic!("expected unsupported, got {other:?}"),
+    }
+}
+
+// ------------------------------------------------- what a draft may say
+
+const ELSEWHERE: &str =
+    "30621:2222222222222222222222222222222222222222222222222222222222222222:elsewhere";
+const LIST: &str = "abcdefabcdefabcdefabcdefabcdefab";
+const MEMBER: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+fn tags(raw: &[&[&str]]) -> Vec<Vec<String>> {
+    raw.iter()
+        .map(|t| t.iter().map(|v| (*v).to_owned()).collect())
+        .collect()
+}
+
+/// A valid `list.create`'s data tags and content: everything but the scope.
+fn list_create_data() -> (Vec<Vec<String>>, String) {
+    let content = json!({ "schema": "buzz-project-todo/v1", "op": "list.create",
+        "listId": LIST, "title": "Told", "visibility": "project" })
+    .to_string();
+    (
+        tags(&[
+            &["td-v", "td1-1"],
+            &["td-op", "list.create"],
+            &["td-list", LIST],
+            &["td-vis", "project"],
+        ]),
+        content,
+    )
+}
+
+/// An `item.assignee` naming `assignee`.
+fn assign_data(assignee: &str) -> (Vec<Vec<String>>, String) {
+    let item = "1234567890abcdef1234567890abcdef";
+    let content = json!({ "schema": "buzz-project-todo/v1", "op": "item.assignee",
+        "listId": LIST, "itemId": item, "assignee": assignee })
+    .to_string();
+    (
+        tags(&[
+            &["td-v", "td1-1"],
+            &["td-op", "item.assignee"],
+            &["td-list", LIST],
+            &["td-vis", "project"],
+            &["td-item", item],
+        ]),
+        content,
+    )
+}
+
+/// Ask the fault plugin to propose exactly these drafts.
+fn told(
+    host: &PluginHost,
+    drafts: &[(Vec<Vec<String>>, String)],
+) -> Result<beekeeper_plugin_host::InvokeOutcome, InvokeError> {
+    let drafts: Vec<Value> = drafts
+        .iter()
+        .map(|(tags, content)| json!({ "kind": KIND, "tags": tags, "content": content }))
+        .collect();
+    host.invoke(
+        "test-faults",
+        call("draft-as-told", json!({ "drafts": drafts }), Access::Write),
+        Arc::new(Source::default()),
+    )
+}
+
+fn violation(result: Result<beekeeper_plugin_host::InvokeOutcome, InvokeError>) -> String {
+    match result {
+        Err(InvokeError::ContractViolation(message)) => message,
+        other => panic!("expected a contract violation, got {other:?}"),
+    }
+}
+
+fn scopes(draft: &beekeeper_plugin_host::Draft) -> Vec<&Vec<String>> {
+    draft.tags.iter().filter(|t| t[0] == "a").collect()
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn the_host_writes_the_scope_from_the_invocation_whether_or_not_the_plugin_proposed_it() {
+    let host = faults("");
+    let (data, content) = list_create_data();
+    let mut echoed = data.clone();
+    echoed.push(vec!["a".to_owned(), PROJECT.to_owned()]);
+    for proposed in [data.clone(), echoed] {
+        let outcome = told(&host, &[(proposed, content.clone())]).expect("sealed");
+        let draft = &outcome.drafts[0];
+        assert_eq!(
+            scopes(draft),
+            vec![&vec!["a".to_owned(), PROJECT.to_owned()]]
+        );
+        assert_eq!(
+            draft.tags[0],
+            vec!["a".to_owned(), PROJECT.to_owned()],
+            "scope first"
+        );
+        assert_eq!(&draft.tags[1..], data.as_slice(), "data tags kept in order");
+        assert!(outcome.people.is_empty());
+    }
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn a_proposed_scope_naming_anything_else_or_twice_is_refused_whole() {
+    let host = faults("");
+    let (data, content) = list_create_data();
+    for extra in [
+        tags(&[&["a", ELSEWHERE]]),
+        tags(&[&["a", PROJECT], &["a", ELSEWHERE]]),
+        tags(&[&["a", ELSEWHERE], &["a", PROJECT]]),
+        tags(&[&["a", PROJECT], &["a", PROJECT]]),
+        tags(&[&["a", PROJECT, "wss://elsewhere.example"]]),
+    ] {
+        let mut proposed = data.clone();
+        proposed.extend(extra.clone());
+        let message = violation(told(&host, &[(proposed, content.clone())]));
+        assert!(message.contains("scope"), "{extra:?}: {message}");
+    }
+    // One bad draft among good ones discards the whole output.
+    let mut bad = data.clone();
+    bad.extend(tags(&[&["a", ELSEWHERE]]));
+    let message = violation(told(
+        &host,
+        &[(data.clone(), content.clone()), (bad, content)],
+    ));
+    assert!(message.starts_with("draft 1:"), "{message}");
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn routing_and_unknown_tags_are_refused_by_the_kinds_allowlist() {
+    let host = faults("");
+    let (data, content) = list_create_data();
+    for extra in [
+        tags(&[&["p", MEMBER]]),
+        tags(&[&["e", &"e".repeat(64)]]),
+        tags(&[&["h", "a-channel"]]),
+        tags(&[&["q", &"f".repeat(64)]]),
+        tags(&[&["k", "1"]]),
+        tags(&[&["community", "elsewhere"]]),
+        tags(&[&["client", "the-plugin"]]),
+        tags(&[&["td-extra", "x"]]),
+    ] {
+        let mut proposed = data.clone();
+        proposed.extend(extra.clone());
+        let message = violation(told(&host, &[(proposed, content.clone())]));
+        assert!(message.contains("may carry only"), "{extra:?}: {message}");
+    }
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn caps_hold_on_the_proposal_and_after_the_host_adds_the_scope() {
+    let host = faults("");
+    let (_, content) = list_create_data();
+    let filler: Vec<Vec<String>> = (0..64)
+        .map(|_| tags(&[&["td-v", "td1-1"]])[0].clone())
+        .collect();
+    let message = violation(told(&host, &[(filler.clone(), content.clone())]));
+    assert!(message.contains("constructed tags: 65 tags"), "{message}");
+    let mut over = filler;
+    over.push(tags(&[&["td-v", "td1-1"]])[0].clone());
+    let message = violation(told(&host, &[(over, content.clone())]));
+    assert!(message.contains("proposed tags: 65 tags"), "{message}");
+    let huge = "x".repeat(2_000);
+    let message = violation(told(&host, &[(tags(&[&["td-list", &huge]]), content)]));
+    assert!(
+        message.contains("proposed tags: a value is 2000 bytes"),
+        "{message}"
+    );
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn tag_and_content_must_agree_after_sealing() {
+    let host = faults("");
+    let (data, content) = list_create_data();
+    // A list id in the tag that the content does not name.
+    let mut forged = data.clone();
+    forged[2][1] = "fedcbafedcbafedcbafedcbafedcbafe".to_owned();
+    let message = violation(told(&host, &[(forged, content.clone())]));
+    assert!(message.contains("td-list"), "{message}");
+    // A personal op dressed as a project one.
+    let mut vis = data;
+    vis[3][1] = "personal".to_owned();
+    let message = violation(told(&host, &[(vis, content)]));
+    assert!(
+        message.contains("visibility") || message.contains("td-vis"),
+        "{message}"
+    );
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn the_people_a_draft_names_are_reported_for_the_embedder_to_authorize() {
+    let host = faults("");
+    let outcome = told(&host, &[assign_data(MEMBER), list_create_data()]).expect("assign");
+    assert_eq!(outcome.people, vec![MEMBER.to_owned()]);
+    let message = violation(told(&host, &[assign_data("not-a-pubkey")]));
+    assert!(message.contains("assignee"), "{message}");
+}
+
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn planning_creates_edits_and_assigns_through_the_sealed_contract() {
+    let dir = artifacts();
+    let host = PluginHost::load(
+        &Registry::from_file(&dir.join("registry.toml")).expect("first-party registry"),
+        validators(),
+    )
+    .expect("loads");
+    let created = host
+        .invoke(
+            "planning",
+            call(
+                "create-issue",
+                json!({ "title": "Assigned on create", "description": "d", "statusId": "todo",
+                        "priorityId": "none", "assignee": MEMBER, "containerId": null }),
+                Access::Write,
+            ),
+            Arc::new(Source::default()),
+        )
+        .expect("create");
+    assert_eq!(created.people, vec![MEMBER.to_owned()]);
+    for draft in &created.drafts {
+        assert_eq!(
+            scopes(draft),
+            vec![&vec!["a".to_owned(), PROJECT.to_owned()]]
+        );
+    }
+    let records: Vec<StoredRecord> = created
+        .drafts
+        .iter()
+        .enumerate()
+        .map(|(i, d)| StoredRecord {
+            id: format!("{i:064x}"),
+            pubkey: CALLER.to_owned(),
+            created_at: d.created_at,
+            kind: d.kind,
+            tags: d.tags.clone(),
+            content: d.content.clone(),
+        })
+        .collect();
+    let key = created.result["key"].as_str().expect("key").to_owned();
+    let (container, issue) = key.split_once('/').expect("list/item");
+    for (operation, extra, people) in [
+        ("set-title", json!({ "title": "Retitled" }), vec![]),
+        (
+            "set-assignee",
+            json!({ "assignee": CALLER }),
+            vec![CALLER.to_owned()],
+        ),
+        ("set-assignee", json!({ "assignee": null }), vec![]),
+    ] {
+        let mut input = json!({ "containerId": container, "issueId": issue });
+        for (k, v) in extra.as_object().expect("object") {
+            input[k] = v.clone();
+        }
+        let edited = host
+            .invoke(
+                "planning",
+                call(operation, input, Access::Write),
+                Arc::new(Source {
+                    records: records.clone(),
+                    ..Source::default()
+                }),
+            )
+            .unwrap_or_else(|e| panic!("{operation}: {e:?}"));
+        assert!(!edited.drafts.is_empty(), "{operation}");
+        assert_eq!(edited.people, people, "{operation}");
+        for draft in &edited.drafts {
+            assert_eq!(
+                scopes(draft),
+                vec![&vec!["a".to_owned(), PROJECT.to_owned()]]
+            );
+        }
     }
 }

@@ -12,17 +12,20 @@
 //! The crate knows nothing about relays, databases or Nostr signing. The
 //! embedder supplies a [`RecordSource`] — the only way a plugin reads
 //! anything — already bound to the caller and scope it authorized, and
-//! [`DraftValidators`] for the kinds a plugin may draft. That keeps the trust
+//! [`DraftValidators`] for the kinds a plugin may draft (see [`drafts`]
+//! for what a draft may say and what the host constructs for it). That keeps the trust
 //! boundary in one place: everything a plugin returns is data the embedder
 //! checks, and nothing a plugin returns is ever signed by the embedder.
 //!
 //! See `docs/plugins.md` for the contract and its limits.
 
+pub mod drafts;
 mod registry;
 mod runtime;
 
+pub use drafts::{DraftKind, DraftReferences, DraftValidator};
 pub use registry::{valid_plugin_name, Grants, Limits, PluginEntry, Registry, SUPPORTED_WORLDS};
-pub use runtime::{DraftValidator, DraftValidators, LoadedPlugin, PluginHost};
+pub use runtime::{DraftValidators, LoadedPlugin, PluginHost};
 
 use serde::{Deserialize, Serialize};
 
@@ -148,7 +151,10 @@ pub enum IfRefused {
     SkipGroup,
 }
 
-/// An unsigned event for the caller to sign with their own key.
+/// An unsigned event for the caller to sign with their own key. Its tags
+/// are the host's construction, not the plugin's proposal: the scope tag is
+/// written from the invocation and the rest passed a per-kind allowlist
+/// ([`drafts`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Draft {
@@ -167,6 +173,10 @@ pub struct Draft {
 pub struct InvokeOutcome {
     pub result: serde_json::Value,
     pub drafts: Vec<Draft>,
+    /// Every person a returned draft names (an assignee), sorted. The
+    /// embedder must decide each is a legitimate target in the invocation's
+    /// scope before handing the drafts to anyone to sign.
+    pub people: Vec<String>,
     /// Fuel the call consumed.
     pub fuel_used: u64,
     /// Messages the plugin logged, truncated and capped.

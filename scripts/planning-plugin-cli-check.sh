@@ -64,6 +64,35 @@ step "owner cancels it through the plugin: two signed events, both the owner's"
 as "${OWNER_KEY}" planning status --project "${PROJECT}" --provider planning --issue "${KEY}" --status canceled \
   | py 'assert [p["group"] for p in d["published"]]==["status","status"], d; print("published", len(d["published"]))'
 
+step "member assigns it to the owner: a roster member is a legitimate target"
+as "${MEMBER_KEY}" planning assign --project "${PROJECT}" --provider planning --issue "${KEY}" --assignee "${OWNER_PUB}" \
+  | py 'assert [p["group"] for p in d["published"]]==["assignee"], d; print("assigned")'
+as "${OWNER_KEY}" planning read --project "${PROJECT}" --provider planning \
+  | py "i=[x for x in d['result']['issues'] if x['key']=='${KEY}'][0]; assert i['assignee']=='${OWNER_PUB}', i; print('assignee', i['assignee'][:16])"
+
+step "assigning someone off this private project's roster is refused before anything is drafted"
+STRANGER_PUB="$(openssl rand -hex 32)"
+if out="$(as "${MEMBER_KEY}" planning assign --project "${PROJECT}" --provider planning --issue "${KEY}" --assignee "${STRANGER_PUB}" 2>&1)"; then
+  echo "expected invalid-target, got: ${out}"; exit 1
+fi
+echo "${out}" | grep -q "roster" || { echo "unexpected refusal: ${out}"; exit 1; }
+as "${OWNER_KEY}" planning read --project "${PROJECT}" --provider planning \
+  | py "i=[x for x in d['result']['issues'] if x['key']=='${KEY}'][0]; assert i['assignee']=='${OWNER_PUB}', i; print('unchanged')"
+
+step "a provider's foreign scope or routing tag is never signed"
+TOLD_LIST="$(openssl rand -hex 16)"
+told() {
+  python3 -c "import json,sys; l='${TOLD_LIST}'; extra=json.loads(sys.argv[1]); print(json.dumps({'drafts':[{'kind':44248,'tags':[['td-v','td1-1'],['td-op','list.create'],['td-list',l],['td-vis','project']]+extra,'content':json.dumps({'schema':'buzz-project-todo/v1','op':'list.create','listId':l,'title':'Told','visibility':'project'})}]}))" "$1"
+}
+for extra in "[[\"a\",\"30621:$(openssl rand -hex 32):elsewhere\"]]" "[[\"p\",\"${OWNER_PUB}\"]]" "[[\"h\",\"channel\"]]"; do
+  if out="$(as "${MEMBER_KEY}" plugins invoke test-faults draft-as-told --project "${PROJECT}" --input "$(told "${extra}")" --publish 2>&1)"; then
+    echo "expected a contract violation for ${extra}, got: ${out}"; exit 1
+  fi
+  echo "${out}" | grep -q "502" || { echo "unexpected for ${extra}: ${out}"; exit 1; }
+done
+as "${MEMBER_KEY}" plugins invoke test-faults draft-as-told --project "${PROJECT}" --input "$(told '[]')" --publish \
+  | py "assert len(d['published'])==1, d; t=d['drafts'][0]['tags']; assert [x for x in t if x[0]=='a']==[['a','${PROJECT}']], t; print('sealed and published')"
+
 step "bee todos (no plugin) folds the same state"
 LIST="${KEY%%/*}"
 ITEM="${KEY##*/}"

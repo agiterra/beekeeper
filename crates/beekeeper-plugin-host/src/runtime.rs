@@ -8,6 +8,7 @@ use std::time::Duration;
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 
+use crate::drafts::{seal_tags, DraftKind, DraftReferences, MAX_DRAFT_CONTENT_BYTES};
 use crate::registry::{PluginEntry, Registry};
 use crate::{
     sha256_hex, Access, Draft, IfRefused, Invocation, InvokeError, InvokeOutcome, LoadError,
@@ -49,27 +50,22 @@ const DRAFT_FUTURE_SECS: u64 = 890;
 const MAX_LOGS: usize = 32;
 const MAX_LOG_BYTES: usize = 1_024;
 
-/// Checks one kind's draft before anyone is asked to sign it: `(tags,
-/// content) -> Ok` or the reason. The embedder registers one per kind it is
-/// willing to let any plugin draft; a kind with none can never be drafted,
-/// whatever the registry grants.
-pub type DraftValidator = Arc<dyn Fn(&[Vec<String>], &str) -> Result<(), String> + Send + Sync>;
-
-/// Validators by kind.
+/// The kinds the embedder lets any plugin draft, each with its data-tag
+/// allowlist and validator (`crate::drafts`).
 #[derive(Clone, Default)]
-pub struct DraftValidators(BTreeMap<u32, DraftValidator>);
+pub struct DraftValidators(BTreeMap<u32, DraftKind>);
 
 impl DraftValidators {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with(mut self, kind: u32, validator: DraftValidator) -> Self {
-        self.0.insert(kind, validator);
+    pub fn with(mut self, kind: u32, draft_kind: DraftKind) -> Self {
+        self.0.insert(kind, draft_kind);
         self
     }
 
-    fn get(&self, kind: u32) -> Option<&DraftValidator> {
+    fn get(&self, kind: u32) -> Option<&DraftKind> {
         self.0.get(&kind)
     }
 }
@@ -648,10 +644,11 @@ impl PluginHost {
             Ok(Err(error)) => return Err(InvokeError::Operation(op_error(error))),
             Ok(Ok(output)) => output,
         };
-        let (result, drafts) = self.check_output(loaded, &decl, &invocation, output)?;
+        let (result, drafts, people) = self.check_output(loaded, &decl, &invocation, output)?;
         Ok(InvokeOutcome {
             result,
             drafts,
+            people,
             fuel_used,
             logs: state.logs,
         })
@@ -663,7 +660,7 @@ impl PluginHost {
         decl: &OperationDecl,
         invocation: &Invocation,
         output: wit::OpOutput,
-    ) -> Result<(serde_json::Value, Vec<Draft>), InvokeError> {
+    ) -> Result<(serde_json::Value, Vec<Draft>, Vec<String>), InvokeError> {
         let violation = |message: String| InvokeError::ContractViolation(message);
         let limits = &loaded.entry.limits;
         if output.result_json.len() > limits.max_output_bytes {
@@ -689,8 +686,9 @@ impl PluginHost {
             )));
         }
         let mut drafts = Vec::with_capacity(output.drafts.len());
+        let mut people = std::collections::BTreeSet::new();
         for (index, raw) in output.drafts.into_iter().enumerate() {
-            let draft = Draft {
+            let mut draft = Draft {
                 kind: raw.kind,
                 created_at: raw.created_at,
                 tags: raw.tags,
@@ -702,23 +700,27 @@ impl PluginHost {
                 },
                 partial_summary: raw.partial_summary,
             };
-            self.check_draft(loaded, invocation, &draft)
+            let references = self
+                .check_draft(loaded, invocation, &mut draft)
                 .map_err(|message| violation(format!("draft {index}: {message}")))?;
+            people.extend(references.people);
             drafts.push(draft);
         }
-        Ok((result, drafts))
+        Ok((result, drafts, people.into_iter().collect()))
     }
 
+    /// Check one draft and replace its tags with the sealed set: the host's
+    /// scope tag plus the plugin's allowed data tags (`crate::drafts`).
     fn check_draft(
         &self,
         loaded: &LoadedPlugin,
         invocation: &Invocation,
-        draft: &Draft,
-    ) -> Result<(), String> {
+        draft: &mut Draft,
+    ) -> Result<DraftReferences, String> {
         if !loaded.manifest.draft_kinds.contains(&draft.kind) {
             return Err(format!("kind {} is not one this plugin drafts", draft.kind));
         }
-        let validator = self
+        let draft_kind = self
             .validators
             .get(draft.kind)
             .ok_or_else(|| format!("this host has no validator for kind {}", draft.kind))?;
@@ -731,28 +733,14 @@ impl PluginHost {
                 draft.created_at, DRAFT_PAST_SECS, DRAFT_FUTURE_SECS
             ));
         }
-        if draft.content.len() > 64 * 1024 {
-            return Err("content is over 64 KiB".to_owned());
+        if draft.content.len() > MAX_DRAFT_CONTENT_BYTES {
+            return Err(format!("content is over {MAX_DRAFT_CONTENT_BYTES} bytes"));
         }
-        if draft.tags.len() > 64
-            || draft
-                .tags
-                .iter()
-                .any(|tag| tag.is_empty() || tag.len() > 8 || tag.iter().any(|v| v.len() > 1024))
-        {
-            return Err("tags exceed 64 tags of 1-8 values of 1 KiB".to_owned());
-        }
-        let scope_tags: Vec<&Vec<String>> = draft
-            .tags
-            .iter()
-            .filter(|tag| tag.first().map(String::as_str) == Some("a"))
-            .collect();
-        let coordinate = invocation.scope.coordinate();
-        if scope_tags.len() != 1 || scope_tags[0].get(1).map(String::as_str) != Some(coordinate) {
-            return Err(format!(
-                "must carry exactly one a tag naming the invocation's scope {coordinate:?}"
-            ));
-        }
+        draft.tags = seal_tags(
+            draft_kind.data_tags(),
+            invocation.scope.coordinate(),
+            &draft.tags,
+        )?;
         if draft.group.is_empty() || draft.group.len() > 64 {
             return Err("group must be 1-64 bytes".to_owned());
         }
@@ -763,7 +751,7 @@ impl PluginHost {
         {
             return Err("partial_summary is over 512 bytes".to_owned());
         }
-        validator(&draft.tags, &draft.content)
+        draft_kind.validate(&draft.tags, &draft.content)
     }
 }
 

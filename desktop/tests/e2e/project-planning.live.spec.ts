@@ -106,8 +106,13 @@ async function openPlanning(page: Page, seed: Seed) {
 }
 
 type Shown = {
-  open: { id: string; text: string; status: string }[];
-  completed: { id: string; text: string; status: string }[];
+  open: { id: string; text: string; status: string; assignee: string | null }[];
+  completed: {
+    id: string;
+    text: string;
+    status: string;
+    assignee: string | null;
+  }[];
 };
 
 async function showAsAlice(seed: Seed): Promise<Shown> {
@@ -189,6 +194,26 @@ test.describe("project planning (live relay)", () => {
           { timeout: 30_000 },
         )
         .toBe("in_progress");
+    });
+
+    await test.step("the detail assigns it to alice, a collaborator on the roster", async () => {
+      // An assignee is a reference the relay authorizes (a private project's
+      // roster) and the app re-seals before signing: a legitimate one lands.
+      await page.getByTestId("planning-detail-assignee").click();
+      await page
+        .getByTestId(`todo-assignee-option-${TEST_IDENTITIES.alice.pubkey}`)
+        .click();
+      await expect
+        .poll(
+          async () => {
+            const shown = await showAsAlice(seed);
+            return (
+              shown.open.find((item) => item.text === title)?.assignee ?? null
+            );
+          },
+          { timeout: 30_000 },
+        )
+        .toBe(TEST_IDENTITIES.alice.pubkey);
     });
 
     await test.step("a reload reads the issue and its status back from the relay", async () => {

@@ -29,8 +29,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use beekeeper_core::tenant::CommunityId;
 use beekeeper_plugin_host::{
-    Access, DraftValidators, Invocation, InvokeError, LoadError, OpEffect, OpError, PluginHost,
-    RecordSource, Registry, Scope, SourceError, StoredRecord,
+    Access, DraftKind, DraftReferences, DraftValidators, Invocation, InvokeError, LoadError,
+    OpEffect, OpError, PluginHost, RecordSource, Registry, Scope, SourceError, StoredRecord,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -50,16 +50,24 @@ pub const PLUGINS_FILE_ENV: &str = "BEEKEEPER_PLUGINS_FILE";
 /// the invocation's project. Today that is NIP-TD only.
 const READABLE_KINDS: &[u32] = &[beekeeper_core::kind::KIND_PROJECT_TODO_OP];
 
-/// The drafts this relay will hand a caller to sign, each with the same
-/// validator ingest runs on it.
+/// The drafts this relay will hand a caller to sign: for each kind, the data
+/// tags a plugin may propose (the host writes the `a` scope itself) and the
+/// same validator ingest runs on it, which also names the people a draft
+/// assigns so [`authorize_people`] can check them.
 pub fn draft_validators() -> DraftValidators {
     let kind = beekeeper_core::kind::KIND_PROJECT_TODO_OP;
     DraftValidators::new().with(
         kind,
-        Arc::new(move |tags, content| {
-            beekeeper_core::project_todo::validate_project_todo_parts(kind, tags, content)
-                .map(|_| ())
-        }),
+        DraftKind::new(
+            &beekeeper_core::project_todo::PROJECT_TODO_DATA_TAG_KEYS,
+            Arc::new(move |tags, content| {
+                let op =
+                    beekeeper_core::project_todo::validate_project_todo_parts(kind, tags, content)?;
+                Ok(DraftReferences {
+                    people: op.person().map(str::to_owned).into_iter().collect(),
+                })
+            }),
+        ),
     )
 }
 
@@ -244,6 +252,55 @@ async fn project_access(
             Ok(Some(Access::Write))
         }
     }
+}
+
+/// Whether every person a plugin's drafts name is a legitimate target in the
+/// project. A private project's targets are the people its roster admits —
+/// assigning anyone else would route its issue to someone who cannot see it.
+/// A public project's issues are readable by every relay member, and a to-do
+/// op carries no `p` tag, so it notifies no one: any well-formed pubkey (the
+/// validator already required 64 lowercase hex) is a target there. The scope
+/// itself is never in question: the host wrote it from `coordinate`.
+async fn authorize_people(
+    state: &AppState,
+    community: CommunityId,
+    coordinate: &str,
+    people: &[String],
+) -> Result<(), ApiError> {
+    if people.is_empty() {
+        return Ok(());
+    }
+    let gate = state
+        .db
+        .get_project_gate_by_coordinate(community, coordinate)
+        .await
+        .map_err(|e| {
+            tracing::error!("plugin targets: project gate lookup failed: {e}");
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "host-failure",
+                "project lookup failed",
+            )
+        })?;
+    let Some(gate) = gate else {
+        return Ok(());
+    };
+    for person in people {
+        let admitted = hex::decode(person)
+            .ok()
+            .is_some_and(|bytes| gate.admits_read(&bytes));
+        if !admitted {
+            return Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid-target",
+                format!(
+                    "{}… is not on this project's roster, so they could not see it; nothing was drafted",
+                    person.get(..12).unwrap_or(person)
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reads for one invocation: the caller's view of one project's records.
@@ -497,7 +554,7 @@ pub async fn invoke_plugin(
         state: state.clone(),
         runtime: tokio::runtime::Handle::current(),
         community: tenant.community(),
-        coordinate,
+        coordinate: coordinate.clone(),
         reader: caller_bytes,
         hidden,
         deadline: std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms),
@@ -531,6 +588,19 @@ pub async fn invoke_plugin(
             return Err(invoke_error(&e));
         }
     };
+    // The host wrote every draft's scope from `coordinate`; who a draft
+    // names is ours to authorize before anyone is handed it to sign.
+    if let Err(refused) =
+        authorize_people(&state, tenant.community(), &coordinate, &outcome.people).await
+    {
+        tracing::warn!(
+            plugin = %name,
+            operation = %request.operation,
+            caller = %caller.to_hex(),
+            "plugin drafts named a target outside the project"
+        );
+        return Err(refused);
+    }
     for (level, message) in &outcome.logs {
         tracing::debug!(plugin = %name, ?level, "{message}");
     }

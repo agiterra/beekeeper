@@ -110,6 +110,7 @@ blocking thread in a fresh instance.
 | 409 | `conflict` | e.g. the target's latest change is stamped too far ahead |
 | 413 | `input-too-large` | |
 | 422 | `invalid-input` | The plugin refused the input |
+| 422 | `invalid-target` | A draft names a person the project cannot route to (an assignee off a private project's roster); nothing was drafted |
 | 500 | `plugin-trapped` (with `trap`: `fuel`/`deadline`/`memory`/`trap`), `plugin-internal`, `host-failure` | |
 | 501 | `unsupported` | The plugin does not do that (e.g. a read-only provider asked to write) |
 | 502 | `contract-violation` | The plugin returned something the contract forbids; its output was discarded whole |
@@ -134,17 +135,75 @@ see. A plugin pages by `next`, never by stopping at a short page. Each host
 read is bounded by the call's deadline (a guest is interrupted by the epoch;
 a thread blocked on the database is not, so the relay times the read out).
 
-### Drafts
+### Drafts: the plugin proposes data, the signer's side owns authority
 
-The host checks every draft before returning it: a kind the plugin drafts and
-the host validates (for 44248, the same `validate_project_todo_parts` ingest
-runs), exactly one `a` tag naming the invocation's project, `created_at`
-within an hour behind and 890 s ahead of the host clock (inside ingest's
-900 s drift rule), and size caps. One bad draft discards the whole output.
+This is the one invariant every plugin world shares, whatever signs in the
+end (code: `crates/beekeeper-plugin-host/src/drafts.rs`). A plugin proposes
+a draft's **data**. It never decides **authority** — whose scope the event
+lands in, which community, whom it routes to or notifies — because nobody
+reads a draft before it is signed: the Planning client signs automatically
+when the user acts, so a person inspecting a draft is not a backstop.
 
-A client then signs and publishes them in order — `bee` (`plugins::execute_drafts`)
-and the desktop (`shared/plugins/pluginDrafts.ts`) implement the same rules,
-and both re-check kind and scope before signing anything:
+The host seals every draft before returning it, and one bad draft discards
+the whole output (`502 contract-violation`):
+
+1. **Kind.** One the plugin declared and the embedder lets plugins draft —
+   today NIP-TD (44248) only.
+2. **Caps on the proposal**: at most 64 tags, each of 1–8 values, each value
+   ≤ 1 KiB, ≤ 16 KiB of tag values in all; content ≤ 64 KiB.
+3. **Scope is constructed.** The host writes the draft's one `a` tag itself
+   from the invocation's authorized project. A plugin may leave it out or
+   echo it exactly once; any other `a` — another project, a second copy, a
+   relay hint — is refused, never replaced. So a signed event can never
+   carry two scopes that a first-match and a last-match reader would resolve
+   differently. The community is the request's host and is never a tag.
+4. **Tags are a per-kind allowlist.** For 44248 a plugin may propose only
+   `td-v`, `td-op`, `td-list`, `td-vis`, `td-item`
+   (`PROJECT_TODO_DATA_TAG_KEYS`). `p`, `e`, `q`, `h`, `k`, provenance or any
+   new key is refused, not passed through.
+5. **Caps on the construction**: the same caps again on the sealed tags, so
+   adding the scope cannot carry a draft past them (64 proposed tags with no
+   `a` fail as 65).
+6. **The kind's validator** — for 44248 the same `validate_project_todo_parts`
+   ingest runs — over the sealed tags and content: tag and content agree
+   (`td-list`/`td-item`/`td-op`/`td-vis` match the content), content keys are
+   closed, an assignee is 64 lowercase hex.
+7. **References.** The validator names the people a draft routes to; the
+   relay authorizes each before handing anything out
+   (`api/plugins.rs::authorize_people`). In a private project an assignee
+   must be on the roster (`422 invalid-target` otherwise). In a public one
+   any well-formed pubkey may be assigned: every relay member can read it
+   and a to-do op has no `p` tag, so it notifies no one. A to-do op's other
+   references — its list and item ids — are local to the project its `a`
+   tag names, because the fold keys lists by that coordinate; they cannot
+   reach another project's objects. Free text (titles, descriptions) is
+   data, not routing.
+8. `created_at` within an hour behind and 890 s ahead of the host clock
+   (inside ingest's 900 s drift rule); `group` 1–64 bytes; `partialSummary`
+   ≤ 512 bytes.
+
+**Who signs, exactly.** An operation provider's drafts are signed by the
+**member who invoked it, with their own key, in their own client** — never
+by the relay, never by the plugin, which holds no key or secret of any kind.
+That is why a member's issue edit stays that member's signed event, and it
+is not changing: Planning does not move to relay signing. A webhook plugin
+(the GitHub plan below) differs in one respect only — there is no member in
+the loop, so its adapter, not a client, is the signing side: it owns the
+tenant, the installation, HMAC verification and the relay's signature, and
+applies this same seal (constructed scope, per-kind allowlist, caps twice,
+references authorized) before the relay signs. The plugin proposes data in
+both worlds; authority is never the plugin's.
+
+The member's client is the last check, so it seals again rather than
+trusting the relay — `bee` (`plugins::seal_draft`) and the desktop
+(`shared/plugins/pluginDrafts.ts` `sealDraft`): a kind it signs for plugins,
+the same tag allowlist, its own `a` tag written from the project *it* asked
+for (a proposed one must echo it exactly, once), the caps before and after,
+and the kind's validator (the desktop re-derives the tags from the decoded
+content and requires an exact match). Only the sealed event is signed.
+
+The client then signs and publishes the drafts in order — `bee`
+(`plugins::execute_drafts`) and the desktop implement the same rules:
 
 - `abort` — stop. If nothing landed yet, the relay's refusal is the error. If
   something did, the write is partial: report the draft's `partialSummary`
@@ -158,11 +217,11 @@ and both re-check kind and scope before signing anything:
   reports it as unconfirmed, never as refused, so nobody retries into a
   duplicate. A create still returns its issue key.
 
-A client signs what a write operation returns within those checks; it does
-not narrow drafts to what the operation's name suggests (a `set-title` could
-draft any NIP-TD op in the project). The plugin owns what an operation
-means — that is the point — so registering a plugin is trusting it with the
-caller's writes in that kind and project.
+Within those checks a client does not narrow drafts to what the operation's
+name suggests (a `set-title` could draft any NIP-TD op in the project). The
+plugin owns what an operation means — that is the point — so registering a
+plugin is trusting it with the caller's *data* writes in that kind and
+project. It is never trusting it with scope, routing or anyone's key.
 
 ## Planning: `beekeeper.planning/1`
 
@@ -262,19 +321,22 @@ and live UI gates against a scratch database with two tenants.
 `webhook-plugin` world on the same foundation: in-process wasmtime components,
 no WASI, a sha256-pinned registry under `BEEKEEPER_PLUGINS_FILE`, per-call
 fuel/deadline/memory, a fresh store per call, and the host owning secrets,
-HMAC and signing. This crate is that foundation; `SUPPORTED_WORLDS` is where a
-second world plugs in. Differences to settle: this registry uses
-`[[plugin]] world = "..."` where that plan wrote `[[webhook_plugin]]`, and the
-WIT package is `beekeeper:plugin` rather than `beekeeper:webhook`. Unlike a
+HMAC and signing. This crate is that foundation (Wasmtime 48.0.6, no WASI,
+one host for both worlds); `SUPPORTED_WORLDS` is where a second world plugs
+in, with its own WIT world beside `operation-provider`. Its adapter reuses
+`drafts::seal_tags` and per-kind `DraftKind`s so the seal above is one
+implementation, not two. Agreed with that plan's owner (2026-10-21): one
+shared host, two separate WIT worlds, and the generic `[[plugin]] world = "..."`
+registry (with its required sha256 pin) rather than a `[[webhook_plugin]]`
+table; this foundation lands first and the webhook adapter follows it. Unlike a
 webhook plugin, an operation provider never causes the relay to sign anything.
 
 Three things an operator or that plan's implementer will meet:
 
 - The registry file is strict. Every table refuses unknown fields, so a
-  registry holding a `[[webhook_plugin]]` table as that plan writes it makes
-  this relay refuse to start. Until the shape is agreed, one file cannot
-  serve both formats; the fix is one shape, not a parser that ignores what it
-  does not know (a relay silently skipping a registered plugin would be a
+  registry holding a `[[webhook_plugin]]` table makes this relay refuse to
+  start. One shape (`[[plugin]]`) serves both worlds, not a parser that
+  ignores what it does not know (a relay silently skipping a registered plugin would be a
   control that lies).
 - The loader dispatches on one world today. `world` is checked against
   `SUPPORTED_WORLDS`, but a loaded plugin always holds an operation-provider

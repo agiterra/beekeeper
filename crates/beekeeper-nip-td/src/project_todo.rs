@@ -36,6 +36,13 @@ pub const PROJECT_TODO_SCHEMA: &str = "buzz-project-todo/v1";
 /// Exact version carried by the `td-v` tag.
 pub const PROJECT_TODO_TAG_VERSION: &str = "td1-1";
 
+/// The tag keys an op carries besides its `a` project coordinate: its data
+/// tags. The set is closed ([`validate_project_todo_parts`] refuses any other
+/// key). A plugin host lets a plugin propose only these and constructs the
+/// `a` tag itself from the invocation's authorized scope (`docs/plugins.md`
+/// § Drafts); a signer seals a plugin's draft from the same list.
+pub const PROJECT_TODO_DATA_TAG_KEYS: [&str; 5] = ["td-v", "td-op", "td-list", "td-vis", "td-item"];
+
 /// Maximum UTF-8 byte length of a complete op payload.
 pub const MAX_PROJECT_TODO_CONTENT_BYTES: usize = 4 * 1024;
 
@@ -468,6 +475,21 @@ impl ProjectTodoOp {
             ProjectTodoOpValue::ItemStatus { .. } => ProjectTodoOpKind::ItemStatus,
             ProjectTodoOpValue::ItemPriority { .. } => ProjectTodoOpKind::ItemPriority,
             ProjectTodoOpValue::ItemDescription { .. } => ProjectTodoOpKind::ItemDescription,
+        }
+    }
+
+    /// The person this op names in its content, if any: an `item.assignee`
+    /// that assigns someone. Every other reference an op makes — its list
+    /// and item ids — is local to the project its `a` tag names, because the
+    /// fold keys lists by that coordinate. A pubkey is the one reference that
+    /// is not, so a host that lets a plugin draft ops authorizes it.
+    pub fn person(&self) -> Option<&str> {
+        match &self.value {
+            ProjectTodoOpValue::ItemAssignee {
+                assignee: Some(pubkey),
+                ..
+            } => Some(pubkey),
+            _ => None,
         }
     }
 

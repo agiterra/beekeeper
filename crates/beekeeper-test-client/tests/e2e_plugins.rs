@@ -705,3 +705,194 @@ async fn a_replacement_providers_drafts_are_member_signed_and_accepted() {
     assert_eq!(issues(&read)[0]["title"], "Filed via the fixture");
     assert_eq!(issues(&read)[0]["key"], created["result"]["key"]);
 }
+
+/// A valid `list.create` proposal's data tags and content, with no scope:
+/// what a plugin may say. `extra` tags are appended to the proposal.
+fn told_list_create(extra: Value) -> Value {
+    let list = uuid::Uuid::new_v4().simple().to_string();
+    let mut tags = json!([
+        ["td-v", "td1-1"],
+        ["td-op", "list.create"],
+        ["td-list", list],
+        ["td-vis", "project"]
+    ]);
+    for tag in extra.as_array().cloned().unwrap_or_default() {
+        tags.as_array_mut().unwrap().push(tag);
+    }
+    json!({ "drafts": [{ "kind": 44248, "tags": tags,
+        "content": json!({ "schema": "buzz-project-todo/v1", "op": "list.create",
+            "listId": list, "title": "Told", "visibility": "project" }).to_string() }] })
+}
+
+/// The relay writes every draft's scope itself, from the project the caller
+/// was authorized for: a plugin that leaves it out gets it added, and one
+/// that names another project, names it twice, or proposes any routing tag
+/// the kind does not allow has its whole output discarded.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn the_relay_writes_each_drafts_scope_and_refuses_routing_it_did_not_allow() {
+    let owner = Keys::generate();
+    let member = Keys::generate();
+    let project = create_project(&relay_url(), &owner, None, &[]).await;
+    let other = create_project(&relay_url(), &owner, None, &[]).await;
+
+    let sealed = ok(
+        &member,
+        "test-faults",
+        "draft-as-told",
+        &project,
+        told_list_create(json!([])),
+    )
+    .await;
+    let tags = sealed["drafts"][0]["tags"].as_array().unwrap().clone();
+    let scopes: Vec<&Value> = tags.iter().filter(|t| t[0] == "a").collect();
+    assert_eq!(scopes, vec![&json!(["a", project])], "{tags:?}");
+    let published = publish_drafts(&relay_url(), &member, &sealed["drafts"]).await;
+    assert_eq!(published.len(), 1, "ingest accepts the sealed draft");
+
+    for extra in [
+        json!([["a", other]]),
+        json!([["a", project], ["a", other]]),
+        json!([["a", project], ["a", project]]),
+        json!([["p", owner.public_key().to_hex()]]),
+        json!([["e", "e".repeat(64)]]),
+        json!([["h", "a-channel"]]),
+        json!([["unknown", "x"]]),
+    ] {
+        let (status, body) = invoke(
+            &member,
+            "test-faults",
+            "draft-as-told",
+            &project,
+            told_list_create(extra.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{extra}: {body}");
+        assert_eq!(body["code"], "contract-violation", "{extra}: {body}");
+        assert!(
+            body.get("drafts").is_none(),
+            "nothing reaches a signer: {body}"
+        );
+    }
+
+    // 64 proposed tags pass the proposal's cap; with the relay's scope they
+    // would be 65.
+    let filler: Vec<Value> = (0..60).map(|_| json!(["td-v", "td1-1"])).collect();
+    let (status, body) = invoke(
+        &member,
+        "test-faults",
+        "draft-as-told",
+        &project,
+        told_list_create(json!(filler)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("constructed tags: 65"),
+        "{body}"
+    );
+}
+
+/// Assigning is a reference to a person, so the relay checks it: in a
+/// private project the assignee must be on the roster — anyone else is
+/// refused before a draft is handed out — while a roster member, the caller
+/// themselves and clearing the assignee all draft normally.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn a_private_projects_assignee_must_be_someone_its_roster_admits() {
+    let owner = Keys::generate();
+    let collaborator = Keys::generate();
+    let viewer = Keys::generate();
+    let stranger = Keys::generate();
+    let project = create_project(
+        &relay_url(),
+        &owner,
+        Some("private"),
+        &[(&collaborator, "collaborator"), (&viewer, "viewer")],
+    )
+    .await;
+    let create = |assignee: Option<String>| {
+        json!({ "title": "Assigned", "description": null, "statusId": "todo",
+                "priorityId": "none", "assignee": assignee, "containerId": null })
+    };
+
+    let (status, body) = invoke(
+        &collaborator,
+        "planning",
+        "create-issue",
+        &project,
+        create(Some(stranger.public_key().to_hex())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "invalid-target");
+    assert!(body.get("drafts").is_none());
+
+    let created = ok(
+        &collaborator,
+        "planning",
+        "create-issue",
+        &project,
+        create(Some(viewer.public_key().to_hex())),
+    )
+    .await;
+    publish_drafts(&relay_url(), &collaborator, &created["drafts"]).await;
+    let read = ok(&owner, "planning", "read", &project, json!({})).await;
+    let issue = issues(&read)
+        .into_iter()
+        .find(|i| i["key"] == created["result"]["key"])
+        .expect("created");
+    assert_eq!(issue["assignee"], viewer.public_key().to_hex());
+
+    let target = json!({ "containerId": issue["containerId"], "issueId": issue["issueId"] });
+    let with = |assignee: Value| {
+        let mut input = target.clone();
+        input["assignee"] = assignee;
+        input
+    };
+    let (status, body) = invoke(
+        &owner,
+        "planning",
+        "set-assignee",
+        &project,
+        with(json!(stranger.public_key().to_hex())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    for (who, assignee) in [
+        (&owner, json!(owner.public_key().to_hex())),
+        (&owner, json!(collaborator.public_key().to_hex())),
+        (&collaborator, Value::Null),
+    ] {
+        let edit = ok(
+            who,
+            "planning",
+            "set-assignee",
+            &project,
+            with(assignee.clone()),
+        )
+        .await;
+        publish_drafts(&relay_url(), who, &edit["drafts"]).await;
+        let read = ok(&viewer, "planning", "read", &project, json!({})).await;
+        let issue = issues(&read)
+            .into_iter()
+            .find(|i| i["key"] == created["result"]["key"])
+            .expect("issue");
+        assert_eq!(issue["assignee"], assignee);
+    }
+
+    // A public project's issues are readable by every relay member and a
+    // to-do op notifies no one, so any well-formed pubkey may be assigned.
+    let public = create_project(&relay_url(), &owner, None, &[]).await;
+    ok(
+        &owner,
+        "planning",
+        "create-issue",
+        &public,
+        create(Some(stranger.public_key().to_hex())),
+    )
+    .await;
+}

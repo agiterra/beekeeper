@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use beekeeper_plugin_host::{
-    Access, DraftValidators, Invocation, InvokeError, PluginHost, RecordSource, Registry, Scope,
-    SourceError, StoredRecord,
+    Access, DraftKind, DraftReferences, DraftValidators, Invocation, InvokeError, PluginHost,
+    RecordSource, Registry, Scope, SourceError, StoredRecord,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -101,10 +101,17 @@ fn validators() -> DraftValidators {
     let kind = beekeeper_nip_td::KIND_PROJECT_TODO_OP;
     DraftValidators::new().with(
         kind,
-        Arc::new(move |tags, content| {
-            beekeeper_nip_td::project_todo::validate_project_todo_parts(kind, tags, content)
-                .map(|_| ())
-        }),
+        DraftKind::new(
+            &beekeeper_nip_td::project_todo::PROJECT_TODO_DATA_TAG_KEYS,
+            Arc::new(move |tags, content| {
+                let op = beekeeper_nip_td::project_todo::validate_project_todo_parts(
+                    kind, tags, content,
+                )?;
+                Ok(DraftReferences {
+                    people: op.person().map(str::to_owned).into_iter().collect(),
+                })
+            }),
+        ),
     )
 }
 
