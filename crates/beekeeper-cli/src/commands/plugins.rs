@@ -145,7 +145,7 @@ pub async fn execute_drafts(
     let mut failed: Vec<Value> = Vec::new();
     let mut saved_groups = std::collections::BTreeSet::new();
     let mut skipped = std::collections::BTreeSet::new();
-    for draft in &drafts {
+    for (index, draft) in drafts.iter().enumerate() {
         let group = draft["group"].as_str().unwrap_or("").to_owned();
         if skipped.contains(&group) {
             continue;
@@ -183,10 +183,26 @@ pub async fn execute_drafts(
                 if matches!(error, CliError::DeliveryUnknown(_))
                     || matches!(&error, CliError::Network(e) if e.is_timeout())
                 {
+                    // The same accounting as the desktop's executor: what
+                    // landed, what was refused earlier, and which later
+                    // groups were never tried.
+                    let mut not_attempted: Vec<String> = Vec::new();
+                    for later in &drafts[index + 1..] {
+                        let g = later["group"].as_str().unwrap_or("").to_owned();
+                        if g != group
+                            && !skipped.contains(&g)
+                            && !saved_groups.contains(&g)
+                            && !not_attempted.contains(&g)
+                        {
+                            not_attempted.push(g);
+                        }
+                    }
                     return Err(CliError::DeliveryUnknown(format!(
                         "the relay did not confirm the {group} change ({reason}); it may still \
-                         land — read before retrying. published: {}",
-                        Value::Array(published)
+                         land — read before retrying. published: {}; failed: {}; not attempted: {}",
+                        Value::Array(published),
+                        Value::Array(failed),
+                        json!(not_attempted)
                     )));
                 }
                 let summary = draft["partialSummary"].as_str();

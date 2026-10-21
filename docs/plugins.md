@@ -173,9 +173,9 @@ the relay and `bee todos` use.
 | Operation | Effect | Input → result |
 | --- | --- | --- |
 | `capabilities` | read | → statuses, priorities, `comments: false`, default container, limits, provider label |
-| `read` | read | → issues, containers, `truncated`, `unreadable` |
+| `read` | read | → issues, containers, `truncated`, `unreadable`. `truncated` is true when older history was not read: past ten pages, or when the call's query, record or byte budget ran out after the first page. A budget spent before any page, or the call's deadline, is still an error |
 | `activity` | read | `{containerId, issueId}` → one entry per signed op, oldest first |
-| `create-issue` | draft | `{title, description, statusId, priorityId, assignee, containerId}` → `{key, containerId, issueId}`; the ids are named before anything is published |
+| `create-issue` | draft | `{title, description, statusId, priorityId, assignee, containerId}` → `{key, containerId, issueId}`; the ids are named before anything is published. A null `containerId` means the project's first shared list (the one `read` lists first); a list titled `defaultContainerTitle` is created only when the project has none |
 | `set-title`, `set-description`, `set-status`, `set-priority`, `set-assignee` | draft | `{containerId, issueId, …}` |
 
 Rules it owns: a personal or archived list is not an issue container;
@@ -267,3 +267,21 @@ second world plugs in. Differences to settle: this registry uses
 `[[plugin]] world = "..."` where that plan wrote `[[webhook_plugin]]`, and the
 WIT package is `beekeeper:plugin` rather than `beekeeper:webhook`. Unlike a
 webhook plugin, an operation provider never causes the relay to sign anything.
+
+Three things an operator or that plan's implementer will meet:
+
+- The registry file is strict. Every table refuses unknown fields, so a
+  registry holding a `[[webhook_plugin]]` table as that plan writes it makes
+  this relay refuse to start. Until the shape is agreed, one file cannot
+  serve both formats; the fix is one shape, not a parser that ignores what it
+  does not know (a relay silently skipping a registered plugin would be a
+  control that lies).
+- The loader dispatches on one world today. `world` is checked against
+  `SUPPORTED_WORLDS`, but a loaded plugin always holds an operation-provider
+  pre-instance, and `limits`/`grants` are shaped for operation providers. A
+  second world adds a variant there, its own linker allowlist, and its own
+  limits.
+- The relay already has a compiled-in Rust webhook surface,
+  `crates/beekeeper-relay/src/webhook_plugin.rs` (`/webhooks/<name>`, a
+  `WebhookVerifier` trait). That plan's step 8 replaces its handler with a
+  WASM one; this branch does not touch it.

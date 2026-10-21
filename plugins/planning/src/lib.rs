@@ -159,6 +159,8 @@ pub enum Error {
     Unsupported(String),
     /// A host capability refused; the message is the host's.
     Host(String),
+    /// A per-call host budget (queries, records, bytes) ran out.
+    Budget(String),
     Internal(String),
 }
 
@@ -318,7 +320,17 @@ fn load(ctx: &Context, records: &mut dyn Records) -> Result<Snapshot, Error> {
     let mut cursor: Option<String> = None;
     let mut truncated = false;
     for page in 0..MAX_PAGES {
-        let (batch, next) = records.page(cursor.as_deref(), PAGE)?;
+        let (batch, next) = match records.page(cursor.as_deref(), PAGE) {
+            Ok(page) => page,
+            // The call's budget ran out after some history was read. What
+            // was read is still true, and older history exists: say
+            // truncated rather than fail the whole read.
+            Err(Error::Budget(_)) if page > 0 => {
+                truncated = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        };
         for event in batch {
             if seen.insert(event.id.clone()) {
                 events.push(event);
@@ -685,15 +697,20 @@ fn create_issue(ctx: &Context, snapshot: &Snapshot, input: &Value) -> Result<Out
     let container = nullable_str_field(input, "containerId")?;
 
     let mut drafter = Drafter::new(ctx, snapshot);
-    let (list_id, last_rank, created_list) = match container {
-        Some(id) => {
-            let list = planning_list(snapshot, id)?;
-            (
-                list.id.clone(),
-                list.open.last().map(|item| item.rank.clone()),
-                false,
-            )
-        }
+    // No container named: the project's first shared list, the same one
+    // `read` lists first and a client offers by default. A list is created
+    // only when the project has none, so a headless caller filing issue
+    // after issue never mints a new "Issues" list per issue.
+    let existing = match container {
+        Some(id) => Some(planning_list(snapshot, id)?),
+        None => snapshot.lists.iter().find(|l| is_planning_list(l)),
+    };
+    let (list_id, last_rank, created_list) = match existing {
+        Some(list) => (
+            list.id.clone(),
+            list.open.last().map(|item| item.rank.clone()),
+            false,
+        ),
         None => {
             let id = hex(&ctx.entropy[..16]);
             drafter.push(

@@ -53,7 +53,7 @@ for spec in "${plugins[@]}"; do
   fi
   manifest="$root/$dir/Cargo.toml"
   crate="$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$manifest" | head -1)"
-  CARGO_TARGET_DIR="$build_dir" cargo build --quiet --release \
+  CARGO_TARGET_DIR="$build_dir" cargo build --quiet --release --locked \
     --target wasm32-unknown-unknown --manifest-path "$manifest"
   core="$build_dir/wasm32-unknown-unknown/release/${crate//-/_}.wasm"
   sha="$("$pack" "$core" "$out/$name.wasm")"

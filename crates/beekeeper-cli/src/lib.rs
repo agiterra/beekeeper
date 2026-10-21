@@ -5506,7 +5506,8 @@ pub enum PlanningCmd {
         #[arg(long)]
         issue: String,
     },
-    /// Create an issue (in the default list when --container is absent)
+    /// Create an issue (in the project's first shared list when --container is
+    /// absent; one is created only if the project has none)
     Create {
         #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,

@@ -28,7 +28,10 @@ impl crate::Records for HostRecords {
             cursor: cursor.map(str::to_owned),
             limit,
         })
-        .map_err(|error| crate::Error::Host(host_message(error)))?;
+        .map_err(|error| match error {
+            types::HostError::BudgetExhausted(m) => crate::Error::Budget(m),
+            other => crate::Error::Host(host_message(other)),
+        })?;
         Ok((
             page.records
                 .into_iter()
@@ -102,6 +105,9 @@ impl Guest for Planning {
                 crate::Error::Conflict(m) => types::OpError::Conflict(m),
                 crate::Error::Unsupported(m) => types::OpError::Unsupported(m),
                 crate::Error::Host(m) => types::OpError::Host(types::HostError::Unavailable(m)),
+                crate::Error::Budget(m) => {
+                    types::OpError::Host(types::HostError::BudgetExhausted(m))
+                }
                 crate::Error::Internal(m) => types::OpError::Internal(m),
             },
         )?;

@@ -467,6 +467,21 @@ fn check_manifest(
     Ok(())
 }
 
+/// A host with no plugins and nothing to compile, for state built before a
+/// registry is read. Infallible: it never configures an engine that could
+/// refuse, and it has no plugin a deadline would need to reach, so it runs
+/// no ticker.
+impl Default for PluginHost {
+    fn default() -> Self {
+        Self {
+            engine: Engine::default(),
+            plugins: BTreeMap::new(),
+            validators: DraftValidators::new(),
+            ticker_stop: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
 impl PluginHost {
     /// A host with no plugins.
     pub fn empty() -> Result<Self, LoadError> {

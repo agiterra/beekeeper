@@ -419,6 +419,23 @@ fn create_into_an_existing_list_ranks_last_and_creates_no_list() {
 }
 
 #[test]
+fn create_with_no_container_reuses_the_first_shared_list_and_creates_none() {
+    let out = run("create-issue", create_input(Value::Null), base()).unwrap();
+    assert!(out.drafts.iter().all(|d| !d
+        .tags
+        .contains(&vec!["td-op".to_owned(), "list.create".to_owned()])));
+    assert!(out.drafts[0]
+        .tags
+        .contains(&vec!["td-op".to_owned(), "item.add".to_owned()]));
+    assert_eq!(out.result["containerId"], LIST);
+    // Filing a second one the same way still lands in the same list.
+    let mut events = base();
+    apply(&mut events, &out.drafts, BOB);
+    let again = run("create-issue", create_input(Value::Null), events).unwrap();
+    assert_eq!(again.result["containerId"], LIST);
+}
+
+#[test]
 fn create_with_defaults_is_one_add() {
     let out = run(
         "create-issue",
@@ -646,6 +663,59 @@ impl Records for Sparse {
             _ => Ok((self.events.clone(), None)),
         }
     }
+}
+
+/// A host whose per-call budget runs out after the first page.
+struct Exhausted {
+    events: Vec<TodoFoldEvent>,
+}
+
+impl Records for Exhausted {
+    fn page(
+        &mut self,
+        cursor: Option<&str>,
+        _limit: u32,
+    ) -> Result<(Vec<TodoFoldEvent>, Option<String>), Error> {
+        match cursor {
+            None => Ok((self.events.clone(), Some("1".into()))),
+            _ => Err(Error::Budget(
+                "this call has read all the bytes it may".into(),
+            )),
+        }
+    }
+}
+
+#[test]
+fn a_budget_spent_after_some_history_reads_as_truncated_not_as_an_error() {
+    let out = invoke(
+        "read",
+        &json!({}),
+        &ctx(),
+        &mut Exhausted { events: base() },
+    )
+    .unwrap();
+    assert_eq!(issues(&out).len(), 1);
+    assert_eq!(out.result["truncated"], true);
+}
+
+#[test]
+fn a_budget_spent_before_anything_was_read_is_still_an_error() {
+    struct Empty;
+    impl Records for Empty {
+        fn page(
+            &mut self,
+            _cursor: Option<&str>,
+            _limit: u32,
+        ) -> Result<(Vec<TodoFoldEvent>, Option<String>), Error> {
+            Err(Error::Budget(
+                "this call has used all of its queries".into(),
+            ))
+        }
+    }
+    assert!(matches!(
+        invoke("read", &json!({}), &ctx(), &mut Empty),
+        Err(Error::Budget(_))
+    ));
 }
 
 #[test]

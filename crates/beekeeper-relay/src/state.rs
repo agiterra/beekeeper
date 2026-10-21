@@ -973,10 +973,7 @@ impl AppState {
             media_upload_semaphore: Arc::new(Semaphore::new(media_max_concurrent_uploads)),
             workflow_engine,
             relay_keypair,
-            plugins: Arc::new(
-                beekeeper_plugin_host::PluginHost::empty()
-                    .expect("an empty plugin registry always loads"),
-            ),
+            plugins: Arc::new(beekeeper_plugin_host::PluginHost::default()),
 
             local_event_ids: Arc::new(
                 moka::sync::Cache::builder()
