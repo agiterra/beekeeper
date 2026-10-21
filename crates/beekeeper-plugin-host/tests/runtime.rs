@@ -919,6 +919,11 @@ fn more_drafts_than_the_limit_is_a_contract_violation_and_nothing_is_returned() 
 
 // ------------------------------------------- Planning against the pre-split host
 
+// BEGIN planning-fixed-capture: scripts/compare-planning-outputs.sh appends
+// this block, unchanged, to the base revision's tests/runtime.rs, so the old
+// and new hosts run the same capture code. It may use only helpers both
+// revisions define.
+
 /// The host clock every fixed-input call runs at. With fixed entropy (from
 /// [`call`]) and fixed records, an operation's output is a function of the
 /// plugin and the host's checks alone.
@@ -1033,6 +1038,21 @@ fn planning_fixed_outputs() -> Value {
     }
     Value::Array(out)
 }
+
+/// Writes [`planning_fixed_outputs`] as pretty JSON to `$PLANNING_FIXED_OUT`.
+/// Run only by scripts/compare-planning-outputs.sh; without the variable it
+/// does nothing.
+#[test]
+#[ignore = "capture for scripts/compare-planning-outputs.sh"]
+fn capture_planning_fixed_outputs() {
+    let Some(path) = std::env::var_os("PLANNING_FIXED_OUT") else {
+        return;
+    };
+    let text = serde_json::to_string_pretty(&planning_fixed_outputs()).expect("json");
+    std::fs::write(path, text + "\n").expect("write capture");
+}
+
+// END planning-fixed-capture
 
 /// What the world split left identical for Planning: for these fixed inputs,
 /// every result, sealed draft (tags, content, stamp, group, policy), named

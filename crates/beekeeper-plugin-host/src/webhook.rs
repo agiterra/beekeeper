@@ -124,6 +124,10 @@ impl AuthPlan {
     /// why it cannot be read: a span that is empty, longer than
     /// [`MAX_TIMESTAMP_DIGITS`] or past the prefix's end, or bytes that are
     /// not a decimal `u64`. `None` when the plan names no span.
+    ///
+    /// This proves the digits were signed, not that they are the vendor's
+    /// timestamp field: choosing the span (or naming none, which skips the
+    /// skew check) is the plugin's, trusted as part of its pinned code.
     pub fn signed_timestamp(&self) -> Result<Option<u64>, String> {
         let Some(span) = self.timestamp_span else {
             return Ok(None);

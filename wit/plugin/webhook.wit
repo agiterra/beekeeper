@@ -77,6 +77,13 @@ interface webhook-types {
         /// and enforces its skew; a span past the prefix's end or over
         /// anything but digits refuses the plan. Never the event's time: the
         /// host stamps that.
+        ///
+        /// Which bytes are the timestamp stays the plugin's choice, and so
+        /// does whether there is one: the host proves only that the digits
+        /// it parsed were signed, not that they are the vendor's timestamp
+        /// field. A plugin that points at other signed digits, or returns
+        /// `none`, changes or skips the freshness check, and the host cannot
+        /// tell. That choice is trusted as part of the plugin's pinned code.
         timestamp-span: option<byte-span>,
         /// The vendor's delivery id: 1-128 printable ASCII bytes. Not
         /// authenticated by the MAC unless the vendor signs it.

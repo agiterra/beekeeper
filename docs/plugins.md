@@ -294,6 +294,16 @@ signs, and is not "the same seal, signed by the relay":
   `X-GitHub-Event` and `X-GitHub-Delivery` can be rewritten in transit
   without failing the MAC. Treat both as routing hints, never as an
   authorization input; a delivery-id dedupe must allow for a forged id.
+- **Which signed bytes are the vendor timestamp is the plugin's choice.**
+  The host proves that the digits it parsed lie inside the signed prefix, so
+  the time it checks for skew is a signed one. It cannot prove that those
+  digits are the vendor's timestamp field and not other signed digits, and it
+  cannot require a span at all: a plugin that returns no span gets no skew
+  check, for a scheme that signs a time or not. Selecting the field (and
+  building the signed prefix around it) is vendor-specific parsing, so it
+  stays in the plugin and is trusted as part of its sha256-pinned code. A
+  review of a webhook plugin must check that its span points at the vendor's
+  timestamp and that it returns one whenever the vendor signs one.
 - **The host owns the time.** There is no member's clock and no plugin clock
   to trust: the event's `created_at` is the receive time the delivery was
   verified at, never a plugin value. Rule 8's window is for operation
