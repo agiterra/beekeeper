@@ -334,14 +334,17 @@ no-tauri-check:
 # Format all Rust code
 fmt:
     cargo fmt --all
+    ./scripts/plugins-lint.sh fmt
 
 # Check formatting without modifying files
 fmt-check:
     cargo fmt --all -- --check
+    ./scripts/plugins-lint.sh fmt-check
 
 # Run clippy with warnings as errors
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
+    ./scripts/plugins-lint.sh clippy
 
 # Install JS dependencies (pnpm workspace — installs all packages from root)
 desktop-install:

@@ -423,6 +423,14 @@ if [ "$FLOOR_FULL" = "1" ] || [ -n "$FLOOR_LINT_TAURI" ] || [ -n "$FLOOR_CHANGED
   step "sidecar stubs" just _ensure-sidecar-stubs
 fi
 
+# The plugins under plugins/ are separate Cargo workspaces the root lint never
+# reaches (scripts/plugins-lint.sh). A plugins/ path is unmapped, so it already
+# forces the full floor; beekeeper-nip-td is the one root crate they build on.
+if [ "$FLOOR_FULL" = "1" ] || grep -qE '^(plugins|crates/beekeeper-nip-td)/' "$changed_file"; then
+  step "plugins fmt" ./scripts/plugins-lint.sh fmt-check
+  step "plugins clippy" ./scripts/plugins-lint.sh clippy
+fi
+
 if [ "$FLOOR_FULL" = "1" ]; then
   step "clippy (workspace)" cargo clippy --workspace --all-targets -- -D warnings
   step "tauri clippy (workspace)" cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --workspace --all-targets -- -D warnings

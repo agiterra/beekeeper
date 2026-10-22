@@ -168,6 +168,11 @@ steps:
       # tests need the built components. rust-toolchain.toml installs the
       # wasm32-unknown-unknown target.
       - ./scripts/build-plugins.sh "$CARGO_TARGET_DIR/plugins"
+      # Every plugin ships (or is a fixture the host is tested against), and
+      # no root fmt/clippy reaches them; the pre-push floor lints them only
+      # when plugins/ or beekeeper-nip-td changed.
+      - ./scripts/plugins-lint.sh fmt-check
+      - ./scripts/plugins-lint.sh clippy
       - cargo test --manifest-path plugins/planning/Cargo.toml
       - BEEKEEPER_PLUGIN_ARTIFACTS="$CARGO_TARGET_DIR/plugins" cargo test -p beekeeper-plugin-host -- --include-ignored
 

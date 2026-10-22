@@ -42,13 +42,9 @@ else
   pack="$target/debug/beekeeper-plugin-pack"
 fi
 
-# name:dir:first-party (yes / no / unregistered)
-plugins=(
-  "planning:plugins/planning:yes"
-  "planning-fixture:plugins/test-planning-fixture:no"
-  "test-faults:plugins/test-faults:no"
-  "test-webhook:plugins/test-webhook:unregistered"
-)
+# shellcheck source=lib/plugins.sh
+source "$root/scripts/lib/plugins.sh"
+plugins=("${BEEKEEPER_PLUGINS[@]}")
 
 first_party=""
 test_only=""
