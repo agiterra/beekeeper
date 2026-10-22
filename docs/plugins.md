@@ -392,8 +392,23 @@ and live UI gates against a scratch database with two tenants.
 - The relay image builds the first-party plugins, bakes `planning.wasm` and
   its pinned `registry.toml` into `/usr/lib/beekeeper/plugins/`, and sets
   `BEEKEEPER_PLUGINS_FILE` there. An operator's own value replaces it.
-- `just relay` builds them and defaults `BEEKEEPER_PLUGINS_FILE` to
-  `target/plugins/registry.toml`.
+- Every `just` recipe that starts a relay — `relay`, `dev`, `relay-web`,
+  `admin`, `relay-release` — builds them and defaults `BEEKEEPER_PLUGINS_FILE`
+  to `<target>/plugins/registry.toml` (scripts/lib/plugins.sh), after loading
+  `.env`. `just relay-plugins-check` (part of `just check`) fails if a recipe
+  that starts a relay stops doing so.
+- **An operator's registry replaces the default; it is never merged.** A
+  custom `BEEKEEPER_PLUGINS_FILE` (environment, `.env`, or the container's
+  `ENV`) that omits Planning runs without Planning. Whether a custom registry
+  should instead extend the first-party one is undecided; until it is, an
+  operator who wants Planning plus their own plugins lists Planning in their
+  file, pinned to the `planning.wasm` they ship beside it.
+- **A bare binary has no plugins.** `beekeeper-relay` started directly — a
+  `cargo run` outside the recipes, or a release binary copied to a host — has
+  no default registry compiled in and nothing beside it to load: it logs that
+  Planning is unavailable and every client says so. Only the relay image ships
+  `planning.wasm` and a registry that pins it. Packaging both beside a plain
+  binary is not done.
 - **Upgrading a plugin** without rebuilding the relay: put the new `.wasm`
   beside a registry that pins it, point `BEEKEEPER_PLUGINS_FILE` there, and
   restart. There is no hot reload.

@@ -241,7 +241,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check no-tauri-check autodeploy-test sidecar-parity-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check no-tauri-check relay-plugins-check autodeploy-test sidecar-parity-check
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -326,6 +326,10 @@ file-size-check:
 # reason rather than raising the baseline.
 ignore-reasons-check:
     node scripts/check-ignore-reasons.mjs
+
+# Every recipe that starts a relay runs the first-party plugins (Planning).
+relay-plugins-check:
+    node scripts/check-relay-recipes-plugins.mjs
 
 # Headless crates never depend on Tauri; the desktop is a client, not the executor.
 no-tauri-check:
@@ -990,14 +994,14 @@ relay: bootstrap _ensure-migrations plugins-build
     set -o allexport
     source .env
     set +o allexport
-    # Planning is a plugin; run the first-party ones unless .env names a
-    # registry of its own (docs/plugins.md).
-    export BEEKEEPER_PLUGINS_FILE="${BEEKEEPER_PLUGINS_FILE:-{{justfile_directory()}}/target/plugins/registry.toml}"
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
+    # Planning is a plugin; run the first-party ones unless .env names a
+    # registry of its own (docs/plugins.md). Same in every recipe below.
+    source "{{justfile_directory()}}/scripts/lib/plugins.sh"; beekeeper_default_plugins_file "{{justfile_directory()}}"
     cargo run -p beekeeper-relay
 
 # Start the relay with the built web UI served from it
-relay-web: bootstrap _ensure-migrations
+relay-web: bootstrap _ensure-migrations plugins-build
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
@@ -1005,12 +1009,13 @@ relay-web: bootstrap _ensure-migrations
     source .env
     set +o allexport
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
+    source "{{justfile_directory()}}/scripts/lib/plugins.sh"; beekeeper_default_plugins_file "{{justfile_directory()}}"
     [[ -d node_modules ]] || pnpm install
     pnpm -C web build
     BEEKEEPER_WEB_DIR=./web/dist cargo run -p beekeeper-relay
 
 # Build and run the private read-only admin dashboard
-admin: bootstrap _ensure-migrations
+admin: bootstrap _ensure-migrations plugins-build
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
@@ -1018,6 +1023,7 @@ admin: bootstrap _ensure-migrations
     source .env
     set +o allexport
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
+    source "{{justfile_directory()}}/scripts/lib/plugins.sh"; beekeeper_default_plugins_file "{{justfile_directory()}}"
     [[ -d node_modules ]] || pnpm install
     pnpm -C admin-web build
     export BEEKEEPER_ADMIN_HOST="${BEEKEEPER_ADMIN_HOST:-admin.localhost:3000}"
@@ -1038,18 +1044,19 @@ admin-check: fmt-check
     pnpm -C admin-web exec playwright test
 
 # Start the relay server in release mode
-relay-release: bootstrap _ensure-migrations
+relay-release: bootstrap _ensure-migrations plugins-build
     #!/usr/bin/env bash
     set -euo pipefail
     set -o allexport
     source .env
     set +o allexport
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
+    source "{{justfile_directory()}}/scripts/lib/plugins.sh"; beekeeper_default_plugins_file "{{justfile_directory()}}"
     cargo run -p beekeeper-relay --release
 
 
 # Run the desktop Tauri app in dev mode with a local relay (ports and identity derived from worktree)
-dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
+dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations plugins-build
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
@@ -1057,6 +1064,7 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
     source .env
     set +o allexport
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
+    source "{{justfile_directory()}}/scripts/lib/plugins.sh"; beekeeper_default_plugins_file "{{justfile_directory()}}"
     bind_addr="${BEEKEEPER_BIND_ADDR:-0.0.0.0:3000}"
     relay_port="${bind_addr##*:}"; [[ -n "$relay_port" ]] || relay_port=3000
     health_port="${BEEKEEPER_HEALTH_PORT:-8080}"

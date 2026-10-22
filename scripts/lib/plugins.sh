@@ -13,3 +13,15 @@ BEEKEEPER_PLUGINS=(
   "test-faults:plugins/test-faults:no"
   "test-webhook:plugins/test-webhook:unregistered"
 )
+
+# The relay's built-in default: the first-party registry build-plugins.sh
+# writes (Planning). Every `just` recipe that starts a relay calls this after
+# loading .env, so each one runs the same plugins a relay image does. An
+# operator's own BEEKEEPER_PLUGINS_FILE, from the environment or .env,
+# replaces it wholesale — never merged.
+# $1 = repository root.
+beekeeper_default_plugins_file() {
+  local target="${CARGO_TARGET_DIR:-$1/target}"
+  export BEEKEEPER_PLUGINS_FILE="${BEEKEEPER_PLUGINS_FILE:-${target}/plugins/registry.toml}"
+  echo "plugins: ${BEEKEEPER_PLUGINS_FILE}" >&2
+}
