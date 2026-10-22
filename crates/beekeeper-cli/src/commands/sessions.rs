@@ -2925,7 +2925,7 @@ pub async fn dispatch(
             )
             .await
         }
-        SessionsCmd::Create {
+        SessionsCmd::Create(crate::SessionsCreateArgs {
             channel,
             session_ref,
             genesis,
@@ -2943,7 +2943,7 @@ pub async fn dispatch(
             timeout_secs,
             cwd,
             projects_file,
-        } => {
+        }) => {
             crew_cmds::cmd_create(
                 client,
                 &channel,
@@ -3004,7 +3004,7 @@ pub async fn dispatch(
             )
             .await
         }
-        SessionsCmd::Hire {
+        SessionsCmd::Hire(crate::SessionsHireArgs {
             channel,
             session_ref,
             genesis,
@@ -3022,7 +3022,7 @@ pub async fn dispatch(
             content,
             no_wait,
             check,
-        } => {
+        }) => {
             crew_cmds::cmd_hire(
                 client,
                 &channel,
@@ -3139,7 +3139,7 @@ pub async fn dispatch(
                 .await
             }
         },
-        SessionsCmd::Route {
+        SessionsCmd::Route(crate::SessionsRouteArgs {
             channel,
             class,
             risk,
@@ -3152,7 +3152,7 @@ pub async fn dispatch(
             registry,
             tier,
             dry_run: _,
-        } => {
+        }) => {
             // The tier is derived from the risk and is never passed in: a tier
             // a caller can set is a risk assessment nobody made. Refused with
             // the reason rather than silently ignored.

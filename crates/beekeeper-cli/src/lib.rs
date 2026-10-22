@@ -3392,66 +3392,7 @@ pub enum SessionsCmd {
     #[command(
         after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --brief 'start' --wait --timeout-secs 60\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --cwd /abs/dir --projects-file <provider projects.json> --brief -\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -\n\nFor a bare managed-agent create, the CLI first publishes a fresh genesis and a collaborator grant for the cryptographically verified NIP-OA owner; setup failure prevents dispatch. With --wait, the command publishes the create once and waits for the named provider's signed receipt. A confirmed receipt adds the exact cs-target; timeout preserves the commandId and never retries."
     )]
-    Create {
-        /// Channel UUID to publish the create into
-        #[arg(long)]
-        channel: String,
-        /// Umbrella session reference (lowercase UUID) this execution joins
-        #[arg(long = "session-ref")]
-        session_ref: Option<String>,
-        /// Genesis event id (64-char hex) founding the umbrella
-        #[arg(long)]
-        genesis: Option<String>,
-        /// Capability-advertised provider instance reference
-        #[arg(long = "provider-instance")]
-        provider_instance: String,
-        /// Signing pubkey (64-char lowercase hex) of the provider catalog authority
-        #[arg(long = "provider-authority")]
-        provider_authority: String,
-        /// Provider-neutral model identifier
-        #[arg(long)]
-        model: Option<String>,
-        /// Operator-facing session title
-        #[arg(long)]
-        title: Option<String>,
-        /// NIP-MP project coordinate (`30621:<owner>:<d>`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Repository coordinate within the project
-        #[arg(long)]
-        repo: Option<String>,
-        /// First turn to deliver after creation, or `-` to read it from stdin
-        #[arg(long)]
-        brief: Option<String>,
-        /// Refused: actor custody is host-local (see the error text)
-        #[arg(long)]
-        actor: Option<String>,
-        /// Refused: a role is half of the actor/role pair (see the error text)
-        #[arg(long)]
-        role: Option<String>,
-        /// Refused: the driver slug is minted by the provider (see the error text)
-        #[arg(long)]
-        driver: Option<String>,
-        /// Wait for the named provider to confirm this create and return its target.
-        #[arg(long)]
-        wait: bool,
-        /// Maximum seconds to wait after relay acceptance (1..=300).
-        #[arg(long = "timeout-secs")]
-        timeout_secs: Option<u64>,
-        /// Absolute, existing directory the execution runs in. A create has no
-        /// directory field, so this writes a one-shot hint for the create's
-        /// commandId beside the provider's projects file before anything is
-        /// published — the same binding `bee sessions handover continue --cwd`
-        /// writes. Only a provider on this machine reading that projects file
-        /// sees it.
-        #[arg(long)]
-        cwd: Option<PathBuf>,
-        /// The provider's projects file, whose sibling `pending-hints/`
-        /// directory receives the --cwd binding. Defaults to
-        /// $BEEKEEPER_CSP_PROJECTS_FILE; the projects file itself is never modified.
-        #[arg(long = "projects-file", requires = "cwd")]
-        projects_file: Option<PathBuf>,
-    },
+    Create(SessionsCreateArgs),
     /// Durably stop one execution (kind 44221 `session.stop`).
     ///
     /// Publishes the same command the desktop's Stop sends: the exact current
@@ -3619,73 +3560,7 @@ pub enum SessionsCmd {
     #[command(
         after_help = "Examples:\n  bee projects agents\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\n`bee projects agents` lists a public session project's agents by role; for a\nprivate project use the agent list in the session's first message. The host\nseats only the project's agents, and a hire refused HIRE_NO_PROJECT_AGENT names\nthe remedy.\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nBriefing rule:\n  never tell a seat to discover a wire body by probing the relay. Every\n  `bee sessions` verb that takes --body prints its own complete valid body:\n  `bee sessions report --example`, `bee sessions verdict --example\n  disposition`, `bee sessions assign --example verifier`. A probe publishes a\n  real record (ledger 178(c)); --example publishes nothing.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
     )]
-    Hire {
-        /// Channel UUID the umbrella lives in
-        #[arg(long)]
-        channel: String,
-        /// Umbrella session reference (lowercase UUID) to hire into
-        #[arg(long = "session-ref")]
-        session_ref: String,
-        /// Genesis event id (64-char hex) founding the umbrella. Resolved from
-        /// the channel when omitted; required when two geneses claim the label.
-        #[arg(long)]
-        genesis: Option<String>,
-        /// Role slug to seat: `[a-z0-9-]`, 1-64 bytes
-        #[arg(long)]
-        role: String,
-        /// Provider instance the seat should run on; the host's policy default
-        /// when omitted
-        #[arg(long = "provider-instance")]
-        provider_instance: Option<String>,
-        /// Model the seat should run on an UNROUTED hire; the chosen
-        /// identity's own when omitted. To override a routed hire, pass
-        /// --override-model with --because instead.
-        #[arg(long)]
-        model: Option<String>,
-        /// Capability class to route for: lead, architect, builder, runner,
-        /// ui_designer, researcher, verifier, poker. With --risk, the hire
-        /// carries the routing request and the host decides.
-        #[arg(long, requires = "risk")]
-        class: Option<String>,
-        /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
-        /// and the effort are derived from it; there is no --tier.
-        #[arg(long, requires = "class")]
-        risk: Option<String>,
-        /// Extra trait minimums as JSON, e.g. '{"taste":4.6}'
-        #[arg(long, requires = "class")]
-        profile: Option<String>,
-        /// Spec §6 review triggers, comma-separated
-        #[arg(long = "review-flags", requires = "class")]
-        review_flags: Option<String>,
-        /// Deliberately route a challenger for this class and mark the record
-        #[arg(long = "challenger-sample", requires = "class")]
-        challenger_sample: bool,
-        /// Catalog id to run instead of whatever the host's router chooses.
-        /// The one way a hire dictates a target; needs --class, --risk and
-        /// --because.
-        #[arg(long = "override-model", requires = "class", requires = "because")]
-        override_model: Option<String>,
-        /// Why you are overriding the router. Required with --override-model:
-        /// an unexplained override is indistinguishable from a bug.
-        #[arg(long, requires = "class")]
-        because: Option<String>,
-        /// File holding the brief, or `-` to read it from stdin
-        #[arg(long, conflicts_with = "content")]
-        brief: Option<String>,
-        /// The brief as literal text, or `-` to read it from stdin
-        #[arg(long)]
-        content: Option<String>,
-        /// Print the relay's acceptance without waiting for the host to
-        /// answer; the outcome is then reported as unconfirmed
-        #[arg(long = "no-wait")]
-        no_wait: bool,
-        /// Validate the brief and routing locally, print the facts the hire
-        /// would carry, and publish NOTHING. Exit 0 when the payload is one
-        /// the relay would accept, 1 when it is not. Use it for acceptance
-        /// tests: a test that seats a live agent is not a test.
-        #[arg(long, conflicts_with = "no_wait")]
-        check: bool,
-    },
+    Hire(SessionsHireArgs),
     /// Grant the role seat a receipt-backed hire created but never got.
     ///
     /// The recovery path for the one failure `bee sessions hire` cannot undo:
@@ -3853,58 +3728,7 @@ pub enum SessionsCmd {
     #[command(
         after_help = "Examples:\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2\n  bee sessions route --channel <uuid> --class runner --risk 1,1,1 --scope bounded\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2 --challenger-sample\n  bee sessions route --channel <uuid> --class verifier --risk 3,3,2 --counterpart-provider codex-primary\n  bee --format compact sessions route --channel <uuid> --class architect --risk 5,4,4 --review-flags contractChange\n\n--format json prints the whole table: every candidate with the gate it\ncleared or the reason it did not, the cost/latency/retry numbers behind the\ncomparison, the formula itself, and the provenance of any fact that gated a\ncandidate. --format compact prints the routing record alone -- the same\nobject that rides on a hire.\n\nRecipe:\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2"
     )]
-    Route {
-        /// Channel UUID the providers publish their catalogs into
-        #[arg(long)]
-        channel: String,
-        /// Capability class: lead, architect, builder, runner, ui_designer,
-        /// researcher, verifier, poker
-        #[arg(long)]
-        class: String,
-        /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
-        /// and the effort are derived from it. Required — but deliberately not
-        /// enforced by the parser, so a caller reaching for `--tier` is told
-        /// why the tier is derived rather than told a flag is missing.
-        #[arg(long)]
-        risk: Option<String>,
-        /// Extra trait minimums as JSON, e.g. '{"taste":4.6}'. A profile may
-        /// tighten a class gate; it can never loosen one.
-        #[arg(long)]
-        profile: Option<String>,
-        /// Spec §6 review triggers, comma-separated: securityBoundary,
-        /// contractChange, outsidePlan, builderUncertain, testsInsufficient,
-        /// leadRequests
-        #[arg(long = "review-flags")]
-        review_flags: Option<String>,
-        /// Deliberately route a challenger for this class and mark the record,
-        /// so its result can be attributed later
-        #[arg(long = "challenger-sample")]
-        challenger_sample: bool,
-        /// The task's scope, e.g. `bounded`. A target constrained to a scope
-        /// is refused when nobody states one — unstated is not bounded.
-        #[arg(long)]
-        scope: Option<String>,
-        /// Tokens of context this task needs. A target whose window nobody
-        /// published cannot be shown to satisfy it, and is refused.
-        #[arg(long = "context-need")]
-        context_need: Option<u64>,
-        /// For a cross-provider class (verifier): the provider the class it
-        /// reviews is running on. Its provider's targets are removed when an
-        /// eligible cross-provider target exists.
-        #[arg(long = "counterpart-provider")]
-        counterpart_provider: Option<String>,
-        /// Path to the model registry; resolved from the working directory
-        /// upwards when omitted
-        #[arg(long)]
-        registry: Option<String>,
-        /// Refused: the tier is derived from --risk (see the error text)
-        #[arg(long)]
-        tier: Option<String>,
-        /// Accepted and has no effect: `route` never writes anything. It
-        /// exists so a caller that habitually passes it is not refused.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-    },
+    Route(SessionsRouteArgs),
     /// Print this signer's identity as one JSON object: pubkey, relay
     /// display name, relay URL, and any active team seat role.
     #[command(
@@ -4043,6 +3867,200 @@ pub struct SessionsRewindArgs {
     /// Maximum seconds to wait after relay acceptance (1..=300).
     #[arg(long = "timeout-secs")]
     pub timeout_secs: Option<u64>,
+}
+
+/// `bee sessions create`'s arguments, a struct of their own so the
+/// `SessionsCmd` builder's frame stays small enough for a test thread
+/// (see `SessionsRewindArgs`).
+#[derive(clap::Args)]
+pub struct SessionsCreateArgs {
+    /// Channel UUID to publish the create into
+    #[arg(long)]
+    pub channel: String,
+    /// Umbrella session reference (lowercase UUID) this execution joins
+    #[arg(long = "session-ref")]
+    pub session_ref: Option<String>,
+    /// Genesis event id (64-char hex) founding the umbrella
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// Capability-advertised provider instance reference
+    #[arg(long = "provider-instance")]
+    pub provider_instance: String,
+    /// Signing pubkey (64-char lowercase hex) of the provider catalog authority
+    #[arg(long = "provider-authority")]
+    pub provider_authority: String,
+    /// Provider-neutral model identifier
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Operator-facing session title
+    #[arg(long)]
+    pub title: Option<String>,
+    /// NIP-MP project coordinate (`30621:<owner>:<d>`)
+    #[arg(long)]
+    pub project: Option<String>,
+    /// Repository coordinate within the project
+    #[arg(long)]
+    pub repo: Option<String>,
+    /// First turn to deliver after creation, or `-` to read it from stdin
+    #[arg(long)]
+    pub brief: Option<String>,
+    /// Refused: actor custody is host-local (see the error text)
+    #[arg(long)]
+    pub actor: Option<String>,
+    /// Refused: a role is half of the actor/role pair (see the error text)
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Refused: the driver slug is minted by the provider (see the error text)
+    #[arg(long)]
+    pub driver: Option<String>,
+    /// Wait for the named provider to confirm this create and return its target.
+    #[arg(long)]
+    pub wait: bool,
+    /// Maximum seconds to wait after relay acceptance (1..=300).
+    #[arg(long = "timeout-secs")]
+    pub timeout_secs: Option<u64>,
+    /// Absolute, existing directory the execution runs in. A create has no
+    /// directory field, so this writes a one-shot hint for the create's
+    /// commandId beside the provider's projects file before anything is
+    /// published — the same binding `bee sessions handover continue --cwd`
+    /// writes. Only a provider on this machine reading that projects file
+    /// sees it.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+    /// The provider's projects file, whose sibling `pending-hints/`
+    /// directory receives the --cwd binding. Defaults to
+    /// $BEEKEEPER_CSP_PROJECTS_FILE; the projects file itself is never modified.
+    #[arg(long = "projects-file", requires = "cwd")]
+    pub projects_file: Option<PathBuf>,
+}
+
+/// `bee sessions hire`'s arguments, a struct of their own so the
+/// `SessionsCmd` builder's frame stays small enough for a test thread
+/// (see `SessionsRewindArgs`).
+#[derive(clap::Args)]
+pub struct SessionsHireArgs {
+    /// Channel UUID the umbrella lives in
+    #[arg(long)]
+    pub channel: String,
+    /// Umbrella session reference (lowercase UUID) to hire into
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Genesis event id (64-char hex) founding the umbrella. Resolved from
+    /// the channel when omitted; required when two geneses claim the label.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// Role slug to seat: `[a-z0-9-]`, 1-64 bytes
+    #[arg(long)]
+    pub role: String,
+    /// Provider instance the seat should run on; the host's policy default
+    /// when omitted
+    #[arg(long = "provider-instance")]
+    pub provider_instance: Option<String>,
+    /// Model the seat should run on an UNROUTED hire; the chosen
+    /// identity's own when omitted. To override a routed hire, pass
+    /// --override-model with --because instead.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Capability class to route for: lead, architect, builder, runner,
+    /// ui_designer, researcher, verifier, poker. With --risk, the hire
+    /// carries the routing request and the host decides.
+    #[arg(long, requires = "risk")]
+    pub class: Option<String>,
+    /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
+    /// and the effort are derived from it; there is no --tier.
+    #[arg(long, requires = "class")]
+    pub risk: Option<String>,
+    /// Extra trait minimums as JSON, e.g. '{"taste":4.6}'
+    #[arg(long, requires = "class")]
+    pub profile: Option<String>,
+    /// Spec §6 review triggers, comma-separated
+    #[arg(long = "review-flags", requires = "class")]
+    pub review_flags: Option<String>,
+    /// Deliberately route a challenger for this class and mark the record
+    #[arg(long = "challenger-sample", requires = "class")]
+    pub challenger_sample: bool,
+    /// Catalog id to run instead of whatever the host's router chooses.
+    /// The one way a hire dictates a target; needs --class, --risk and
+    /// --because.
+    #[arg(long = "override-model", requires = "class", requires = "because")]
+    pub override_model: Option<String>,
+    /// Why you are overriding the router. Required with --override-model:
+    /// an unexplained override is indistinguishable from a bug.
+    #[arg(long, requires = "class")]
+    pub because: Option<String>,
+    /// File holding the brief, or `-` to read it from stdin
+    #[arg(long, conflicts_with = "content")]
+    pub brief: Option<String>,
+    /// The brief as literal text, or `-` to read it from stdin
+    #[arg(long)]
+    pub content: Option<String>,
+    /// Print the relay's acceptance without waiting for the host to
+    /// answer; the outcome is then reported as unconfirmed
+    #[arg(long = "no-wait")]
+    pub no_wait: bool,
+    /// Validate the brief and routing locally, print the facts the hire
+    /// would carry, and publish NOTHING. Exit 0 when the payload is one
+    /// the relay would accept, 1 when it is not. Use it for acceptance
+    /// tests: a test that seats a live agent is not a test.
+    #[arg(long, conflicts_with = "no_wait")]
+    pub check: bool,
+}
+
+/// `bee sessions route`'s arguments, a struct of their own so the
+/// `SessionsCmd` builder's frame stays small enough for a test thread
+/// (see `SessionsRewindArgs`).
+#[derive(clap::Args)]
+pub struct SessionsRouteArgs {
+    /// Channel UUID the providers publish their catalogs into
+    #[arg(long)]
+    pub channel: String,
+    /// Capability class: lead, architect, builder, runner, ui_designer,
+    /// researcher, verifier, poker
+    #[arg(long)]
+    pub class: String,
+    /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
+    /// and the effort are derived from it. Required — but deliberately not
+    /// enforced by the parser, so a caller reaching for `--tier` is told
+    /// why the tier is derived rather than told a flag is missing.
+    #[arg(long)]
+    pub risk: Option<String>,
+    /// Extra trait minimums as JSON, e.g. '{"taste":4.6}'. A profile may
+    /// tighten a class gate; it can never loosen one.
+    #[arg(long)]
+    pub profile: Option<String>,
+    /// Spec §6 review triggers, comma-separated: securityBoundary,
+    /// contractChange, outsidePlan, builderUncertain, testsInsufficient,
+    /// leadRequests
+    #[arg(long = "review-flags")]
+    pub review_flags: Option<String>,
+    /// Deliberately route a challenger for this class and mark the record,
+    /// so its result can be attributed later
+    #[arg(long = "challenger-sample")]
+    pub challenger_sample: bool,
+    /// The task's scope, e.g. `bounded`. A target constrained to a scope
+    /// is refused when nobody states one — unstated is not bounded.
+    #[arg(long)]
+    pub scope: Option<String>,
+    /// Tokens of context this task needs. A target whose window nobody
+    /// published cannot be shown to satisfy it, and is refused.
+    #[arg(long = "context-need")]
+    pub context_need: Option<u64>,
+    /// For a cross-provider class (verifier): the provider the class it
+    /// reviews is running on. Its provider's targets are removed when an
+    /// eligible cross-provider target exists.
+    #[arg(long = "counterpart-provider")]
+    pub counterpart_provider: Option<String>,
+    /// Path to the model registry; resolved from the working directory
+    /// upwards when omitted
+    #[arg(long)]
+    pub registry: Option<String>,
+    /// Refused: the tier is derived from --risk (see the error text)
+    #[arg(long)]
+    pub tier: Option<String>,
+    /// Accepted and has no effect: `route` never writes anything. It
+    /// exists so a caller that habitually passes it is not refused.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
 }
 
 /// Input for one signed `note` — the state-free verb.
