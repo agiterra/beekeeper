@@ -13,8 +13,11 @@
  * read native data, or an empty list that looked like an empty Linear team,
  * would be a lie.
  *
- * There is no stored per-project choice. When a relay runs more than one
- * provider this view picks the first by name and says so; the person can
+ * Beekeeper's own Planning (`planning`) is the default whenever the relay
+ * runs it, however the others sort: an operator adding a provider must not
+ * quietly move everyone off native Planning. There is no stored per-project
+ * choice. When a relay runs more than one provider and none is `planning`,
+ * this view picks the first by name and says so; the person can
  * switch what *they* are looking at, but that is not a project fact — every
  * member and agent must eventually see the same provider, and switching must
  * never move or copy records.
@@ -66,15 +69,22 @@ export function planningProviderList(
     : [...registered, LINEAR_PLANNING_PROVIDER];
 }
 
+/** The name of Beekeeper's own Planning plugin, the built-in a relay ships. */
+export const NATIVE_PLANNING_PLUGIN = "planning";
+
 /**
  * The provider this view shows: the viewer's pick when it is still
- * registered, else the first registered by name, else none.
+ * registered, else native Planning when registered, else the first
+ * registered by name, else none.
  */
 export function resolvePlanningProvider(
   registered: readonly PluginInfo[],
   picked: PlanningProviderId | null,
 ): PluginInfo | null {
   return (
-    registered.find((plugin) => plugin.name === picked) ?? registered[0] ?? null
+    registered.find((plugin) => plugin.name === picked) ??
+    registered.find((plugin) => plugin.name === NATIVE_PLANNING_PLUGIN) ??
+    registered[0] ??
+    null
   );
 }

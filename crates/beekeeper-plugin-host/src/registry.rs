@@ -1,10 +1,23 @@
 //! The plugin registry: which components a relay runs, pinned by digest, and
 //! what each may touch.
 //!
-//! Registration is deployment configuration — a TOML file the operator owns
-//! (named by `BEEKEEPER_PLUGINS_FILE`), the same for every community the
-//! relay serves. First-party and third-party plugins are registered the same
-//! way; there is no built-in list beside this file.
+//! Registration is deployment configuration — TOML the operator owns, the
+//! same for every community the relay serves. A relay reads up to two files:
+//!
+//! - the **built-in** registry its package ships beside the first-party
+//!   components (Planning), so they are on with nothing to configure;
+//! - the **operator** registry, which *adds* plugins to the built-ins and may
+//!   set `[host]`. It never has to repeat a built-in or copy its pin.
+//!
+//! Both are parsed the same way, each entry's relative `path` against its own
+//! file's directory. A name registered in both is refused, never silently
+//! shadowed: an operator who wants a different plugin under a built-in's name
+//! disables the built-in first (`disable_builtins = ["planning"]`, top level of
+//! the operator file), and naming a built-in that does not exist is refused
+//! too. The relay-wide `[host]` comes from the operator file if it has one,
+//! else the built-in file, else the defaults, and every limit that depends on
+//! it is checked against the merged result. First-party and third-party
+//! plugins are otherwise registered the same way.
 //!
 //! ```toml
 //! [[plugin]]
@@ -370,23 +383,55 @@ struct RawEntry {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RegistryFile {
+    /// Built-ins this (operator) registry turns off. Must be at the top of the
+    /// file, before any table.
+    #[serde(default)]
+    disable_builtins: Vec<String>,
     #[serde(default)]
     plugin: Vec<RawEntry>,
     #[serde(default)]
-    host: HostLimits,
+    host: Option<HostLimits>,
 }
 
-/// A parsed, checked registry.
+/// One file, parsed and checked entry by entry, before it is merged.
+#[derive(Debug, Default)]
+struct Layer {
+    disable_builtins: Vec<String>,
+    entries: Vec<PluginEntry>,
+    webhooks: Vec<WebhookEntry>,
+    host: Option<HostLimits>,
+    source: Option<PathBuf>,
+}
+
+impl Layer {
+    fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries
+            .iter()
+            .map(|e| e.name.as_str())
+            .chain(self.webhooks.iter().map(|w| w.name.as_str()))
+    }
+
+    fn label(&self, fallback: &str) -> String {
+        self.source
+            .as_ref()
+            .map_or_else(|| fallback.to_owned(), |p| p.display().to_string())
+    }
+}
+
+/// A parsed, checked registry: the built-ins (less any disabled) followed by
+/// the operator's plugins.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
-    /// `operation-provider@1` plugins, in file order.
+    /// `operation-provider@1` plugins: built-ins first, each file in order.
     pub entries: Vec<PluginEntry>,
-    /// `webhook-plugin@1` plugins, in file order.
+    /// `webhook-plugin@1` plugins: built-ins first, each file in order.
     pub webhooks: Vec<WebhookEntry>,
-    /// Relay-wide limits (`[host]`).
+    /// Relay-wide limits (`[host]`) after merging.
     pub host: HostLimits,
-    /// The file it came from, for status reporting.
-    pub source: Option<PathBuf>,
+    /// The files it came from, built-in first, for status reporting.
+    pub sources: Vec<PathBuf>,
+    /// The names that came from the built-in registry and are still enabled.
+    pub builtins: Vec<String>,
 }
 
 /// Parse one world-specific table, naming the plugin, world and table when
@@ -425,137 +470,233 @@ pub fn valid_plugin_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-impl Registry {
-    /// Read and check the registry at `path`.
-    pub fn from_file(path: &Path) -> Result<Self, LoadError> {
-        let text = std::fs::read_to_string(path).map_err(|error| {
-            LoadError::Registry(format!(
-                "cannot read plugin registry {}: {error}",
-                path.display()
-            ))
-        })?;
-        let base = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut registry = Self::from_toml(&text, base)?;
-        registry.source = Some(path.to_path_buf());
-        Ok(registry)
-    }
+fn read_layer(path: &Path) -> Result<Layer, LoadError> {
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        LoadError::Registry(format!(
+            "cannot read plugin registry {}: {error}",
+            path.display()
+        ))
+    })?;
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut layer = parse_layer(&text, base).map_err(|error| match error {
+        LoadError::Registry(message) => {
+            LoadError::Registry(format!("{}: {message}", path.display()))
+        }
+        other => other,
+    })?;
+    layer.source = Some(path.to_path_buf());
+    Ok(layer)
+}
 
-    /// Parse registry TOML, resolving relative plugin paths against `base`.
-    pub fn from_toml(text: &str, base: &Path) -> Result<Self, LoadError> {
-        let file: RegistryFile = toml::from_str(text)
-            .map_err(|error| LoadError::Registry(format!("invalid plugin registry: {error}")))?;
-        if file.host.max_concurrent_calls == 0
-            || file.host.max_concurrent_calls > HostLimits::MAX_CONCURRENT_CALLS_CEILING
-        {
+/// Parse one registry file, resolving relative plugin paths against `base`.
+/// Everything that depends on another file (duplicates across files,
+/// `disable_builtins`, `[host]`) is checked by [`merge`].
+fn parse_layer(text: &str, base: &Path) -> Result<Layer, LoadError> {
+    let file: RegistryFile = toml::from_str(text)
+        .map_err(|error| LoadError::Registry(format!("invalid plugin registry: {error}")))?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut entries = Vec::new();
+    let mut webhooks = Vec::new();
+    for mut entry in file.plugin {
+        if !valid_plugin_name(&entry.name) {
             return Err(LoadError::Registry(format!(
-                "host.max_concurrent_calls = {} is outside 1..={}",
-                file.host.max_concurrent_calls,
-                HostLimits::MAX_CONCURRENT_CALLS_CEILING
+                "plugin name {:?} must be 1-63 of [a-z0-9-], not starting or ending with '-'",
+                entry.name
             )));
         }
-        let mut seen = std::collections::BTreeSet::new();
-        let mut entries = Vec::new();
-        let mut webhooks = Vec::new();
-        for mut entry in file.plugin {
-            if !valid_plugin_name(&entry.name) {
-                return Err(LoadError::Registry(format!(
-                    "plugin name {:?} must be 1-63 of [a-z0-9-], not starting or ending with '-'",
-                    entry.name
-                )));
-            }
-            if !seen.insert(entry.name.clone()) {
-                return Err(LoadError::Registry(format!(
-                    "plugin {:?} is registered twice",
-                    entry.name
-                )));
-            }
-            if !SUPPORTED_WORLDS.contains(&entry.world.as_str()) {
-                return Err(LoadError::Registry(format!(
-                    "plugin {:?}: world {:?} is not supported by this build (supported: {})",
-                    entry.name,
-                    entry.world,
-                    SUPPORTED_WORLDS.join(", ")
-                )));
-            }
-            if entry.sha256.len() != 64
-                || !entry
-                    .sha256
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            {
-                return Err(LoadError::Registry(format!(
-                    "plugin {:?}: sha256 must be 64 lowercase hex characters",
-                    entry.name
-                )));
-            }
-            if entry.path.is_relative() {
-                entry.path = base.join(&entry.path);
-            }
-            if entry.world == OPERATION_PROVIDER_WORLD {
-                let grants = world_table(
-                    &entry,
-                    "grants",
-                    entry.grants.clone(),
-                    Some(Grants::default()),
-                )?;
-                let limits = world_table(
-                    &entry,
-                    "limits",
-                    entry.limits.clone(),
-                    Some(Limits::default()),
-                )?;
-                limits.check(&entry.name)?;
-                entries.push(PluginEntry {
-                    name: entry.name,
-                    world: entry.world,
-                    path: entry.path,
-                    sha256: entry.sha256,
-                    grants,
-                    limits,
-                });
-            } else {
-                // The only other supported world. The type prefix is the
-                // operator's grant, so there is no default for it.
-                let grants: WebhookGrants =
-                    world_table(&entry, "grants", entry.grants.clone(), None)?;
-                if !valid_type_prefix(&grants.type_prefix) {
-                    return Err(LoadError::Registry(format!(
-                        "plugin {:?}: grants.type_prefix {:?} must be 2+ dot-separated labels of [a-z0-9-], at most 64 bytes",
-                        entry.name, grants.type_prefix
-                    )));
-                }
-                let limits: WebhookLimits = world_table(
-                    &entry,
-                    "limits",
-                    entry.limits.clone(),
-                    Some(WebhookLimits::default()),
-                )?;
-                limits.check(&entry.name)?;
-                // A per-installation limit the relay-wide cap could never
-                // grant would be a limit that never applies.
-                if limits.max_concurrent_per_installation > file.host.max_concurrent_calls {
-                    return Err(LoadError::Registry(format!(
-                        "plugin {:?}: limits.max_concurrent_per_installation = {} is over host.max_concurrent_calls = {}",
-                        entry.name,
-                        limits.max_concurrent_per_installation,
-                        file.host.max_concurrent_calls
-                    )));
-                }
-                webhooks.push(WebhookEntry {
-                    name: entry.name,
-                    path: entry.path,
-                    sha256: entry.sha256,
-                    grants,
-                    limits,
-                });
-            }
+        if !seen.insert(entry.name.clone()) {
+            return Err(LoadError::Registry(format!(
+                "plugin {:?} is registered twice",
+                entry.name
+            )));
         }
-        Ok(Self {
-            entries,
-            webhooks,
-            host: file.host,
-            source: None,
-        })
+        if !SUPPORTED_WORLDS.contains(&entry.world.as_str()) {
+            return Err(LoadError::Registry(format!(
+                "plugin {:?}: world {:?} is not supported by this build (supported: {})",
+                entry.name,
+                entry.world,
+                SUPPORTED_WORLDS.join(", ")
+            )));
+        }
+        if entry.sha256.len() != 64
+            || !entry
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(LoadError::Registry(format!(
+                "plugin {:?}: sha256 must be 64 lowercase hex characters",
+                entry.name
+            )));
+        }
+        if entry.path.is_relative() {
+            entry.path = base.join(&entry.path);
+        }
+        if entry.world == OPERATION_PROVIDER_WORLD {
+            let grants = world_table(
+                &entry,
+                "grants",
+                entry.grants.clone(),
+                Some(Grants::default()),
+            )?;
+            let limits = world_table(
+                &entry,
+                "limits",
+                entry.limits.clone(),
+                Some(Limits::default()),
+            )?;
+            limits.check(&entry.name)?;
+            entries.push(PluginEntry {
+                name: entry.name,
+                world: entry.world,
+                path: entry.path,
+                sha256: entry.sha256,
+                grants,
+                limits,
+            });
+        } else {
+            // The only other supported world. The type prefix is the
+            // operator's grant, so there is no default for it.
+            let grants: WebhookGrants = world_table(&entry, "grants", entry.grants.clone(), None)?;
+            if !valid_type_prefix(&grants.type_prefix) {
+                return Err(LoadError::Registry(format!(
+                    "plugin {:?}: grants.type_prefix {:?} must be 2+ dot-separated labels of [a-z0-9-], at most 64 bytes",
+                    entry.name, grants.type_prefix
+                )));
+            }
+            let limits: WebhookLimits = world_table(
+                &entry,
+                "limits",
+                entry.limits.clone(),
+                Some(WebhookLimits::default()),
+            )?;
+            limits.check(&entry.name)?;
+            webhooks.push(WebhookEntry {
+                name: entry.name,
+                path: entry.path,
+                sha256: entry.sha256,
+                grants,
+                limits,
+            });
+        }
+    }
+    Ok(Layer {
+        disable_builtins: file.disable_builtins,
+        entries,
+        webhooks,
+        host: file.host,
+        source: None,
+    })
+}
+
+/// Merge the built-in layer (less what the operator disables) with the
+/// operator's, and check everything that depends on both.
+fn merge(builtin: Option<Layer>, operator: Option<Layer>) -> Result<Registry, LoadError> {
+    let mut builtin = builtin.unwrap_or_default();
+    let operator = operator.unwrap_or_default();
+    let builtin_label = builtin.label("the built-in registry");
+    let operator_label = operator.label("the operator registry");
+    if !builtin.disable_builtins.is_empty() {
+        return Err(LoadError::Registry(format!(
+            "{builtin_label}: disable_builtins belongs in the operator registry, not the built-in one"
+        )));
+    }
+    for name in &operator.disable_builtins {
+        if !builtin.names().any(|n| n == name) {
+            let known: Vec<&str> = builtin.names().collect();
+            return Err(LoadError::Registry(format!(
+                "{operator_label}: disable_builtins names {name:?}, which is not a built-in plugin (built-ins: {})",
+                if known.is_empty() {
+                    "none".to_owned()
+                } else {
+                    known.join(", ")
+                }
+            )));
+        }
+    }
+    let disabled = |name: &str| operator.disable_builtins.iter().any(|d| d == name);
+    builtin.entries.retain(|e| !disabled(&e.name));
+    builtin.webhooks.retain(|w| !disabled(&w.name));
+    let builtins: Vec<String> = builtin.names().map(str::to_owned).collect();
+    for name in operator.names() {
+        if builtins.iter().any(|b| b == name) {
+            return Err(LoadError::Registry(format!(
+                "plugin {name:?} is a built-in ({builtin_label}) and is registered again in {operator_label}; \
+                 remove it there to keep the built-in, or add `disable_builtins = [{name:?}]` at the top of that file to replace it"
+            )));
+        }
+    }
+
+    let host = operator
+        .host
+        .clone()
+        .or_else(|| builtin.host.clone())
+        .unwrap_or_default();
+    if host.max_concurrent_calls == 0
+        || host.max_concurrent_calls > HostLimits::MAX_CONCURRENT_CALLS_CEILING
+    {
+        return Err(LoadError::Registry(format!(
+            "host.max_concurrent_calls = {} is outside 1..={}",
+            host.max_concurrent_calls,
+            HostLimits::MAX_CONCURRENT_CALLS_CEILING
+        )));
+    }
+    let mut entries = builtin.entries;
+    entries.extend(operator.entries);
+    let mut webhooks = builtin.webhooks;
+    webhooks.extend(operator.webhooks);
+    // A per-installation limit the relay-wide cap could never grant would
+    // be a limit that never applies — checked against the merged `[host]`,
+    // so an operator lowering the cap cannot strand a built-in's limit.
+    for webhook in &webhooks {
+        if webhook.limits.max_concurrent_per_installation > host.max_concurrent_calls {
+            return Err(LoadError::Registry(format!(
+                "plugin {:?}: limits.max_concurrent_per_installation = {} is over host.max_concurrent_calls = {}",
+                webhook.name,
+                webhook.limits.max_concurrent_per_installation,
+                host.max_concurrent_calls
+            )));
+        }
+    }
+    Ok(Registry {
+        entries,
+        webhooks,
+        host,
+        sources: builtin.source.into_iter().chain(operator.source).collect(),
+        builtins,
+    })
+}
+
+impl Registry {
+    /// Read and check one registry file on its own, as an operator registry
+    /// with no built-ins beside it.
+    pub fn from_file(path: &Path) -> Result<Self, LoadError> {
+        merge(None, Some(read_layer(path)?))
+    }
+
+    /// Parse one registry's TOML, resolving relative plugin paths against
+    /// `base`, as an operator registry with no built-ins beside it.
+    pub fn from_toml(text: &str, base: &Path) -> Result<Self, LoadError> {
+        merge(None, Some(parse_layer(text, base)?))
+    }
+
+    /// The registry a relay runs: the built-in file, if any, plus the
+    /// operator's, if any, merged (see the module docs). Both naming the
+    /// same file is read once, as the built-in registry — a deployment that
+    /// pointed its operator setting at the shipped registry keeps working.
+    pub fn layered(builtin: Option<&Path>, operator: Option<&Path>) -> Result<Self, LoadError> {
+        let same = match (builtin, operator) {
+            (Some(b), Some(o)) => match (std::fs::canonicalize(b), std::fs::canonicalize(o)) {
+                (Ok(b), Ok(o)) => b == o,
+                _ => b == o,
+            },
+            _ => false,
+        };
+        let operator = if same { None } else { operator };
+        merge(
+            builtin.map(read_layer).transpose()?,
+            operator.map(read_layer).transpose()?,
+        )
     }
 }
 
@@ -752,6 +893,173 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("memory_bytes"), "{error}");
         assert!(Registry::from_toml(&entry("surprise = 1\n"), Path::new(".")).is_err());
+    }
+
+    /// Write `text` to `dir/name`, creating its directory, and return the path.
+    fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&path, text).expect("write");
+        path
+    }
+
+    fn other(name: &str) -> String {
+        entry("").replace("\"planning\"", &format!("{name:?}"))
+    }
+
+    #[test]
+    fn an_operator_registry_adds_to_the_builtins_with_paths_from_its_own_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let builtin = write(dir.path(), "shipped/registry.toml", &entry(""));
+        let operator = write(dir.path(), "operator/registry.toml", &other("acme"));
+        let registry = Registry::layered(Some(&builtin), Some(&operator)).expect("merges");
+        let names: Vec<_> = registry.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["planning", "acme"],
+            "built-ins first, nothing removed"
+        );
+        assert_eq!(registry.entries[0].path, dir.path().join("shipped/p.wasm"));
+        assert_eq!(registry.entries[1].path, dir.path().join("operator/p.wasm"));
+        assert_eq!(registry.builtins, ["planning"]);
+        assert_eq!(registry.sources, [builtin.clone(), operator]);
+        // Either alone.
+        let alone = Registry::layered(Some(&builtin), None).expect("built-in alone");
+        assert_eq!(alone.entries.len(), 1);
+        assert!(Registry::layered(None, None)
+            .expect("none")
+            .entries
+            .is_empty());
+    }
+
+    #[test]
+    fn a_name_in_both_registries_is_refused_unless_the_builtin_is_disabled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let builtin = write(dir.path(), "b/registry.toml", &entry(""));
+        let operator = write(dir.path(), "o/registry.toml", &entry(""));
+        let error = Registry::layered(Some(&builtin), Some(&operator)).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("is a built-in"), "{message}");
+        assert!(message.contains("disable_builtins"), "{message}");
+
+        // Disabled: the operator's own `planning` replaces it.
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            &format!("disable_builtins = [\"planning\"]\n{}", entry("")),
+        );
+        let registry = Registry::layered(Some(&builtin), Some(&operator)).expect("replaced");
+        assert_eq!(registry.entries.len(), 1);
+        assert_eq!(registry.entries[0].path, dir.path().join("o/p.wasm"));
+        assert!(registry.builtins.is_empty());
+
+        // Disabled with nothing in its place: no Planning, on purpose.
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            "disable_builtins = [\"planning\"]\n",
+        );
+        let registry = Registry::layered(Some(&builtin), Some(&operator)).expect("disabled");
+        assert!(registry.entries.is_empty());
+    }
+
+    #[test]
+    fn disabling_a_builtin_that_does_not_exist_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let builtin = write(dir.path(), "b/registry.toml", &entry(""));
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            "disable_builtins = [\"planing\"]\n",
+        );
+        let error = Registry::layered(Some(&builtin), Some(&operator)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("not a built-in plugin (built-ins: planning)"),
+            "{error}"
+        );
+        let error = Registry::layered(None, Some(&operator)).unwrap_err();
+        assert!(error.to_string().contains("(built-ins: none)"), "{error}");
+        // And it means nothing in the built-in file itself.
+        let error = Registry::layered(Some(&operator), None).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("belongs in the operator registry"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_operators_host_cap_applies_and_is_checked_against_the_merged_plugins() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let limits = "[plugin.limits]\nmax_concurrent = 8\nmax_concurrent_per_installation = 4\n";
+        let builtin = write(
+            dir.path(),
+            "b/registry.toml",
+            &format!(
+                "[host]\nmax_concurrent_calls = 16\n{}",
+                webhook(&format!("{PREFIX}{limits}"))
+            ),
+        );
+        let registry = Registry::layered(Some(&builtin), None).expect("built-in host");
+        assert_eq!(registry.host.max_concurrent_calls, 16);
+        // The operator changes only the cap — no pin copied, nothing removed.
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            "[host]\nmax_concurrent_calls = 6\n",
+        );
+        let registry = Registry::layered(Some(&builtin), Some(&operator)).expect("cap changed");
+        assert_eq!(registry.host.max_concurrent_calls, 6);
+        assert_eq!(registry.webhooks.len(), 1);
+        // A cap below a built-in's per-installation limit is refused.
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            "[host]\nmax_concurrent_calls = 3\n",
+        );
+        let error = Registry::layered(Some(&builtin), Some(&operator)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("is over host.max_concurrent_calls = 3"),
+            "{error}"
+        );
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            "[host]\nmax_concurrent_calls = 0\n",
+        );
+        assert!(Registry::layered(Some(&builtin), Some(&operator)).is_err());
+    }
+
+    #[test]
+    fn the_same_file_named_twice_is_read_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let builtin = write(dir.path(), "registry.toml", &entry(""));
+        let roundabout = dir.path().join(".").join("registry.toml");
+        let registry = Registry::layered(Some(&builtin), Some(&roundabout)).expect("one file");
+        assert_eq!(registry.entries.len(), 1);
+        assert_eq!(registry.sources, [builtin]);
+    }
+
+    #[test]
+    fn a_file_error_names_the_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let operator = write(
+            dir.path(),
+            "o/registry.toml",
+            &entry("").replace(PIN, "ABC"),
+        );
+        let error = Registry::layered(None, Some(&operator)).unwrap_err();
+        assert!(error.to_string().contains("o/registry.toml"), "{error}");
+        let error = Registry::layered(Some(&dir.path().join("missing.toml")), None).unwrap_err();
+        assert!(
+            error.to_string().contains("cannot read plugin registry"),
+            "{error}"
+        );
     }
 
     #[test]

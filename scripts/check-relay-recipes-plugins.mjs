@@ -2,17 +2,20 @@
 /**
  * Every `just` recipe that starts a relay runs the first-party plugins.
  *
- * Planning is a plugin, so a relay started without `BEEKEEPER_PLUGINS_FILE`
- * serves no Planning at all. `just relay` set it; `just dev`, `relay-web`,
- * `admin` and `relay-release` did not, so the desktop's own dev loop ran a
- * relay with no Planning while the relay image and `just relay` had it.
+ * Planning is a built-in plugin, so a relay started without a built-in
+ * registry (`BEEKEEPER_BUILTIN_PLUGINS_FILE`, or `plugins/registry.toml`
+ * beside the binary, which a `cargo` build never has) serves no Planning at
+ * all. `just relay` once set one; `just dev`, `relay-web`, `admin` and
+ * `relay-release` did not, so the desktop's own dev loop ran a relay with no
+ * Planning while the relay image and `just relay` had it.
  *
  * A recipe that runs `cargo run -p beekeeper-relay` (not an `--example`) or a
  * built `target/<profile>/beekeeper-relay` must depend on `plugins-build` and
  * call `beekeeper_default_plugins_file` (scripts/lib/plugins.sh) after it
- * loads `.env`, so an operator's own registry still wins. Recipes that start
- * test relays through scripts set the registry themselves and are not
- * matched here.
+ * loads `.env`, so a `.env` value still wins and an operator's own
+ * `BEEKEEPER_PLUGINS_FILE` adds to the built-ins. Recipes that start test
+ * relays through scripts set the registry themselves and are not matched
+ * here.
  *
  * Usage: node scripts/check-relay-recipes-plugins.mjs [--justfile <path>]
  */

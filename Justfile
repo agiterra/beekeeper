@@ -995,8 +995,8 @@ relay: bootstrap _ensure-migrations plugins-build
     source .env
     set +o allexport
     source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
-    # Planning is a plugin; run the first-party ones unless .env names a
-    # registry of its own (docs/plugins.md). Same in every recipe below.
+    # Planning is a built-in plugin: always run the first-party registry; a
+    # registry .env names adds to it (docs/plugins.md). Same in every recipe below.
     source "{{justfile_directory()}}/scripts/lib/plugins.sh"; beekeeper_default_plugins_file "{{justfile_directory()}}"
     cargo run -p beekeeper-relay
 

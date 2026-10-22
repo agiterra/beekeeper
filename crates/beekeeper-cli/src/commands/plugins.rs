@@ -34,12 +34,14 @@ pub async fn list(client: &BeekeeperClient) -> Result<Value, CliError> {
     serde_json::from_str(&raw).map_err(|e| CliError::Other(format!("bad /plugins reply: {e}")))
 }
 
-/// The plugin that implements `api`: the one named, or the only one. Two
-/// with no name is an error that lists them — never a silent pick.
+/// The plugin that implements `api`: the one named, else `default` when the
+/// relay runs it, else the only one. Several with neither is an error that
+/// lists them — never a silent pick.
 pub async fn provider_for(
     client: &BeekeeperClient,
     api: &str,
     named: Option<&str>,
+    default: Option<&str>,
 ) -> Result<String, CliError> {
     let listing = list(client).await?;
     let providers: Vec<String> = listing["plugins"]
@@ -53,7 +55,17 @@ pub async fn provider_for(
         })
         .filter_map(|p| p["name"].as_str().map(str::to_owned))
         .collect();
-    match (named, providers.as_slice()) {
+    choose_provider(&providers, api, named, default)
+}
+
+/// [`provider_for`]'s choice over the relay's providers of `api`.
+fn choose_provider(
+    providers: &[String],
+    api: &str,
+    named: Option<&str>,
+    default: Option<&str>,
+) -> Result<String, CliError> {
+    match (named, providers) {
         (Some(name), _) if providers.iter().any(|p| p == name) => Ok(name.to_owned()),
         (Some(name), _) => Err(CliError::Usage(format!(
             "this relay has no plugin {name:?} implementing {api}; it has: {}",
@@ -63,6 +75,9 @@ pub async fn provider_for(
                 providers.join(", ")
             }
         ))),
+        (None, _) if default.is_some_and(|d| providers.iter().any(|p| p == d)) => {
+            Ok(default.unwrap_or_default().to_owned())
+        }
         (None, [only]) => Ok(only.clone()),
         (None, []) => Err(CliError::Other(format!(
             "this relay runs no plugin implementing {api}"
@@ -401,6 +416,23 @@ pub async fn dispatch(cmd: crate::PluginsCmd, client: &BeekeeperClient) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_provider_wins_over_sort_order_and_a_named_one_wins_over_it() {
+        let providers = ["acme".to_owned(), "planning".to_owned()];
+        let pick = |named, default| choose_provider(&providers, "x/1", named, default);
+        assert_eq!(pick(None, Some("planning")).expect("default"), "planning");
+        assert_eq!(pick(Some("acme"), Some("planning")).expect("named"), "acme");
+        assert!(pick(Some("nope"), Some("planning")).is_err());
+        // No default, or a default the relay does not run: still never a guess.
+        assert!(pick(None, None).is_err());
+        assert!(pick(None, Some("gone")).is_err());
+        let only = ["acme".to_owned()];
+        assert_eq!(
+            choose_provider(&only, "x/1", None, Some("planning")).expect("only"),
+            "acme"
+        );
+    }
 
     const PROJECT: &str =
         "30621:1111111111111111111111111111111111111111111111111111111111111111:demo";

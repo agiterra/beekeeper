@@ -345,3 +345,20 @@ test("providers are whatever the relay registers; Linear is listed but never ava
   );
   assert.equal(resolvePlanningProvider([], null), null);
 });
+
+test("native Planning stays the default when another provider sorts first; a pick still wins", () => {
+  // As providersOf returns them: sorted by name, so `acme` comes first.
+  const registered = [PLUGIN("acme"), PLUGIN("planning")];
+  assert.equal(resolvePlanningProvider(registered, null)?.name, "planning");
+  assert.equal(resolvePlanningProvider(registered, "acme")?.name, "acme");
+  assert.equal(
+    resolvePlanningProvider(registered, "gone")?.name,
+    "planning",
+    "a stale pick falls back to native, not to the first by name",
+  );
+  // No native Planning registered: the first by name, as before.
+  assert.equal(
+    resolvePlanningProvider([PLUGIN("acme"), PLUGIN("zeta")], null)?.name,
+    "acme",
+  );
+});

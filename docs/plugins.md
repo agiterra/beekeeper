@@ -48,8 +48,39 @@ only `records.query` and `log` (plus the shared `types`). See
 
 ## Registering a plugin
 
-Registration is deployment configuration: a TOML file named by
-`BEEKEEPER_PLUGINS_FILE`, the same for every community the relay serves.
+Registration is deployment configuration, the same for every community the
+relay serves. A relay reads up to two TOML files of the same shape:
+
+| File | Named by | Holds |
+| --- | --- | --- |
+| **Built-in** registry | `BEEKEEPER_BUILTIN_PLUGINS_FILE`, else `plugins/registry.toml` beside the relay binary | The first-party plugins the package ships (Planning), on with nothing to configure |
+| **Operator** registry | `BEEKEEPER_PLUGINS_FILE` | Plugins the operator *adds*, and optionally `[host]` and `disable_builtins` |
+
+An empty variable is the same as unset. Each entry's relative `path` resolves
+against the directory of the file that holds it. The operator registry adds
+to the built-ins; it never has to repeat Planning or copy its sha256:
+
+- **A name in both files is refused**, never shadowed. To run your own plugin
+  under a built-in's name — or to run without a built-in — put
+  `disable_builtins = ["planning"]` at the top of the operator file (before
+  any table). Naming a built-in that does not exist is refused too, so a typo
+  cannot leave Planning on while you believe it off.
+- **`[host]`** comes from the operator file when it has one, else the built-in
+  file, else the defaults. Every limit that depends on it is checked against
+  the merged result: lowering `max_concurrent_calls` below a built-in's
+  per-installation limit refuses the registry.
+- Both variables naming the same file read it once, as the built-in registry
+  (so a deployment that pointed `BEEKEEPER_PLUGINS_FILE` at the shipped file,
+  as the image once did, still starts).
+
+An operator file that only changes the relay-wide cap is complete as:
+
+```toml
+[host]
+max_concurrent_calls = 16
+```
+
+One entry, in either file:
 
 ```toml
 [[plugin]]
@@ -80,8 +111,9 @@ manifest against the grants. **Any failure stops the relay**: an operator who
 registered a plugin gets it or is told why not. A plugin that asks to read a
 kind the relay cannot scope to a project (today only NIP-TD, 44248), or to
 draft a kind the relay has no validator for, is refused the same way.
-`BEEKEEPER_PLUGINS_FILE` unset means no plugins; the relay logs that Planning
-is unavailable, and clients say so.
+No built-in registry found means Beekeeper's own Planning is not running, and
+the relay logs that; with no operator registry either it runs no plugins, and
+clients say Planning is unavailable.
 
 Every limit has a hard ceiling (`Limits::HARD_CEILINGS`) a registry cannot
 exceed.
@@ -391,27 +423,36 @@ and live UI gates against a scratch database with two tenants.
 
 - The relay image builds the first-party plugins, bakes `planning.wasm` and
   its pinned `registry.toml` into `/usr/lib/beekeeper/plugins/`, and sets
-  `BEEKEEPER_PLUGINS_FILE` there. An operator's own value replaces it.
+  `BEEKEEPER_BUILTIN_PLUGINS_FILE` there. An operator's `BEEKEEPER_PLUGINS_FILE`
+  (environment, `.env` through Compose's `env_file`, or a derived image) adds
+  to it; Planning stays on unless that file disables it by name.
 - Every `just` recipe that starts a relay — `relay`, `dev`, `relay-web`,
-  `admin`, `relay-release` — builds them and defaults `BEEKEEPER_PLUGINS_FILE`
-  to `<target>/plugins/registry.toml` (scripts/lib/plugins.sh), after loading
-  `.env`. `just relay-plugins-check` (part of `just check`) fails if a recipe
-  that starts a relay stops doing so.
-- **An operator's registry replaces the default; it is never merged.** A
-  custom `BEEKEEPER_PLUGINS_FILE` (environment, `.env`, or the container's
-  `ENV`) that omits Planning runs without Planning. Whether a custom registry
-  should instead extend the first-party one is undecided; until it is, an
-  operator who wants Planning plus their own plugins lists Planning in their
-  file, pinned to the `planning.wasm` they ship beside it.
-- **A bare binary has no plugins.** `beekeeper-relay` started directly — a
-  `cargo run` outside the recipes, or a release binary copied to a host — has
-  no default registry compiled in and nothing beside it to load: it logs that
-  Planning is unavailable and every client says so. Only the relay image ships
-  `planning.wasm` and a registry that pins it. Packaging both beside a plain
-  binary is not done.
+  `admin`, `relay-release` — builds them and defaults
+  `BEEKEEPER_BUILTIN_PLUGINS_FILE` to `<target>/plugins/registry.toml`
+  (scripts/lib/plugins.sh), after loading `.env`. `just relay-plugins-check`
+  (part of `just check`) fails if a recipe that starts a relay stops doing so.
+  A `BEEKEEPER_PLUGINS_FILE` in `.env` adds to it, so pointing it at
+  `registry.test.toml` (which lists Planning too) is refused as a duplicate;
+  the test scripts start `target/debug/beekeeper-relay` directly with that
+  file as the only registry instead.
+- **Upgrading from a replace-only registry.** Before this change an
+  operator's file replaced the image's, and the advice was to list Planning in
+  it. Such a file now fails at startup naming the duplicate: delete its
+  Planning entry (the built-in serves it), or add
+  `disable_builtins = ["planning"]` to keep running the copy you pinned.
+- **A packaged binary outside the image** gets the built-ins by carrying them
+  beside it: `scripts/build-plugins.sh <bin-dir>/plugins --first-party-only`
+  writes `registry.toml` and `planning.wasm` into `plugins/` next to the
+  binary, which the relay finds without any variable. Nothing does this
+  packaging today — no release lane ships a relay binary — so the image is the
+  only package that includes Planning.
+- **A bare `cargo` binary has no built-ins.** `target/<profile>/beekeeper-relay`
+  started outside the recipes has no registry compiled in and nothing in
+  `target/<profile>/plugins/`: it logs that Planning is not running and every
+  client says so. The relay never builds or searches for plugins itself.
 - **Upgrading a plugin** without rebuilding the relay: put the new `.wasm`
-  beside a registry that pins it, point `BEEKEEPER_PLUGINS_FILE` there, and
-  restart. There is no hot reload.
+  beside a registry that pins it, point the variable there, and restart.
+  There is no hot reload.
 
 ## Limits — what this does not do
 
@@ -460,7 +501,7 @@ and live UI gates against a scratch database with two tenants.
 
 `plans/GITHUB_PLUGIN_SLICE_PLAN.md` (agents repository) plans a
 `webhook-plugin` world on the same foundation: in-process wasmtime components,
-no WASI, a sha256-pinned registry under `BEEKEEPER_PLUGINS_FILE`, per-call
+no WASI, a sha256-pinned registry (built-in plus `BEEKEEPER_PLUGINS_FILE`), per-call
 fuel/deadline/memory, a fresh store per call, and the host owning secrets,
 HMAC and signing. This crate is that foundation (Wasmtime 48.0.6, no WASI,
 one host for both worlds), and it now carries the host side of that world

@@ -14,6 +14,10 @@ use crate::error::CliError;
 /// The operation API this command speaks.
 pub const PLANNING_API: &str = "beekeeper.planning/1";
 
+/// Beekeeper's own Planning plugin, the built-in a relay ships: the provider
+/// used when the caller names none, whatever else sorts before it.
+pub const NATIVE_PLANNING_PLUGIN: &str = "planning";
+
 /// `<containerId>/<issueId>` → the two ids.
 fn split_key(key: &str) -> Result<(String, String), CliError> {
     match key.split_once('/') {
@@ -92,7 +96,13 @@ pub async fn dispatch(cmd: crate::PlanningCmd, client: &BeekeeperClient) -> Resu
     }
     let call = Call {
         client,
-        plugin: plugins::provider_for(client, PLANNING_API, provider.as_deref()).await?,
+        plugin: plugins::provider_for(
+            client,
+            PLANNING_API,
+            provider.as_deref(),
+            Some(NATIVE_PLANNING_PLUGIN),
+        )
+        .await?,
         project: super::pulse::resolve_project(client, project.as_deref()).await?,
     };
     let out = match cmd {

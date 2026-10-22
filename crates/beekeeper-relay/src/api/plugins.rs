@@ -42,8 +42,51 @@ use super::bridge::{
 use crate::state::AppState;
 use beekeeper_core::tenant::TenantContext;
 
-/// The environment variable naming the plugin registry.
+/// The environment variable naming the operator's plugin registry, which adds
+/// to the built-ins.
 pub const PLUGINS_FILE_ENV: &str = "BEEKEEPER_PLUGINS_FILE";
+
+/// The environment variable naming the built-in registry a package ships
+/// (the relay image sets it; so does every `just` recipe that starts a relay).
+pub const BUILTIN_PLUGINS_FILE_ENV: &str = "BEEKEEPER_BUILTIN_PLUGINS_FILE";
+
+/// Where a package may put the built-in registry instead of setting
+/// [`BUILTIN_PLUGINS_FILE_ENV`]: beside the relay binary, in `plugins/`, with
+/// the components it pins (`scripts/build-plugins.sh <bin-dir>/plugins
+/// --first-party-only` writes exactly that). A `cargo build` output directory
+/// has none.
+pub const COMPANION_REGISTRY: &str = "plugins/registry.toml";
+
+/// Which registry files a relay reads, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryPaths {
+    /// The built-in registry, from [`BUILTIN_PLUGINS_FILE_ENV`] or the
+    /// companion beside the binary.
+    pub builtin: Option<PathBuf>,
+    /// The operator's, from [`PLUGINS_FILE_ENV`].
+    pub operator: Option<PathBuf>,
+}
+
+/// Resolve the two registries from the environment values and the relay
+/// binary's path. An empty variable is treated as unset (a Compose
+/// `env_file` line with no value must not mean "the file named nothing").
+pub fn registry_paths(
+    builtin_env: Option<std::ffi::OsString>,
+    operator_env: Option<std::ffi::OsString>,
+    exe: Option<&std::path::Path>,
+) -> RegistryPaths {
+    let set =
+        |value: Option<std::ffi::OsString>| value.filter(|v| !v.is_empty()).map(PathBuf::from);
+    let builtin = set(builtin_env).or_else(|| {
+        exe.and_then(std::path::Path::parent)
+            .map(|dir| dir.join(COMPANION_REGISTRY))
+            .filter(|path| path.is_file())
+    });
+    RegistryPaths {
+        builtin,
+        operator: set(operator_env),
+    }
+}
 
 /// The kinds any plugin on this relay may be granted to read: the kinds that
 /// are scoped to a project by their `a` tag, so the relay can bind a read to
@@ -71,18 +114,34 @@ pub fn draft_validators() -> DraftValidators {
     )
 }
 
-/// Load the registry `BEEKEEPER_PLUGINS_FILE` names. Unset: no plugins, and
-/// the relay says so at startup. Set but unloadable: an error the caller
-/// treats as fatal — an operator who registered a plugin gets it or is told
-/// why not.
+/// Load the built-in registry and the operator's (see [`registry_paths`]).
+/// No built-in registry: the relay says Planning is unavailable unless an
+/// operator registry provides a provider. A named registry that cannot load
+/// is an error the caller treats as fatal — an operator who registered a
+/// plugin gets it or is told why not.
 pub fn load_plugins_from_env() -> Result<PluginHost, LoadError> {
-    let Some(path) = std::env::var_os(PLUGINS_FILE_ENV).map(PathBuf::from) else {
+    let exe = std::env::current_exe().ok();
+    let paths = registry_paths(
+        std::env::var_os(BUILTIN_PLUGINS_FILE_ENV),
+        std::env::var_os(PLUGINS_FILE_ENV),
+        exe.as_deref(),
+    );
+    if paths.builtin.is_none() {
         tracing::warn!(
-            "{PLUGINS_FILE_ENV} is not set: this relay runs no plugins, so Planning is unavailable to every client"
+            "no built-in plugin registry ({BUILTIN_PLUGINS_FILE_ENV} unset and no {COMPANION_REGISTRY} beside the relay binary): Beekeeper's own Planning is not running"
         );
+    }
+    if paths.builtin.is_none() && paths.operator.is_none() {
+        tracing::warn!("this relay runs no plugins, so Planning is unavailable to every client");
         return PluginHost::empty();
-    };
-    let registry = Registry::from_file(&path)?;
+    }
+    let registry = Registry::layered(paths.builtin.as_deref(), paths.operator.as_deref())?;
+    tracing::info!(
+        sources = ?registry.sources,
+        builtins = ?registry.builtins,
+        max_concurrent_calls = registry.host.max_concurrent_calls,
+        "plugin registry"
+    );
     for entry in &registry.entries {
         if let Some(kind) = entry
             .grants
@@ -572,4 +631,43 @@ pub async fn invoke_plugin(
         "result": outcome.result,
         "drafts": outcome.drafts,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn an_empty_variable_is_unset() {
+        let paths = registry_paths(Some(OsString::new()), Some(OsString::new()), None);
+        assert_eq!(
+            paths,
+            RegistryPaths {
+                builtin: None,
+                operator: None
+            }
+        );
+    }
+
+    #[test]
+    fn the_builtin_comes_from_its_variable_else_the_companion_beside_the_binary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("beekeeper-relay");
+        // A bare binary with nothing beside it: no built-ins.
+        assert_eq!(registry_paths(None, None, Some(&exe)).builtin, None);
+
+        let companion = dir.path().join(COMPANION_REGISTRY);
+        std::fs::create_dir_all(companion.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&companion, "").expect("write");
+        let paths = registry_paths(None, Some("/etc/ops.toml".into()), Some(&exe));
+        assert_eq!(paths.builtin.as_deref(), Some(companion.as_path()));
+        assert_eq!(paths.operator, Some(PathBuf::from("/etc/ops.toml")));
+
+        // The variable wins over the companion; empty falls back to it.
+        let paths = registry_paths(Some("/usr/lib/b.toml".into()), None, Some(&exe));
+        assert_eq!(paths.builtin, Some(PathBuf::from("/usr/lib/b.toml")));
+        let paths = registry_paths(Some(OsString::new()), None, Some(&exe));
+        assert_eq!(paths.builtin.as_deref(), Some(companion.as_path()));
+    }
 }

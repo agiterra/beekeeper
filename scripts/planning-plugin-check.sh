@@ -148,6 +148,7 @@ DATABASE_URL="postgres://buzz:buzz_dev@127.0.0.1:${PG_PORT}/${DB_NAME}" \
   BEEKEEPER_REQUIRE_AUTH_TOKEN=false \
   BEEKEEPER_AUTO_MIGRATE=true \
   BEEKEEPER_GIT_REPO_PATH="${WORKDIR}/relay-git" \
+  BEEKEEPER_BUILTIN_PLUGINS_FILE= \
   BEEKEEPER_PLUGINS_FILE="${ROOT}/target/plugins/registry.test.toml" \
   ./target/debug/beekeeper-relay >"${OUT}/relay.log" 2>&1 &
 RELAY_PID=$!
