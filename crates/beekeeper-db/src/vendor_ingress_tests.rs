@@ -402,6 +402,128 @@ async fn a_duplicate_authenticated_delivery_writes_no_second_event() {
     assert_eq!(fx.app_events_in_channel().await, 2);
 }
 
+/// One delivery projected twice — a retry after `Busy`, or a second
+/// projection of the same `VerifiedDelivery` — reaches B1 twice with the
+/// same delivery id and the same event (the host stamps the original receive
+/// time, so the relay-signed id is identical). The second record is a
+/// Duplicate: one event, one dispatch queue row, so one claimable job and
+/// one admitted run.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_repeated_projection_of_one_delivery_publishes_and_admits_once() {
+    let fx = fixture().await;
+    let relay = Keys::generate();
+    let delivery_id = Uuid::new_v4().to_string();
+    let project = || {
+        EventBuilder::new(
+            Kind::Custom(KIND_APPLICATION_EVENT as u16),
+            r#"{"schema":1,"data":{"ref":"refs/heads/main"}}"#,
+        )
+        .tags([Tag::parse(["h", &fx.installation.channel_id.to_string()]).expect("h tag")])
+        .custom_created_at(Timestamp::from(1_700_000_200))
+        .sign_with_keys(&relay)
+        .expect("sign")
+    };
+    let first = project();
+    let retried = project();
+    assert_eq!(first.id, retried.id, "one delivery, one event id");
+
+    let outcome =
+        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &first))
+            .await
+            .expect("first projection");
+    assert!(
+        matches!(outcome, DeliveryOutcome::Accepted(_)),
+        "{outcome:?}"
+    );
+    let outcome =
+        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &retried))
+            .await
+            .expect("repeated projection");
+    let DeliveryOutcome::Duplicate {
+        disposition,
+        event_id,
+    } = outcome
+    else {
+        panic!("expected Duplicate, got {outcome:?}");
+    };
+    assert_eq!(disposition, "accepted");
+    assert_eq!(event_id.as_deref(), Some(first.id.as_bytes().as_slice()));
+    assert_eq!(fx.app_events_in_channel().await, 1, "published once");
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workflow_dispatch_queue WHERE community_id = $1")
+            .bind(fx.community.as_uuid())
+            .fetch_one(&fx.pool)
+            .await
+            .expect("count queue");
+    assert_eq!(queued, 1, "queued once");
+
+    // Admission: the one queue row is the one job, and it admits one run.
+    let owner = Keys::generate().public_key().to_bytes();
+    crate::user::ensure_user(&fx.pool, fx.community, &owner)
+        .await
+        .expect("workflow owner");
+    let workflow = Uuid::new_v4();
+    crate::workflow::upsert_workflow(
+        &fx.pool,
+        fx.community,
+        workflow,
+        None,
+        &owner,
+        "on push",
+        r#"{"name":"on push","trigger":{"on":"manual"},"steps":[]}"#,
+        &[3_u8; 32],
+        None,
+    )
+    .await
+    .expect("workflow");
+    let batch = crate::workflow_dispatch::claim_dispatch_batch_in(
+        &fx.pool,
+        Some(fx.community),
+        10,
+        Utc::now() + chrono::Duration::seconds(60),
+    )
+    .await
+    .expect("claim")
+    .expect("one job due");
+    assert_eq!(batch.jobs.len(), 1, "one job");
+    assert_eq!(batch.jobs[0].event.event.id, first.id);
+    let event_id = first.id.as_bytes().to_vec();
+    crate::workflow_dispatch::freeze_candidates(
+        &fx.pool,
+        fx.community,
+        &event_id,
+        batch.claim_id,
+        &[workflow],
+    )
+    .await
+    .expect("freeze");
+    let run = crate::workflow_dispatch::create_dispatch_run(
+        &fx.pool,
+        fx.community,
+        &event_id,
+        workflow,
+        None,
+        &[3_u8; 32],
+    )
+    .await
+    .expect("admit");
+    assert!(
+        matches!(
+            run,
+            crate::workflow_dispatch::DispatchRunOutcome::Created(_)
+        ),
+        "{run:?}"
+    );
+    let runs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workflow_runs WHERE community_id = $1")
+            .bind(fx.community.as_uuid())
+            .fetch_one(&fx.pool)
+            .await
+            .expect("count runs");
+    assert_eq!(runs, 1, "admitted once");
+}
+
 /// F3: an unauthenticated rejection is a counter on the installation, never
 /// a delivery row, so the genuine delivery under that id is still accepted.
 #[tokio::test]
