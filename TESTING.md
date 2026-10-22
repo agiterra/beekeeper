@@ -16,6 +16,34 @@ just test               # unit + integration (starts Docker if needed)
 cargo test -p beekeeper-test-client -- --ignored
 ```
 
+`just test-unit` pins every database and Redis URL to a closed port
+(`scripts/lib/unit-env.sh`), so a test missing its `#[ignore]` fails or skips
+there instead of writing to the services `.env` names. The Redis-gated tests
+(tunnel, mesh_demo, NIP-98 replay) run when `BEEKEEPER_TEST_REDIS_URL` names a
+Redis the run may write to.
+
+### Running `just test` against your own services
+
+By default the integration recipes use the dev compose stack (`buzz-postgres`,
+`buzz-redis`, `buzz-rustfs`). To keep a run off it — another worktree, a
+validation lane, a dev database holding work — start your own containers
+(dev credentials `buzz` / `buzz_dev`) and name them in `.env`:
+
+```bash
+BEEKEEPER_DEV_POSTGRES_CONTAINER=my-postgres   BEEKEEPER_DEV_POSTGRES_PORT=55432
+BEEKEEPER_DEV_REDIS_CONTAINER=my-redis         BEEKEEPER_DEV_REDIS_PORT=56379
+BEEKEEPER_DEV_S3_CONTAINER=my-rustfs           BEEKEEPER_S3_ENDPOINT=http://localhost:59000
+DATABASE_URL=postgres://buzz:buzz_dev@localhost:55432/buzz
+REDIS_URL=redis://localhost:56379
+PGHOST=localhost PGPORT=55432
+```
+
+Every scratch-database recipe (`test-genesis`, `test-git-push-gate`,
+`test-ci-completion`, `test-relay-db`, `foreign-client-check`,
+`headless-acme-check`) then creates and drops its database on your server, and
+`_ensure-services` refuses rather than starting the compose stack beside it
+(`scripts/lib/dev-services.sh`).
+
 ### CI completion integration checks
 
 `just test-ci-completion` runs the CI-result atomic storage and authenticated

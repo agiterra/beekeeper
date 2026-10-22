@@ -147,18 +147,17 @@ steps:
       # 12/12 green in 0.52s on a dev machine with Redis (2026-08-31). Do not
       # "clean it up" by deleting it — it is a working regression guard for the
       # drain-tick frame loss, and `just test-unit` runs it wherever loopback
-      # QUIC works.
+      # QUIC works and BEEKEEPER_TEST_REDIS_URL names a Redis.
       - cargo test --workspace --exclude beekeeper-agent -- --skip api::mesh_demo
       - cargo test -p beekeeper-relay --lib api::mesh_demo -- --skip demo_join_forwarded_arm_round_trips_echo
-      # Twelve beekeeper-relay tests build AppState from a real pool and so need
-      # Postgres. They are `#[ignore]`d, which is what lets `just test-unit`
-      # run the whole workspace on a machine with no Docker — but this runner
-      # HAS Postgres, and it ran them before they were marked. Without this
-      # line, marking them would have quietly deleted their CI coverage to make
-      # a local count look tidy. Three module filters, OR'd by libtest (the
-      # same shape `just test-genesis` uses). Extend the filters when you mark
-      # another Postgres-gated beekeeper-relay test.
-      - cargo test -p beekeeper-relay --lib -- --ignored api::media::tests api::admin::tests handlers::event::tests::fanout_access
+      # The Postgres-backed beekeeper-relay tests build AppState from a real
+      # pool. They are `#[ignore]`d, which is what lets `just test-unit` run
+      # the whole workspace on a machine with no Docker — but this runner HAS
+      # Postgres and Redis, and it ran them before they were marked. Without
+      # this line, marking them would have quietly deleted their CI coverage
+      # to make a local count look tidy. The filter list lives in the script,
+      # shared with `just test-relay-db`; extend it there.
+      - ./scripts/test-relay-db.sh
       # CI completion proves atomic storage and the real bee subscriber against
       # a local relay. These are ignored in the infrastructure-free unit run.
       - cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1

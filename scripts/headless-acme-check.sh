@@ -12,7 +12,9 @@
 # § Commissioning):
 #
 #   1. The isolated relay `foreign-client-check` uses (scratch Postgres
-#      database in `buzz-postgres`, dropped on exit; Redis logical DB 14).
+#      database in the dev Postgres, `buzz-postgres` unless
+#      scripts/lib/dev-services.sh names another, dropped on exit; Redis
+#      logical DB 14).
 #   2. `bee host commission --runtime acme --driver conformance/acme-acp/acme-acp
 #      --credential-env ACME_TOKEN --credential-source acme-vault
 #      --credential-file <0600 json>` into a fresh `BEEKEEPER_HOST_HOME`;
@@ -76,14 +78,16 @@ done
 for tool in node python3 docker curl openssl git; do
   command -v "${tool}" >/dev/null || { echo "missing tool on PATH: ${tool}" >&2; exit 1; }
 done
-pg_health="$(docker inspect --format '{{.State.Health.Status}}' buzz-postgres 2>/dev/null || echo not_found)"
+# shellcheck source=lib/dev-services.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/dev-services.sh"
+pg_health="$(dev_service_health "${BEEKEEPER_DEV_POSTGRES_CONTAINER}")"
 if [[ "${pg_health}" != "healthy" ]]; then
-  echo "buzz-postgres is ${pg_health}; run \`just _ensure-services\` first" >&2
+  echo "${BEEKEEPER_DEV_POSTGRES_CONTAINER} is ${pg_health}; run \`just _ensure-services\` first" >&2
   exit 1
 fi
-s3_health="$(docker inspect --format '{{.State.Health.Status}}' buzz-rustfs 2>/dev/null || echo not_found)"
+s3_health="$(dev_service_health "${BEEKEEPER_DEV_S3_CONTAINER}")"
 if [[ "${s3_health}" != "healthy" ]]; then
-  echo "buzz-rustfs is ${s3_health}; the relay's git object-store probe needs it — run \`docker compose up -d rustfs rustfs-init\`" >&2
+  echo "${BEEKEEPER_DEV_S3_CONTAINER} is ${s3_health}; the relay's git object-store probe needs it — run \`docker compose up -d rustfs rustfs-init\`" >&2
   exit 1
 fi
 
@@ -116,7 +120,7 @@ cleanup() {
   fi
   if [[ -n "${RELAY_PID}" ]]; then kill "${RELAY_PID}" 2>/dev/null || true; fi
   sleep 1
-  docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
+  dev_pg -d postgres \
     -c "DROP DATABASE IF EXISTS ${DB_NAME};" >/dev/null 2>&1 || true
   local passes fails
   passes="$(grep -c '^PASS' "${RESULT_FILE}" 2>/dev/null || true)"; passes="${passes:-0}"
@@ -164,7 +168,7 @@ strip_ansi() { sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g'; }
 
 # ── Relay ───────────────────────────────────────────────────────────────────
 log "creating scratch database ${DB_NAME}..."
-docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
+dev_pg -d postgres \
   -c "CREATE DATABASE ${DB_NAME};" >/dev/null
 
 RELAY_PORT="$(free_port)"
@@ -172,8 +176,8 @@ RELAY_HTTP="http://127.0.0.1:${RELAY_PORT}"
 RELAY_WS="ws://127.0.0.1:${RELAY_PORT}"
 RELAY_KEY="$(openssl rand -hex 32)"
 log "starting beekeeper-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14)..."
-DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/${DB_NAME}" \
-  REDIS_URL="redis://localhost:6379/14" \
+DATABASE_URL="$(dev_pg_url "${DB_NAME}")" \
+  REDIS_URL="$(dev_redis_url 14)" \
   RELAY_URL="${RELAY_WS}" \
   BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
   BEEKEEPER_RELAY_PRIVATE_KEY="${RELAY_KEY}" \

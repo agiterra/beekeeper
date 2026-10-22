@@ -4,7 +4,8 @@
 # =============================================================================
 #
 # Brings up the real `beekeeper-relay` binary the way `just test` does (a
-# scratch Postgres database in the dev `buzz-postgres` container, dropped on
+# scratch Postgres database in the dev Postgres container — `buzz-postgres`
+# unless scripts/lib/dev-services.sh is told otherwise — dropped on
 # exit; Redis logical DB 14, never DB 0), seeds one channel with the built
 # `bee`, and then drives the relay with nothing but the foreign clients in
 # `conformance/foreign-client/` — Node plus `nostr-tools`, no Beekeeper SDK,
@@ -62,9 +63,11 @@ done
 for tool in node python3 docker curl openssl; do
   command -v "${tool}" >/dev/null || { echo "missing tool on PATH: ${tool}" >&2; exit 1; }
 done
-pg_health="$(docker inspect --format '{{.State.Health.Status}}' buzz-postgres 2>/dev/null || echo not_found)"
+# shellcheck source=lib/dev-services.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/dev-services.sh"
+pg_health="$(dev_service_health "${BEEKEEPER_DEV_POSTGRES_CONTAINER}")"
 if [[ "${pg_health}" != "healthy" ]]; then
-  echo "buzz-postgres is ${pg_health}; run \`just _ensure-services\` first" >&2
+  echo "${BEEKEEPER_DEV_POSTGRES_CONTAINER} is ${pg_health}; run \`just _ensure-services\` first" >&2
   exit 1
 fi
 # The relay refuses to start without its git object store: its startup
@@ -72,9 +75,9 @@ fi
 # `rustfs` service on the dev compose, port 9000). `_ensure-services` only
 # checks Postgres and Redis, so say so here rather than dying three seconds
 # in with an S3 error.
-s3_health="$(docker inspect --format '{{.State.Health.Status}}' buzz-rustfs 2>/dev/null || echo not_found)"
+s3_health="$(dev_service_health "${BEEKEEPER_DEV_S3_CONTAINER}")"
 if [[ "${s3_health}" != "healthy" ]]; then
-  echo "buzz-rustfs is ${s3_health}; the relay's git object-store probe needs it — run \`docker compose up -d rustfs rustfs-init\`" >&2
+  echo "${BEEKEEPER_DEV_S3_CONTAINER} is ${s3_health}; the relay's git object-store probe needs it — run \`docker compose up -d rustfs rustfs-init\`" >&2
   exit 1
 fi
 
@@ -96,7 +99,7 @@ cleanup() {
   # Only the relay this script started; never another process.
   if [[ -n "${RELAY_PID}" ]]; then kill "${RELAY_PID}" 2>/dev/null || true; fi
   sleep 1
-  docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
+  dev_pg -d postgres \
     -c "DROP DATABASE IF EXISTS ${DB_NAME};" >/dev/null 2>&1 || true
   local passes fails
   passes="$(grep -c '^PASS' "${RESULT_FILE}" 2>/dev/null || true)"; passes="${passes:-0}"
@@ -140,15 +143,15 @@ jq_py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # ── Relay ───────────────────────────────────────────────────────────────────
 log "creating scratch database ${DB_NAME}..."
-docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
+dev_pg -d postgres \
   -c "CREATE DATABASE ${DB_NAME};" >/dev/null
 
 RELAY_PORT="$(free_port)"
 RELAY_HTTP="http://127.0.0.1:${RELAY_PORT}"
 RELAY_KEY="$(openssl rand -hex 32)"
 log "starting beekeeper-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14)..."
-DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/${DB_NAME}" \
-  REDIS_URL="redis://localhost:6379/14" \
+DATABASE_URL="$(dev_pg_url "${DB_NAME}")" \
+  REDIS_URL="$(dev_redis_url 14)" \
   RELAY_URL="ws://127.0.0.1:${RELAY_PORT}" \
   BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
   BEEKEEPER_RELAY_PRIVATE_KEY="${RELAY_KEY}" \

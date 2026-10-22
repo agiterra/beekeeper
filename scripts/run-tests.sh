@@ -89,8 +89,11 @@ run_unit_tests() {
   # found by pushing. Tests that need Postgres, Redis or MinIO are `#[ignore]`d
   # with a reason, which is what keeps this infra-free; mark new ones rather
   # than re-narrowing this command.
+  # Run with every database and Redis URL pinned to a closed port (the .env
+  # loaded above usually names the dev services): a test that forgot its
+  # `#[ignore]` fails or skips here instead of writing there.
   run_test_step "workspace unit tests" \
-    cargo test --workspace -- --nocapture
+    bash -c 'source "$1"; exec cargo test --workspace -- --nocapture' _ "${SCRIPT_DIR}/lib/unit-env.sh"
 }
 
 # ---- DB / integration tests (infra required) --------------------------------

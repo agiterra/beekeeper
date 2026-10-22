@@ -89,11 +89,11 @@ ON CONFLICT (lower(host)) DO NOTHING;
 
 if command -v psql >/dev/null 2>&1; then
   PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PGDATABASE}" -v ON_ERROR_STOP=1 -c "${sql}"
-elif docker exec buzz-postgres psql --version >/dev/null 2>&1; then
-  docker exec -i -e PGPASSWORD="${PGPASSWORD}" buzz-postgres \
+elif docker exec "${BEEKEEPER_DEV_POSTGRES_CONTAINER:-buzz-postgres}" psql --version >/dev/null 2>&1; then
+  docker exec -i -e PGPASSWORD="${PGPASSWORD}" "${BEEKEEPER_DEV_POSTGRES_CONTAINER:-buzz-postgres}" \
     psql -U "${PGUSER}" -d "${PGDATABASE}" -v ON_ERROR_STOP=1 -c "${sql}"
 else
-  echo "error: neither psql nor buzz-postgres docker psql is available" >&2
+  echo "error: neither psql nor ${BEEKEEPER_DEV_POSTGRES_CONTAINER:-buzz-postgres} docker psql is available" >&2
   exit 1
 fi
 

@@ -416,18 +416,24 @@ _ensure-sidecar-stubs:
 _ensure-services:
     #!/usr/bin/env bash
     set -euo pipefail
-    pg=$(docker inspect --format '{{"{{"}}.State.Health.Status{{"}}"}}' buzz-postgres 2>/dev/null || echo "not_found")
-    redis=$(docker inspect --format '{{"{{"}}.State.Health.Status{{"}}"}}' buzz-redis 2>/dev/null || echo "not_found")
+    source scripts/lib/dev-services.sh
+    pg_name="$BEEKEEPER_DEV_POSTGRES_CONTAINER"; redis_name="$BEEKEEPER_DEV_REDIS_CONTAINER"
+    pg=$(dev_service_health "$pg_name"); redis=$(dev_service_health "$redis_name")
     if [[ "$pg" == "healthy" && "$redis" == "healthy" ]]; then
-        echo "Services already healthy"
+        echo "Services already healthy ($pg_name, $redis_name)"
         exit 0
+    fi
+    if ! dev_services_are_compose_defaults; then
+        # Named containers are the caller's to start; bringing up the shared
+        # compose stack beside them is the thing the override exists to avoid.
+        echo "error: $pg_name is $pg and $redis_name is $redis; start them yourself (scripts/lib/dev-services.sh)" >&2
+        exit 1
     fi
     echo "Starting services..."
     docker compose up -d || true
     echo -n "Waiting for services"
     for i in $(seq 1 40); do
-        pg=$(docker inspect --format '{{"{{"}}.State.Health.Status{{"}}"}}' buzz-postgres 2>/dev/null || echo "not_found")
-        redis=$(docker inspect --format '{{"{{"}}.State.Health.Status{{"}}"}}' buzz-redis 2>/dev/null || echo "not_found")
+        pg=$(dev_service_health "$pg_name"); redis=$(dev_service_health "$redis_name")
         if [[ "$pg" == "healthy" && "$redis" == "healthy" ]]; then
             echo " ready"
             exit 0
@@ -605,7 +611,7 @@ ci: check test-unit test-plugins desktop-test desktop-build desktop-tauri-check 
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test: test-genesis test-git-push-gate test-ci-completion foreign-client-check headless-acme-check
+test: test-genesis test-git-push-gate test-ci-completion test-relay-db foreign-client-check headless-acme-check
     ./scripts/run-tests.sh all
 
 # The relay as a foreign Nostr client sees it: composes the real
@@ -686,12 +692,13 @@ test-git-push-gate: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail
     db="buzz_push_gate_$$_$(date +%s)"
-    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    source scripts/lib/dev-services.sh
+    pg() { dev_pg "$@"; }
     cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
     trap cleanup EXIT
     cleanup
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
-    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    scratch="$(dev_pg_url "${db}")"
     DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     echo "==> git push-gate acceptance cases against ${db} (serial, isolated)"
     DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" \
@@ -733,17 +740,37 @@ test-genesis: _ensure-services
     # Unique per run: a fixed name collides when two worktrees run the gate
     # at once (ruling R18), and both would drop each other's database.
     db="buzz_genesis_gate_$$_$(date +%s)"
-    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    source scripts/lib/dev-services.sh
+    pg() { dev_pg "$@"; }
     cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
     trap cleanup EXIT
     cleanup
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
-    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    scratch="$(dev_pg_url "${db}")"
     # The event tests expect a migrated schema; they do not build one themselves.
     DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     echo "==> genesis + authority-chain proofs against ${db} (serial, isolated)"
     DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" \
         cargo test -p beekeeper-db --lib -- genesis authority_transition --ignored --test-threads=1
+
+# The Postgres-backed beekeeper-relay unit tests (media, admin, fanout access,
+# audit provenance and per-tenant chains): `#[ignore]`d so `test-unit` stays
+# infra-free, run here against a database this run creates, migrates and
+# drops, and Redis logical DB 14. The filter list is scripts/test-relay-db.sh,
+# which `.woodpecker/gate.yml` runs too.
+test-relay-db: _ensure-services
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source scripts/lib/dev-services.sh
+    db="buzz_relay_db_$$_$(date +%s)"
+    cleanup() { dev_pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
+    trap cleanup EXIT
+    dev_pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
+    scratch="$(dev_pg_url "${db}")"
+    DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
+    echo "==> relay Postgres-backed unit tests against ${db}"
+    DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" REDIS_URL="$(dev_redis_url 14)" \
+        ./scripts/test-relay-db.sh
 
 # CI callback composition and atomic result proofs require Postgres. Keep them
 # in the integration entrypoint so their #[ignore] annotations cannot hide them.
@@ -752,11 +779,12 @@ test-ci-completion: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail
     db="buzz_ci_completion_$$_$(date +%s)"
-    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    source scripts/lib/dev-services.sh
+    pg() { dev_pg "$@"; }
     cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
     trap cleanup EXIT
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
-    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    scratch="$(dev_pg_url "${db}")"
     DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" \
         cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1
@@ -838,6 +866,13 @@ test-unit:
     # All targets rather than --lib: beekeeper-conformance's replay fixtures,
     # beekeeper-cli, beekeeper-push-gateway and beekeeper-backend-kubernetes carry infra-free
     # coverage in tests/ that --lib would drop.
+    #
+    # Infra-free is enforced, not hoped for: .env (which just loads) usually
+    # names the dev database, and a test that forgot its `#[ignore]` would
+    # write there — two audit tests did, until they were marked. Every
+    # database and Redis URL is pinned to a closed port for this recipe;
+    # BEEKEEPER_TEST_REDIS_URL names a Redis for the Redis-gated tests.
+    source scripts/lib/unit-env.sh
     ./scripts/test-ensure-local-relay-key.sh
     ./scripts/test-env-migrate.sh
     ./scripts/test-env-compat.sh

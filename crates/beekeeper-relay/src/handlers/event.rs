@@ -2406,15 +2406,12 @@ mod tests {
         /// passes a *different* actor hex, then asserts `audit_log.actor_pubkey`
         /// is the actor, not the signer.
         #[tokio::test]
+        #[ignore = "requires a migrated Postgres and Redis: just test-relay-db"]
         async fn audit_records_caller_actor_not_relay_signer_for_relay_signed_event() {
             use beekeeper_core::event::StoredEvent;
             use beekeeper_core::tenant::{CommunityId, TenantContext};
 
-            let Some((state, audit_shutdown, pool)) = super::fanout_access::audit_state().await
-            else {
-                eprintln!("skipping audit-actor provenance test: Postgres/Redis unavailable");
-                return;
-            };
+            let (state, audit_shutdown, pool) = super::fanout_access::audit_state().await;
 
             // Seed a community so the audit_log FK is satisfiable.
             let community_uuid = Uuid::new_v4();
@@ -2493,16 +2490,13 @@ mod tests {
         /// blocked on the NIP-42 work: it drives the dispatch fn directly with
         /// two explicit tenants.
         #[tokio::test]
+        #[ignore = "requires a migrated Postgres and Redis: just test-relay-db"]
         async fn audit_chain_is_isolated_per_tenant_through_relay_ingest() {
             use beekeeper_audit::AuditService;
             use beekeeper_core::event::StoredEvent;
             use beekeeper_core::tenant::{CommunityId, TenantContext};
 
-            let Some((state, audit_shutdown, pool)) = super::fanout_access::audit_state().await
-            else {
-                eprintln!("skipping audit isolation test: Postgres/Redis unavailable");
-                return;
-            };
+            let (state, audit_shutdown, pool) = super::fanout_access::audit_state().await;
 
             // Two communities on the same relay process / same Postgres.
             let mut tenants = Vec::new();
@@ -2692,28 +2686,61 @@ mod tests {
 
         /// Real-PG, real-Redis state that hands back the audit shutdown handle so
         /// a test can drain queued audit entries before asserting on `audit_log`.
-        /// `None` when Postgres or Redis is unavailable (test skips).
-        pub(super) async fn audit_state() -> Option<(
+        ///
+        /// For `#[ignore]`d tests only, run against infrastructure the caller
+        /// names: `BEEKEEPER_TEST_DATABASE_URL` (a migrated database the run
+        /// owns — `just test-relay-db` creates and drops one) and `REDIS_URL`.
+        /// Neither falls back to a default. These tests insert communities and
+        /// audit rows, and a default is the shared dev database; they once ran
+        /// in the unit step and wrote there (and in CI, whose Redis is not on
+        /// 127.0.0.1, skipped silently while reporting a pass). Anything
+        /// missing or unreachable is a panic naming it, never a skip.
+        pub(super) async fn audit_state() -> (
             Arc<AppState>,
             crate::state::AuditShutdownHandle,
             sqlx::PgPool,
-        )> {
+        ) {
+            fn required(var: &str) -> String {
+                std::env::var(var)
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        panic!("{var} must name this run's own service; refusing a default")
+                    })
+            }
             let mut config = test_config();
-            config.redis_url = "redis://127.0.0.1:6379".to_string();
-            let pool = sqlx::PgPool::connect(&config.database_url).await.ok()?;
+            config.database_url = required("BEEKEEPER_TEST_DATABASE_URL");
+            config.redis_url = required("REDIS_URL");
+            let pool = sqlx::PgPool::connect(&config.database_url)
+                .await
+                .unwrap_or_else(|e| panic!("BEEKEEPER_TEST_DATABASE_URL unreachable: {e}"));
+            let migrated: Option<String> =
+                sqlx::query_scalar("SELECT to_regclass('communities')::text")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("query the schema");
+            assert!(
+                migrated.is_some(),
+                "BEEKEEPER_TEST_DATABASE_URL has no schema; run `beekeeper-admin migrate` on it first"
+            );
             // Require a real Redis so dispatch's publish_event doesn't error-log.
             let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
                 .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-                .ok()?;
-            redis::cmd("PING")
-                .query_async::<String>(&mut redis_pool.get().await.ok()?)
+                .expect("redis pool");
+            let mut redis_conn = redis_pool
+                .get()
                 .await
-                .ok()?;
+                .unwrap_or_else(|e| panic!("REDIS_URL unreachable: {e}"));
+            redis::cmd("PING")
+                .query_async::<String>(&mut redis_conn)
+                .await
+                .unwrap_or_else(|e| panic!("REDIS_URL does not answer PING: {e}"));
+            drop(redis_conn);
             let db = beekeeper_db::Db::from_pool(pool.clone());
             let pubsub = Arc::new(
                 beekeeper_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
                     .await
-                    .ok()?,
+                    .expect("pubsub manager"),
             );
             let audit = beekeeper_audit::AuditService::new(pool.clone());
             let auth = beekeeper_auth::AuthService::new(config.auth.clone());
@@ -2722,7 +2749,8 @@ mod tests {
                 db.clone(),
                 beekeeper_workflow::WorkflowConfig::default(),
             ));
-            let media_storage = beekeeper_media::MediaStorage::new(&config.media).ok()?;
+            let media_storage =
+                beekeeper_media::MediaStorage::new(&config.media).expect("media storage");
             let (state, audit_shutdown) = AppState::new(
                 config,
                 db,
@@ -2735,7 +2763,7 @@ mod tests {
                 Keys::generate(),
                 media_storage,
             );
-            Some((Arc::new(state), audit_shutdown, pool))
+            (Arc::new(state), audit_shutdown, pool)
         }
 
         fn register_conn(state: &AppState, pubkey: Option<Vec<u8>>) -> Uuid {
