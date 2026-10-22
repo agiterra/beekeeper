@@ -312,10 +312,38 @@ signs, and is not "the same seal, signed by the relay":
   `VerifiedDelivery` (private fields; not `Default`, `Clone` or
   `Deserialize`), which owns the body, the plan's vendor event and delivery
   id, the parsed vendor timestamp and the receive time, and is bound to its
-  plugin and installation. `WebhookCall::project` takes it by value, so
-  projecting an unverified body does not compile, and the vendor event the
-  plugin sees and the event's `created_at` can only be the ones that went
-  through verification.
+  plugin and installation. `WebhookCall::project` borrows it
+  (`&VerifiedDelivery`), so projecting an unverified body does not compile,
+  and the vendor event the plugin sees and the event's `created_at` can only
+  be the ones that went through verification.
+- **A busy `project` is retried with the same delivery.** `project` refuses
+  `InvokeError::Busy` before the plugin runs and the caller still holds the
+  `VerifiedDelivery`, so it retries that delivery: same body, same vendor
+  event, same receive time, so the same event (the same id once the relay
+  signs it). Nothing re-stamps `received_at` on a retry. The host does not
+  limit a delivery to one projection; publishing at most once is B1's
+  (`beekeeper_db::vendor_ingress::record_delivery`).
+- **The retry is bounded and has no recovery yet.** A `VerifiedDelivery`
+  lives only in memory. If the embedder's retry deadline passes, or the
+  relay dies before the B1 commit, the delivery is recorded nowhere and
+  nothing re-projects it. Until a reconciliation exists (re-fetching missed
+  deliveries from the vendor), the only recovery is the vendor redelivering
+  it, which happens only if the relay did not answer 2xx.
+- **B1 dedup and the unsigned delivery id.** B1's key is
+  `(community, installation, delivery id)`, so it is scoped to one
+  installation of one community. Under it, an id recorded `accepted` or
+  `ignored` is a duplicate and writes nothing; one recorded `rejected` is
+  projected again. A request that fails the MAC never writes a delivery row,
+  so an id alone cannot take or pre-poison a key. What it stops: a vendor
+  redelivery, and a replay that keeps its id. What it does **not** stop:
+  GitHub signs neither `X-GitHub-Delivery` nor a time, so an attacker
+  holding one validly signed body can replay it under a fresh delivery id
+  and it is a new delivery that publishes a second event. No host check
+  catches that: GitHub's scheme has no signed timestamp, so the ±300 s skew
+  check does not apply, and the MAC holds. The protections are the secrecy
+  of the transport (TLS) and of the installation secret; consumers of the
+  event must tolerate a duplicate. A pruned delivery row (30 days) makes its
+  id new again too.
 - **What a `VerifiedDelivery` authenticates: `signed-prefix || body`, nothing
   else.** The body and the vendor timestamp (read by the host from inside the
   signed prefix) are covered by the MAC; the receive time is the host's own
@@ -374,9 +402,14 @@ signs, and is not "the same seal, signed by the relay":
 `crates/beekeeper-relay/src/api/plugins.rs` still loads the host without an
 application-event validator, so a registry holding a webhook entry makes the
 relay refuse to start — it fails closed. `scripts/build-plugins.sh` builds the
-`test-webhook` fixture but puts it in neither registry. Secret storage,
-installations, delivery-id dedupe, relay signing and B1 storage are the
-GitHub plan's work, not this branch's.
+`test-webhook` fixture but puts it in neither registry. Installations, their
+secrets, delivery-id dedupe and B1's atomic event + queue + delivery write
+exist in `beekeeper-db` (`vendor_ingress`); the route, relay signing and the
+GitHub plugin itself do not. So the built-in registry has no GitHub entry
+yet: there is no GitHub component to pin, and a webhook entry would stop the
+relay from starting. When the GitHub plugin and the route land, it goes into
+the built-in registry beside Planning (`build-plugins.sh`'s first-party
+list), not into an operator file.
 
 ## Planning: `beekeeper.planning/1`
 

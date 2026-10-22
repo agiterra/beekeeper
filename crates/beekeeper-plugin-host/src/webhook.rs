@@ -187,9 +187,14 @@ pub enum VerifyError {
 
 /// A delivery whose MAC the host verified. Only
 /// [`crate::WebhookCall::verify`] builds one — its fields are private and it is neither `Default`, `Clone` nor
-/// `Deserialize` — and `project` consumes it, so a body reaches a plugin's
-/// `project` only after its MAC matched, and at most once. It is bound to the
-/// plugin and installation it was verified for.
+/// `Deserialize` — so a body reaches a plugin's `project` only after its MAC
+/// matched. It is bound to the plugin and installation it was verified for.
+///
+/// `project` borrows it: after [`crate::InvokeError::Busy`] the caller
+/// retries the same delivery, with the same [`VerifiedDelivery::received_at`]
+/// and so the same event. Nothing here limits a delivery to one projection;
+/// that is the B1 store's (`beekeeper_db::vendor_ingress::record_delivery`),
+/// which dedupes on `(community, installation, delivery id)`.
 ///
 /// **What it authenticates:** that the holder of the installation's secret
 /// produced the MAC over `signed_prefix || body` — those bytes and nothing
@@ -204,6 +209,21 @@ pub enum VerifyError {
 /// changed in transit without failing the MAC. Treat both as routing hints:
 /// never as an authorization input, and dedupe on a delivery id only with
 /// that in mind.
+///
+/// **What B1's dedup does with an unsigned id.** The key is scoped to one
+/// community and one installation. Within it, a delivery id already recorded
+/// `accepted` or `ignored` is a duplicate and writes nothing; one recorded
+/// `rejected` is projected again. Another installation's key is separate,
+/// but a body reaches it only under that installation's secret. An id alone
+/// grants nothing: a request that fails the MAC never writes a delivery row,
+/// so it cannot take or pre-poison a key. The dedup stops a vendor
+/// redelivery and a replay that keeps its id — not a replay of a captured
+/// signed body under a fresh id: GitHub signs no id and no time, so that
+/// replay is a new delivery and publishes a second event, and with no signed
+/// time there is no skew window to bound it. Only TLS and the secrecy of the
+/// installation secret keep a signed body from a replayer; event consumers
+/// must tolerate a duplicate. Once a delivery row is pruned (30 days) its id
+/// is new again too.
 pub struct VerifiedDelivery {
     plugin: String,
     installation: String,

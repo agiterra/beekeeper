@@ -280,7 +280,7 @@ fn project(
     settings: &str,
     body: &[u8],
 ) -> Result<WebhookOutcome, InvokeError> {
-    call.project(verified(call, event, body), delivery(settings))
+    call.project(&verified(call, event, body), delivery(settings))
 }
 
 /// Limits that keep a spinning call in its slot for its whole deadline
@@ -563,12 +563,51 @@ fn no_slot_is_held_between_authenticate_and_project() {
         .verify(plan, SECRET, b"first".to_vec(), NOW)
         .expect("verified");
     assert_eq!(host.running_calls(), 0, "verifying takes no slot");
-    let WebhookOutcome::Accept(event) = call.project(verified, delivery("{}")).expect("ok") else {
+    let WebhookOutcome::Accept(event) = call.project(&verified, delivery("{}")).expect("ok") else {
         panic!("expected accept");
     };
     let content: serde_json::Value = serde_json::from_str(&event.content).expect("json");
     assert_eq!(content["data"]["body"], "first");
     assert_eq!(host.running_calls(), 0);
+}
+
+/// A busy `project` leaves the caller its delivery: the retry projects the
+/// same verified body, and the event keeps the receive time it was verified
+/// at, so it is the same event a first-time projection would have built.
+#[test]
+#[ignore = "requires built plugins: just test-plugins"]
+fn a_busy_project_is_retried_with_the_same_delivery_and_receive_time() {
+    let host = fixture(&format!(
+        "[plugin.limits]\n{SLOW}max_concurrent = 4\nmax_concurrent_per_installation = 1\n"
+    ));
+    let call = host.webhook_call("test-webhook", "inst-a").expect("call");
+    let held = verified(&call, "push", b"retry me");
+    std::thread::scope(|scope| {
+        let spinner = scope.spawn(|| {
+            host.webhook_call("test-webhook", "inst-a")
+                .expect("call")
+                .authenticate(&spinning())
+        });
+        wait_for_running(&host, 1);
+        let busy = call.project(&held, delivery("{}"));
+        assert!(matches!(busy, Err(InvokeError::Busy(_))), "{busy:?}");
+        assert!(spinner.join().expect("thread").is_err());
+    });
+    assert_eq!(host.running_calls(), 0);
+
+    let WebhookOutcome::Accept(event) =
+        call.project(&held, delivery("{}")).expect("the retry runs")
+    else {
+        panic!("expected accept");
+    };
+    assert_eq!(held.received_at(), NOW);
+    assert_eq!(event.created_at, NOW, "the original receive time");
+    let content: serde_json::Value = serde_json::from_str(&event.content).expect("json");
+    assert_eq!(content["data"]["body"], "retry me");
+    // Projecting it once more builds the identical event (same id once the
+    // relay signs it): at most once is the B1 store's job, not this call's.
+    let again = call.project(&held, delivery("{}")).expect("again");
+    assert_eq!(again, WebhookOutcome::Accept(event));
 }
 
 #[test]
@@ -715,7 +754,7 @@ fn the_host_verifies_the_mac_before_project_sees_the_body() {
 
     // The event's type and time are the verified delivery's; the embedder
     // has no field to pass them in.
-    let WebhookOutcome::Accept(event) = call.project(good, delivery("{}")).expect("ok") else {
+    let WebhookOutcome::Accept(event) = call.project(&good, delivery("{}")).expect("ok") else {
         panic!("expected accept");
     };
     assert_eq!(event.created_at, NOW);
@@ -723,7 +762,7 @@ fn the_host_verifies_the_mac_before_project_sees_the_body() {
     // A delivery verified for one installation cannot be projected into another.
     let elsewhere = host.webhook_call("test-webhook", "j").expect("call");
     let error = elsewhere
-        .project(verified(&call, "push", b"hello"), delivery("{}"))
+        .project(&verified(&call, "push", b"hello"), delivery("{}"))
         .unwrap_err();
     assert!(
         matches!(error, InvokeError::Host(ref m) if m.contains("another plugin or installation")),

@@ -6,14 +6,22 @@
 //! [`WebhookCall::max_body_bytes`], hands the plan, the installation's secret,
 //! the body and its receive time to [`WebhookCall::verify`] — the host
 //! computes and compares the MAC — and only then calls
-//! [`WebhookCall::project`] with the [`VerifiedDelivery`] that came back.
+//! [`WebhookCall::project`] with the [`VerifiedDelivery`] that came back,
+//! which it lends and keeps.
 //!
 //! A [`WebhookCall`] holds no slot. The relay-wide, per-plugin and
 //! per-installation slots are taken around each plugin call (`authenticate`,
 //! `project`) and freed when it returns — never across the body read or the
 //! MAC check, so a slow unauthenticated sender cannot hold the relay-wide
 //! slots operation providers share. Either call may be
-//! [`InvokeError::Busy`].
+//! [`InvokeError::Busy`]; a busy `project` leaves the caller its delivery
+//! to retry.
+//!
+//! The retry is the embedder's and bounded: past its deadline, or when the
+//! relay dies before the B1 commit, the delivery was recorded nowhere —
+//! a [`VerifiedDelivery`] lives in memory only — and nothing re-projects
+//! it. No reconciliation exists yet; until one does, only the vendor's own
+//! redelivery (when the relay never answered 2xx) brings it back.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
@@ -450,9 +458,16 @@ impl WebhookCall<'_> {
     /// built and validated; anything the contract forbids is
     /// [`InvokeError::ContractViolation`] and nothing is returned to store.
     /// Holds this call's slots only while the plugin runs.
+    ///
+    /// `verified` is borrowed, so the caller still holds the delivery when
+    /// this returns. [`InvokeError::Busy`] is refused before the plugin runs;
+    /// the caller may retry the same delivery, and the retry's event carries
+    /// the original [`VerifiedDelivery::received_at`] — nothing re-stamps it.
+    /// Projecting one delivery twice yields the same event, so publishing at
+    /// most once is the B1 store's delivery key, not this call's.
     pub fn project(
         &self,
-        verified: VerifiedDelivery,
+        verified: &VerifiedDelivery,
         delivery: Delivery<'_>,
     ) -> Result<WebhookOutcome, InvokeError> {
         if !verified.is_for(&self.plugin.entry.name, &self.installation) {
