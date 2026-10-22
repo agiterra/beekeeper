@@ -6,8 +6,9 @@
 # test-faults) on its own throwaway Postgres and Redis containers, started on
 # free loopback ports and removed on exit, so it shares no database or Redis
 # with the dev stack or anything else running here. (`--shared-dev` instead
-# uses a scratch database in the dev `buzz-postgres`, dropped on exit, and
-# Redis logical DB 13 of `buzz-redis`.) TWO host→community mappings on one
+# uses a scratch database in the dev Postgres, dropped on exit, and Redis
+# logical DB 13 — `buzz-postgres` / `buzz-redis` unless
+# scripts/lib/dev-services.sh names others.) TWO host→community mappings on one
 # relay:
 #
 #   localhost:<port>  → community A   (RELAY_URL)
@@ -65,12 +66,21 @@ if [[ "${DEDICATED}" == true ]]; then
   REDIS_PORT="$(free_port)"
   REDIS_URL_VALUE="redis://127.0.0.1:${REDIS_PORT}/0"
 else
-  PG_CONTAINER="buzz-postgres"
+  # shellcheck source=lib/dev-services.sh
+  source "${ROOT}/scripts/lib/dev-services.sh"
+  PG_CONTAINER="${BEEKEEPER_DEV_POSTGRES_CONTAINER}"
   REDIS_CONTAINER=""
-  PG_PORT=5432
-  REDIS_URL_VALUE="redis://localhost:6379/13"
+  PG_PORT="${BEEKEEPER_DEV_POSTGRES_PORT}"
+  REDIS_URL_VALUE="$(dev_redis_url 13)"
 fi
-pg() { docker exec -e PGPASSWORD=buzz_dev "${PG_CONTAINER}" psql -U buzz -q "$@"; }
+# Over TCP, never the unix socket. On first boot the postgres image runs a
+# temporary init server that listens only on the socket, answers queries,
+# then shuts down and restarts as the real one — so a socket probe reports
+# ready too early and the CREATE DATABASE after it can land on a server that
+# is going away. The init server never listens on TCP.
+pg() { docker exec -e PGPASSWORD=buzz_dev "${PG_CONTAINER}" psql -h 127.0.0.1 -U buzz -q "$@"; }
+# The published port, from this side, as the relay will reach it.
+host_port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 RELAY_PID=""
 cleanup() {
@@ -108,12 +118,21 @@ if [[ "${DEDICATED}" == true ]]; then
     postgres:17-alpine >/dev/null
   docker run -d --rm --name "${REDIS_CONTAINER}" -p "127.0.0.1:${REDIS_PORT}:6379" \
     redis:7-alpine >/dev/null
+  ready=false
   for _ in $(seq 1 60); do
-    pg -d postgres -c "SELECT 1" >/dev/null 2>&1 \
-      && docker exec "${REDIS_CONTAINER}" redis-cli ping >/dev/null 2>&1 && break
+    if pg -d postgres -c "SELECT 1" >/dev/null 2>&1 && host_port_open "${PG_PORT}" \
+      && docker exec "${REDIS_CONTAINER}" redis-cli ping >/dev/null 2>&1 \
+      && host_port_open "${REDIS_PORT}"; then
+      ready=true
+      break
+    fi
     sleep 1
   done
-  pg -d postgres -c "SELECT 1" >/dev/null
+  if [[ "${ready}" != true ]]; then
+    log "dedicated postgres/redis not ready over TCP within 60s"
+    docker logs "${PG_CONTAINER}" 2>&1 | tail -20
+    exit 1
+  fi
 fi
 PORT="$(free_port)"
 log "scratch database ${DB_NAME}, relay on :${PORT}"
