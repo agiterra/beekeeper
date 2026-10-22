@@ -282,6 +282,16 @@ test.describe("project planning (live relay)", () => {
       await expect(
         page.getByTestId(`planning-row-status-${issueId}`),
       ).toHaveAccessibleName(/Canceled/, { timeout: 60_000 });
+      // The capture is evidence: take it once a writer's access has resolved
+      // after the reload, not while the screen still says it is checking.
+      await expect(page.getByTestId("planning-view")).toHaveAttribute(
+        "data-access",
+        "writable",
+        { timeout: 30_000 },
+      );
+      await expect(
+        page.getByText("Checking whether you can edit"),
+      ).toBeHidden();
       mkdirSync("test-results/planning", { recursive: true });
       await waitForAnimations(page);
       await page.screenshot({

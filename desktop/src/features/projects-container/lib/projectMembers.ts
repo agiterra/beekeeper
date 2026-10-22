@@ -109,7 +109,13 @@ export async function fetchProjectRoster(
 ): Promise<ProjectMember[]> {
   // The local General placeholder has no owner/coordinate to query.
   if (!project.owner) return project.members;
-  const events = await relayClient.fetchEvents({
+  // Over `POST /query`, not a WebSocket REQ. Every project screen's write
+  // access waits on this read, and on a cold load the socket's read budget
+  // (relaySendBudget.ts: 17 reads per 5 s) is already spent replaying the
+  // app's live subscriptions, so a REQ here queued for the next window:
+  // Planning said "Checking whether you can edit…" for ~5 s after every
+  // reload (measured live, 2026-10-22).
+  const events = await relayClient.fetchEventsCoalesced({
     kinds: [KIND_PROJECT_MEMBERS],
     "#d": [project.address],
     limit: 1,

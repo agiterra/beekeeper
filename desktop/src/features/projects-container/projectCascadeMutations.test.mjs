@@ -45,9 +45,9 @@ function setupStubs({ failing = new Set(), roster = [] } = {}) {
   // A non-creator delete resolves the project roster before it is allowed
   // through, so the kind:39010 read has to be answerable here. `roster` is
   // the projection's `p` tags; an empty list is a project whose only owner
-  // is its creator.
-  const originalFetchEvents = relayClient.fetchEvents;
-  relayClient.fetchEvents = async () => [
+  // is its creator. The roster is read over POST /query (fetchEventsCoalesced).
+  const originalFetchEventsCoalesced = relayClient.fetchEventsCoalesced;
+  relayClient.fetchEventsCoalesced = async () => [
     {
       id: "roster",
       pubkey: "f".repeat(64),
@@ -66,7 +66,7 @@ function setupStubs({ failing = new Set(), roster = [] } = {}) {
     teardown: () => {
       delete globalThis.window.__TAURI_INTERNALS__;
       relayClient.publishEvent = originalPublishEvent;
-      relayClient.fetchEvents = originalFetchEvents;
+      relayClient.fetchEventsCoalesced = originalFetchEventsCoalesced;
     },
   };
 }

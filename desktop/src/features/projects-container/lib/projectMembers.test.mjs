@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 
+import { relayClient } from "@/shared/api/relayClient";
 import {
   buildPutRosterTags,
   buildRemoveRosterTags,
+  fetchProjectRoster,
   parseRosterEventMembers,
   rosterWithOwner,
 } from "./projectMembers.ts";
@@ -105,4 +107,33 @@ test("rosterWithOwner omits the creator for the ownerless local General", () => 
   assert.deepEqual(entries, [
     { pubkey: ALICE, role: "collaborator", isCreator: false },
   ]);
+});
+
+// The roster gates every project screen's write access. A WebSocket REQ for it
+// queued behind the socket's read budget on a cold load (~5 s of "Checking
+// whether you can edit…" in Planning), so it goes over the coalesced
+// `POST /query` path and never touches the socket.
+test("fetchProjectRoster reads the newest projection over POST /query, not a socket REQ", async () => {
+  const filters = [];
+  mock.method(relayClient, "fetchEventsCoalesced", (filter) => {
+    filters.push(filter);
+    return Promise.resolve([
+      { ...makeRosterEvent([["p", ALICE, "", "viewer"]]), created_at: 100 },
+      { ...makeRosterEvent([["p", BOB, "", "collaborator"]]), created_at: 200 },
+    ]);
+  });
+  mock.method(relayClient, "fetchEvents", () => {
+    throw new Error("the roster read must not use a WebSocket REQ");
+  });
+  try {
+    const members = await fetchProjectRoster({
+      owner: OWNER,
+      address: ADDRESS,
+      members: [],
+    });
+    assert.deepEqual(filters, [{ kinds: [39010], "#d": [ADDRESS], limit: 1 }]);
+    assert.deepEqual(members, [{ pubkey: BOB, role: "collaborator" }]);
+  } finally {
+    mock.reset();
+  }
 });
