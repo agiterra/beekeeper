@@ -530,3 +530,233 @@ fn main_starts_the_worker_outside_any_feature_gate() {
         "the worker start is not inside the push gateway gate"
     );
 }
+
+// ── end to end: plugin host seal -> relay signature -> B1 -> dispatch ──────
+
+/// The built `test-webhook` component (`scripts/build-plugins.sh`). Fails,
+/// never skips, when it is missing: this test proves the host's seal.
+fn webhook_fixture() -> std::path::PathBuf {
+    let dir = std::env::var_os("BEEKEEPER_PLUGIN_ARTIFACTS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plugins")
+        });
+    let file = dir.join("test-webhook.wasm");
+    assert!(
+        file.exists(),
+        "no built webhook fixture at {} — run scripts/build-plugins.sh or set \
+         BEEKEEPER_PLUGIN_ARTIFACTS",
+        file.display()
+    );
+    file
+}
+
+/// A host with the `test-webhook` component, granted `com.example`, and an
+/// application-event validator standing in for ingest's (B1 runs the real
+/// one on the signed event).
+fn webhook_host() -> beekeeper_plugin_host::PluginHost {
+    let file = webhook_fixture();
+    let sha = beekeeper_plugin_host::sha256_hex(&std::fs::read(&file).expect("read fixture"));
+    let text = format!(
+        "[[plugin]]\nname = \"test-webhook\"\nworld = \"webhook-plugin@1\"\npath = \"{}\"\n\
+         sha256 = \"{sha}\"\n[plugin.grants]\ntype_prefix = \"com.example\"\n",
+        file.display()
+    );
+    let registry = beekeeper_plugin_host::Registry::from_toml(&text, std::path::Path::new("/"))
+        .expect("registry");
+    let validator = beekeeper_plugin_host::DraftKind::new(
+        &[],
+        Arc::new(|tags: &[Vec<String>], _content: &str| {
+            let count = |key: &str| tags.iter().filter(|t| t[0] == key).count();
+            if count("h") != 1 || count("L") != 1 || count("l") != 1 {
+                return Err("requires exactly one h, L and l tag".to_owned());
+            }
+            Ok(beekeeper_plugin_host::DraftReferences::default())
+        }),
+    );
+    beekeeper_plugin_host::PluginHost::load_with(
+        &registry,
+        beekeeper_plugin_host::HostConfig {
+            validators: beekeeper_plugin_host::DraftValidators::new(),
+            application_event: Some(validator),
+        },
+    )
+    .expect("webhook host loads")
+}
+
+const WEBHOOK_SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+/// Run one signed `push` delivery through the host for `installation` and
+/// sign the sealed event with `signer`, as the relay's ingress will.
+fn sealed_push(
+    host: &beekeeper_plugin_host::PluginHost,
+    installation: &beekeeper_db::vendor_ingress::VendorInstallation,
+    signer: &Keys,
+) -> nostr::Event {
+    use beekeeper_plugin_host::webhook::{Header, WebhookOutcome};
+    use hmac::{Hmac, KeyInit, Mac};
+    let body = br#"{"ref":"refs/heads/main"}"#;
+    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(WEBHOOK_SECRET).expect("key");
+    mac.update(body);
+    let signature = hex::encode(mac.finalize().into_bytes());
+    let headers = [
+        ("x-signature", signature.as_str()),
+        ("x-delivery", "72d3162e-cc78-11e3-81ab-4c9367dc0958"),
+        ("x-event", "push"),
+    ]
+    .map(|(name, value)| Header {
+        name: name.to_owned(),
+        value: value.as_bytes().to_vec(),
+    });
+    let call = host
+        .webhook_call("test-webhook", &installation.id.to_string())
+        .expect("webhook call");
+    let plan = call
+        .authenticate(&headers)
+        .expect("authenticate ran")
+        .expect("auth plan");
+    let received_at = u64::try_from(Utc::now().timestamp()).expect("positive time");
+    let verified = call
+        .verify(plan, WEBHOOK_SECRET, body.to_vec(), received_at)
+        .expect("MAC verifies");
+    let channel = installation.channel_id.to_string();
+    let WebhookOutcome::Accept(sealed) = call
+        .project(
+            &verified,
+            beekeeper_plugin_host::Delivery {
+                channel: &channel,
+                settings_json: "{}",
+                headers: &[],
+            },
+        )
+        .expect("projected")
+    else {
+        panic!("the fixture accepts push");
+    };
+    EventBuilder::new(
+        Kind::Custom(u16::try_from(sealed.kind).expect("kind fits")),
+        sealed.content,
+    )
+    .tags(
+        sealed
+            .tags
+            .into_iter()
+            .map(|tag| Tag::parse(tag).expect("sealed tag")),
+    )
+    .custom_created_at(nostr::Timestamp::from(sealed.created_at))
+    .sign_with_keys(signer)
+    .expect("sign sealed event")
+}
+
+impl Fixture {
+    /// A `test-webhook` installation into this fixture's channel; returns
+    /// it and a fixture whose workflows name it.
+    async fn with_installation(self) -> (Self, beekeeper_db::vendor_ingress::VendorInstallation) {
+        let installation = self
+            .state
+            .db
+            .create_vendor_installation(
+                self.community,
+                &beekeeper_db::vendor_ingress::NewInstallation {
+                    plugin: "test-webhook",
+                    channel_id: self.channel_id,
+                    created_by: &self.owner.public_key().to_bytes(),
+                    secret: WEBHOOK_SECRET,
+                    settings: &serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("create installation");
+        let fx = Fixture {
+            installation: installation.id,
+            ..self
+        };
+        (fx, installation)
+    }
+}
+
+fn accepted<'a>(
+    id: &'a str,
+    event: &'a nostr::Event,
+) -> beekeeper_db::vendor_ingress::Delivery<'a> {
+    beekeeper_db::vendor_ingress::Delivery {
+        delivery_id: id,
+        vendor_event: "push",
+        plugin_digest: &[9_u8; 32],
+        disposition: beekeeper_db::vendor_ingress::DeliveryDisposition::Accept { event },
+    }
+}
+
+/// The whole slice: a delivery the plugin host verified and sealed, signed
+/// with the relay's key and recorded at B1, is claimed by the real worker and
+/// admitted against an `application_event` workflow naming the installation.
+/// A foreign-signed copy of the same seal never reaches the queue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires Postgres, Redis and the built test-webhook plugin"]
+async fn a_sealed_webhook_delivery_recorded_at_b1_starts_a_run() {
+    let (fx, installation) = fixture().await.with_installation().await;
+    let workflow = fx.workflow("on-push", "com.example.push").await;
+    let host = webhook_host();
+    let relay = fx.state.relay_keypair.clone();
+    let relay_pk = relay.public_key();
+
+    let forged = sealed_push(&host, &installation, &Keys::generate());
+    let refused = fx
+        .state
+        .db
+        .record_vendor_delivery(&installation, &relay_pk, &accepted("forged", &forged))
+        .await
+        .expect_err("a foreign-signed seal is refused at B1");
+    assert!(
+        refused.to_string().contains("not signed by the relay"),
+        "{refused}"
+    );
+
+    let event = sealed_push(&host, &installation, &relay);
+    let source: Vec<&[String]> = event
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice())
+        .filter(|parts| parts[0] == "beekeeper:source")
+        .collect();
+    assert_eq!(
+        source,
+        vec![
+            &[
+                "beekeeper:source".to_owned(),
+                "test-webhook".to_owned(),
+                installation.id.to_string()
+            ][..]
+        ],
+        "the host seals the installation as the source"
+    );
+    let outcome = fx
+        .state
+        .db
+        .record_vendor_delivery(&installation, &relay_pk, &accepted("genuine", &event))
+        .await
+        .expect("record at B1");
+    let beekeeper_db::vendor_ingress::DeliveryOutcome::Accepted(stored) = outcome else {
+        panic!("expected Accepted, got {outcome:?}");
+    };
+
+    fx.drain().await;
+    let runs = fx.runs(workflow).await;
+    assert_eq!(runs.len(), 1, "exactly one run");
+    assert_eq!(
+        runs[0].trigger_event_id.as_deref(),
+        Some(event.id.as_bytes().as_slice())
+    );
+    let outcomes = fx.outcomes(&stored).await;
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].disposition, "admitted");
+    assert_eq!(outcomes[0].run_id, Some(runs[0].id));
+    assert_eq!(fx.queue(&stored).await.0, "done");
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM workflow_dispatch_queue WHERE community_id = $1")
+            .bind(fx.community.as_uuid())
+            .fetch_one(&fx.pool)
+            .await
+            .expect("count queue");
+    assert_eq!(queued, 1, "the refused forgery never reached the queue");
+}
