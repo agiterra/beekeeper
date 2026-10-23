@@ -1218,6 +1218,25 @@ mod db_tests {
         Utc::now() + chrono::Duration::seconds(secs)
     }
 
+    /// Expire a claim's lease on the database clock. Claiming with a lease
+    /// computed from the host clock (`lease(-1)`) is only expired when the
+    /// host and Postgres clocks agree to within a second, so a skewed host
+    /// made the reclaim tests flaky.
+    async fn expire_lease(pool: &PgPool, community: CommunityId, event_id: &[u8], claim_id: Uuid) {
+        let expired = sqlx::query(
+            "UPDATE workflow_dispatch_queue SET lease_until = now() - interval '1 second' \
+             WHERE community_id = $1 AND event_id = $2 AND claim_id = $3 AND state = 'claimed'",
+        )
+        .bind(community.as_uuid())
+        .bind(event_id)
+        .bind(claim_id)
+        .execute(pool)
+        .await
+        .expect("expire lease")
+        .rows_affected();
+        assert_eq!(expired, 1, "exactly the claimed row's lease is expired");
+    }
+
     /// Insert `n` application events; returns their ids.
     async fn enqueue_events(pool: &PgPool, community: CommunityId, n: usize) -> Vec<Vec<u8>> {
         let mut ids = Vec::with_capacity(n);
@@ -1343,11 +1362,12 @@ mod db_tests {
         let pool = setup_pool().await;
         let community = make_community(&pool).await;
         let ids = enqueue_events(&pool, community, 1).await;
-        let first = claim_dispatch_batch_in(&pool, Some(community), 10, lease(-1))
+        let first = claim_dispatch_batch_in(&pool, Some(community), 10, lease(60))
             .await
             .expect("claim")
             .expect("due row");
         assert_eq!(first.jobs[0].attempt, 1);
+        expire_lease(&pool, community, &ids[0], first.claim_id).await;
         let second = claim_dispatch_batch_in(&pool, Some(community), 10, lease(60))
             .await
             .expect("reclaim")
@@ -1461,11 +1481,12 @@ mod db_tests {
         .execute(&pool)
         .await
         .expect("advance attempts");
-        let batch = claim_dispatch_batch_in(&pool, Some(community), 10, lease(-1))
+        let batch = claim_dispatch_batch_in(&pool, Some(community), 10, lease(60))
             .await
             .expect("claim")
             .expect("final attempt");
         assert_eq!(batch.jobs[0].attempt, MAX_DISPATCH_ATTEMPTS);
+        expire_lease(&pool, community, &ids[0], batch.claim_id).await;
         assert!(fail_exhausted_dispatches(&pool).await.expect("sweep") >= 1);
         assert_eq!(
             queue_state(&pool, community, &ids[0]).await,
@@ -1534,7 +1555,7 @@ mod db_tests {
         let second = make_workflow(&pool, community).await;
         let late = make_workflow(&pool, community).await;
         let ids = enqueue_events(&pool, community, 1).await;
-        let batch = claim_dispatch_batch_in(&pool, Some(community), 10, lease(-1))
+        let batch = claim_dispatch_batch_in(&pool, Some(community), 10, lease(60))
             .await
             .expect("claim")
             .expect("due");
@@ -1545,6 +1566,7 @@ mod db_tests {
                 .expect("freeze"),
             FreezeOutcome::Frozen
         );
+        expire_lease(&pool, community, &ids[0], batch.claim_id).await;
         // A stale claim cannot freeze or touch the row.
         let retry = claim_dispatch_batch_in(&pool, Some(community), 10, lease(60))
             .await
