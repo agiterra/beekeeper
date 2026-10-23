@@ -717,10 +717,12 @@ impl WorkflowEngine {
     /// Dispatch one claimed `workflow_dispatch_queue` event.
     ///
     /// On the first claim the candidates are looked up and frozen: by channel
-    /// for a kind:50000 application event (every enabled `application_event`
-    /// workflow in the event's channel, plus any definition that no longer
-    /// parses, so its skip is recorded), by project for a kind:46008 CI
-    /// result (`list_enabled_ci_result_workflows`). Later claims reuse the
+    /// for a kind:50000 application event (`list_dispatch_channel_candidates`:
+    /// every enabled `application_event` workflow in the event's channel,
+    /// plus any definition with no `trigger.on`, so its skip is recorded), by
+    /// project for a kind:46008 CI result (`list_enabled_ci_result_workflows`).
+    /// More candidates than `DISPATCH_CANDIDATE_LIMIT` is an error (the row
+    /// is retried), never a truncated freeze. Later claims reuse the
     /// frozen set, so a workflow enabled after the first claim never joins.
     /// Each still-`pending` candidate is then admitted at most once; a
     /// workflow deleted or disabled since freezing is skipped.
@@ -831,20 +833,24 @@ impl WorkflowEngine {
                 Ok(result) => result,
                 Err(error) => return Ok(Err(format!("ci_result_undecodable: {error}"))),
             };
-            let workflows = self
+            let lookup = self
                 .db
                 .list_enabled_ci_result_workflows(community_id, &result.identity.project)
                 .await?;
+            let workflows = complete_candidates(lookup, &event.event.id.to_hex())?;
             return Ok(Ok(workflows.into_iter().map(|w| w.id).collect()));
         }
         let Some(channel_id) = event.channel_id else {
             return Ok(Ok(Vec::new()));
         };
-        // Uncached on purpose: the frozen set is a durable record.
-        let workflows = self
+        // Uncached on purpose: the frozen set is a durable record. Prefiltered
+        // in SQL to application_event (and unparseable) definitions, so other
+        // trigger kinds cannot crowd candidates out of the limit.
+        let lookup = self
             .db
-            .list_enabled_channel_workflows(community_id, channel_id)
+            .list_dispatch_channel_candidates(community_id, channel_id)
             .await?;
+        let workflows = complete_candidates(lookup, &event.event.id.to_hex())?;
         Ok(Ok(workflows
             .into_iter()
             .filter(|workflow| {
@@ -1713,6 +1719,30 @@ fn definition_changed(workflow_id: Uuid, current: &[u8]) -> Admission {
 }
 
 /// Returns `true` if the trigger type matches the given event kind.
+/// The candidate set to freeze, or a retryable error when it would have been
+/// truncated: a frozen set is durable, so a partial one would silently and
+/// permanently drop workflows.
+fn complete_candidates(
+    lookup: beekeeper_db::workflow::CandidateLookup,
+    event_hex: &str,
+) -> Result<Vec<beekeeper_db::workflow::WorkflowRecord>, WorkflowError> {
+    match lookup {
+        beekeeper_db::workflow::CandidateLookup::Complete(workflows) => Ok(workflows),
+        beekeeper_db::workflow::CandidateLookup::Overflow { count, limit } => {
+            tracing::error!(
+                event = %event_hex,
+                count,
+                limit,
+                "workflow dispatch: more candidate workflows than the limit; \
+                 not freezing a truncated set"
+            );
+            Err(WorkflowError::Database(format!(
+                "{count} candidate workflows exceed the dispatch limit of {limit}"
+            )))
+        }
+    }
+}
+
 fn trigger_matches_event(trigger: &TriggerDef, kind_u32: u32) -> bool {
     use beekeeper_core::kind::{KIND_REACTION, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_DIFF};
     match trigger {
@@ -2211,6 +2241,26 @@ steps:
         );
         // A filter naming a field the event does not carry does not fire.
         assert!(!should_fire_workflow(&def(r#"trigger_data.missing == "x""#), &ctx, id).await);
+    }
+
+    #[test]
+    fn an_overflowing_candidate_lookup_is_retryable_never_truncated() {
+        let error = complete_candidates(
+            beekeeper_db::workflow::CandidateLookup::Overflow {
+                count: 1001,
+                limit: 1000,
+            },
+            "ab",
+        )
+        .expect_err("overflow must not freeze");
+        assert!(matches!(error, WorkflowError::Database(_)), "{error:?}");
+        assert!(error.to_string().contains("1001"), "{error}");
+        let complete = complete_candidates(
+            beekeeper_db::workflow::CandidateLookup::Complete(vec![]),
+            "ab",
+        )
+        .expect("complete");
+        assert!(complete.is_empty());
     }
 
     #[test]

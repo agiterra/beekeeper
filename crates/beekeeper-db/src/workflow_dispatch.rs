@@ -1845,14 +1845,29 @@ mod db_tests {
         insert(community, ci, Some(format!("{project}-other"))).await;
         insert(community, ci, None).await;
         insert(other_community, ci, Some(project.clone())).await;
-        let found: Vec<Uuid> =
-            crate::workflow::list_enabled_ci_result_workflows(&pool, community, &project)
+        let crate::workflow::CandidateLookup::Complete(found) =
+            crate::workflow::list_enabled_ci_result_workflows(&pool, community, &project, 10)
                 .await
                 .expect("lookup")
-                .into_iter()
-                .map(|w| w.id)
-                .collect();
+        else {
+            panic!("one candidate is not an overflow");
+        };
+        let found: Vec<Uuid> = found.into_iter().map(|w| w.id).collect();
         assert_eq!(found, vec![wanted]);
+
+        // Above the limit: an overflow with the true count, never a prefix.
+        insert(community, ci, Some(project.clone())).await;
+        let lookup =
+            crate::workflow::list_enabled_ci_result_workflows(&pool, community, &project, 1)
+                .await
+                .expect("lookup");
+        assert!(
+            matches!(
+                lookup,
+                crate::workflow::CandidateLookup::Overflow { count: 2, limit: 1 }
+            ),
+            "{lookup:?}"
+        );
     }
 
     #[tokio::test]

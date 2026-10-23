@@ -4287,14 +4287,39 @@ impl Db {
         workflow::list_enabled_channel_workflows(&self.pool, community_id, channel_id).await
     }
 
-    /// Every enabled `ci_result` definition bound to `project_ref`.
+    /// Every enabled `ci_result` definition bound to `project_ref`, up to
+    /// [`workflow::DISPATCH_CANDIDATE_LIMIT`]; overflow is reported, never
+    /// truncated.
     #[datastore_span(name = "list_enabled_ci_result_workflows", system = "postgresql")]
     pub async fn list_enabled_ci_result_workflows(
         &self,
         community_id: CommunityId,
         project_ref: &str,
-    ) -> Result<Vec<workflow::WorkflowRecord>> {
-        workflow::list_enabled_ci_result_workflows(&self.pool, community_id, project_ref).await
+    ) -> Result<workflow::CandidateLookup> {
+        workflow::list_enabled_ci_result_workflows(
+            &self.pool,
+            community_id,
+            project_ref,
+            workflow::DISPATCH_CANDIDATE_LIMIT,
+        )
+        .await
+    }
+
+    /// See [`workflow::list_dispatch_channel_candidates`], at
+    /// [`workflow::DISPATCH_CANDIDATE_LIMIT`].
+    #[datastore_span(name = "list_dispatch_channel_candidates", system = "postgresql")]
+    pub async fn list_dispatch_channel_candidates(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+    ) -> Result<workflow::CandidateLookup> {
+        workflow::list_dispatch_channel_candidates(
+            &self.pool,
+            community_id,
+            channel_id,
+            workflow::DISPATCH_CANDIDATE_LIMIT,
+        )
+        .await
     }
 
     /// See [`vendor_ingress::create_installation`].

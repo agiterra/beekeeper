@@ -613,7 +613,7 @@ pub async fn list_enabled_channel_workflows(
           AND channel_id = $2
           AND status = 'active'
           AND enabled = TRUE
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id
         LIMIT $3
         "#,
     )
@@ -624,6 +624,95 @@ pub async fn list_enabled_channel_workflows(
     .await?;
 
     rows.into_iter().map(row_to_workflow_record).collect()
+}
+
+/// Most candidate workflows the dispatch queue freezes for one event.
+pub const DISPATCH_CANDIDATE_LIMIT: i64 = LIST_MAX_LIMIT;
+
+/// A dispatch candidate lookup: the complete set, or proof it would have
+/// been truncated. The dispatch queue freezes its candidate set durably, so
+/// a truncated set must never be returned as if it were complete.
+#[derive(Debug)]
+pub enum CandidateLookup {
+    /// Every matching workflow (at most the limit).
+    Complete(Vec<WorkflowRecord>),
+    /// More than `limit` workflows match; nothing is returned.
+    Overflow {
+        /// How many match.
+        count: i64,
+        /// The limit asked for.
+        limit: i64,
+    },
+}
+
+/// [`CandidateLookup::Complete`] for `rows` fetched with `LIMIT limit + 1`,
+/// or `None` when they overflowed (the caller counts).
+fn complete_or_overflow(
+    rows: Vec<sqlx::postgres::PgRow>,
+    limit: i64,
+) -> Result<Option<CandidateLookup>> {
+    if rows.len() as i64 > limit {
+        return Ok(None);
+    }
+    Ok(Some(CandidateLookup::Complete(
+        rows.into_iter()
+            .map(row_to_workflow_record)
+            .collect::<Result<_>>()?,
+    )))
+}
+
+/// The dispatch queue's candidate lookup for a kind:50000 application
+/// event in `channel_id`: active, enabled workflows of the channel whose
+/// `trigger.on` is `application_event`, plus any with no `trigger.on` value
+/// at all (missing trigger, non-object definition, JSON null): those cannot
+/// parse, and the dispatcher records their skip. A definition naming any
+/// other `on` is left out even if it would not parse — it was never an
+/// application-event candidate. Filtered in SQL so workflows of other
+/// trigger kinds cannot crowd matching ones out of the limit. More than `limit` matches is
+/// [`CandidateLookup::Overflow`], never a truncated list.
+///
+/// The live trigger path keeps [`list_enabled_channel_workflows`].
+pub async fn list_dispatch_channel_candidates(
+    pool: &PgPool,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    limit: i64,
+) -> Result<CandidateLookup> {
+    // One predicate for the fetch and the overflow count.
+    macro_rules! matches_sql {
+        () => {
+            "community_id = $1 AND channel_id = $2 \
+             AND status = 'active' AND enabled = TRUE \
+             AND (definition->'trigger'->>'on' IS NULL \
+                  OR definition->'trigger'->>'on' = 'application_event')"
+        };
+    }
+    let limit = limit.max(1);
+    let rows = sqlx::query(concat!(
+        "SELECT id, community_id, name, owner_pubkey, channel_id, definition, \
+                definition_hash, project_ref, status::text AS status, enabled, \
+                created_at, updated_at \
+         FROM workflows WHERE ",
+        matches_sql!(),
+        " ORDER BY created_at DESC, id LIMIT $3"
+    ))
+    .bind(community_id.as_uuid())
+    .bind(channel_id)
+    .bind(limit + 1)
+    .fetch_all(pool)
+    .await?;
+    if let Some(complete) = complete_or_overflow(rows, limit)? {
+        return Ok(complete);
+    }
+    let count: i64 = sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM workflows WHERE ",
+        matches_sql!()
+    ))
+    .bind(community_id.as_uuid())
+    .bind(channel_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(CandidateLookup::Overflow { count, limit })
 }
 
 /// List all active, enabled workflows with a `schedule` trigger across all channels.
@@ -816,36 +905,50 @@ pub async fn list_enabled_ref_updated_workflows(
     rows.into_iter().map(row_to_workflow_record).collect()
 }
 
-/// Every enabled `ci_result` definition bound to one project coordinate.
-///
-/// The candidate lookup for a kind:46008 CI result, which has no channel:
-/// the result names its project, and a `ci_result` workflow carries the
-/// same coordinate in `project_ref`.
+/// Every enabled `ci_result` definition bound to one project coordinate:
+/// the dispatch queue's candidate lookup for a kind:46008 CI result, which
+/// has no channel. The result names its project, and a `ci_result` workflow
+/// carries the same coordinate in `project_ref`. More than `limit` matches
+/// is [`CandidateLookup::Overflow`], never a truncated list.
 pub async fn list_enabled_ci_result_workflows(
     pool: &PgPool,
     community_id: CommunityId,
     project_ref: &str,
-) -> Result<Vec<WorkflowRecord>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, community_id, name, owner_pubkey, channel_id, definition, definition_hash,
-               project_ref, status::text AS status, enabled, created_at, updated_at
-        FROM workflows
-        WHERE community_id = $1
-          AND project_ref = $2
-          AND status = 'active'
-          AND enabled = TRUE
-          AND definition->'trigger'->>'on' = 'ci_result'
-        ORDER BY created_at DESC
-        LIMIT $3
-        "#,
-    )
+    limit: i64,
+) -> Result<CandidateLookup> {
+    macro_rules! matches_sql {
+        () => {
+            "community_id = $1 AND project_ref = $2 \
+             AND status = 'active' AND enabled = TRUE \
+             AND definition->'trigger'->>'on' = 'ci_result'"
+        };
+    }
+    let limit = limit.max(1);
+    let rows = sqlx::query(concat!(
+        "SELECT id, community_id, name, owner_pubkey, channel_id, definition, \
+                definition_hash, project_ref, status::text AS status, enabled, \
+                created_at, updated_at \
+         FROM workflows WHERE ",
+        matches_sql!(),
+        " ORDER BY created_at DESC, id LIMIT $3"
+    ))
     .bind(community_id.as_uuid())
     .bind(project_ref)
-    .bind(LIST_MAX_LIMIT)
+    .bind(limit + 1)
     .fetch_all(pool)
     .await?;
-    rows.into_iter().map(row_to_workflow_record).collect()
+    if let Some(complete) = complete_or_overflow(rows, limit)? {
+        return Ok(complete);
+    }
+    let count: i64 = sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM workflows WHERE ",
+        matches_sql!()
+    ))
+    .bind(community_id.as_uuid())
+    .bind(project_ref)
+    .fetch_one(pool)
+    .await?;
+    Ok(CandidateLookup::Overflow { count, limit })
 }
 
 /// Update a workflow's name, definition, and definition_hash.
@@ -3085,6 +3188,88 @@ mod tests {
             ApprovalStatus::Pending,
             "B's approval must remain pending after A is granted"
         );
+    }
+
+    // -- dispatch candidate lookup ----------------------------------------------
+
+    /// Newer workflows of other trigger kinds cannot push an older
+    /// `application_event` workflow out of the limit; a definition with no
+    /// `trigger.on` is kept (its skip is recorded); more matches than the
+    /// limit is an overflow with the true count, never a prefix.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn dispatch_channel_candidates_prefilter_and_refuse_to_truncate() {
+        let pool = setup_pool().await;
+        let community = make_community(&pool).await;
+        let owner = vec![0xe1; 32];
+        ensure_user(&pool, community, &owner)
+            .await
+            .expect("ensure owner");
+        let channel = make_channel(&pool, community, &owner).await;
+        let create = |name: &'static str, def: &'static str| {
+            let pool = pool.clone();
+            let owner = owner.clone();
+            async move {
+                create_workflow(
+                    &pool,
+                    community,
+                    Some(channel),
+                    &owner,
+                    name,
+                    def,
+                    &[0u8; 32],
+                    None,
+                )
+                .await
+                .expect("create workflow")
+            }
+        };
+        let app = r#"{"trigger":{"on":"application_event","type":"com.example.*"},"steps":[]}"#;
+        let matching = create("matching", app).await;
+        let unparseable = create("no-trigger", r#"{"steps":[]}"#).await;
+        for name in ["newer-1", "newer-2", "newer-3"] {
+            create(name, r#"{"trigger":{"on":"message_posted"},"steps":[]}"#).await;
+        }
+        // The shared live-path query, at this limit, would see only newer rows.
+        let newest_two: Vec<Uuid> = list_enabled_channel_workflows(&pool, community, channel)
+            .await
+            .expect("live list")
+            .into_iter()
+            .take(2)
+            .map(|w| w.id)
+            .collect();
+        assert!(!newest_two.contains(&matching));
+
+        let CandidateLookup::Complete(found) =
+            list_dispatch_channel_candidates(&pool, community, channel, 2)
+                .await
+                .expect("lookup")
+        else {
+            panic!("two candidates fit a limit of two");
+        };
+        let mut found: Vec<Uuid> = found.into_iter().map(|w| w.id).collect();
+        found.sort();
+        let mut expected = vec![matching, unparseable];
+        expected.sort();
+        assert_eq!(found, expected);
+
+        let second = create("matching-2", app).await;
+        let lookup = list_dispatch_channel_candidates(&pool, community, channel, 2)
+            .await
+            .expect("lookup");
+        assert!(
+            matches!(lookup, CandidateLookup::Overflow { count: 3, limit: 2 }),
+            "{lookup:?}"
+        );
+        let CandidateLookup::Complete(all) =
+            list_dispatch_channel_candidates(&pool, community, channel, 3)
+                .await
+                .expect("lookup")
+        else {
+            panic!("three candidates fit a limit of three");
+        };
+        assert!(all.iter().any(|w| w.id == second));
+        assert_eq!(all.len(), 3);
     }
 
     // -- SEC-006: disable-on-membership-loss primitive -------------------------
