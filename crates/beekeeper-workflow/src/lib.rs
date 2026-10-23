@@ -131,7 +131,8 @@ pub enum Admission {
     /// (definition parse failure, trigger or filter miss, provenance, owner
     /// authority, definition changed, disabled).
     Skipped(String),
-    /// Transient (a database error): the dispatch queue retries it.
+    /// Transient (a database error, including a failed owner-authority
+    /// lookup): no run was created, and the dispatch queue retries it.
     Retryable(String),
 }
 
@@ -230,6 +231,9 @@ impl WorkflowEngine {
     ///
     /// Any lookup error denies (fail-closed): a removed owner must never keep
     /// exfiltration authority because a membership read happened to fail.
+    /// It denies as [`WorkflowError::AuthorityLookupFailed`], distinct from
+    /// a decided [`WorkflowError::Unauthorized`], so a caller that can retry
+    /// (the dispatch queue) does not record the denial as final.
     pub async fn check_owner_authority(
         &self,
         community_id: CommunityId,
@@ -241,11 +245,7 @@ impl WorkflowEngine {
             .db
             .get_member_role(community_id, channel_id, owner_pubkey)
             .await
-            .map_err(|e| {
-                WorkflowError::Unauthorized(format!(
-                    "owner authority lookup failed (fail-closed): {e}"
-                ))
-            })?;
+            .map_err(|e| WorkflowError::AuthorityLookupFailed(e.to_string()))?;
         if owner_authority_allows(role.as_deref(), def.requires_elevated_authority()) {
             Ok(())
         } else {
@@ -624,15 +624,27 @@ impl WorkflowEngine {
         // event — this per-fire gate is the authoritative, fail-closed
         // check that a removed (or under-privileged, for exfiltration
         // definitions) owner cannot cause a run.
-        if let Err(e) = self
+        match self
             .check_owner_authority(community_id, channel_id, &workflow.owner_pubkey, &def)
             .await
         {
-            tracing::warn!(
-                workflow_id = %workflow.id,
-                "Skipping workflow — owner authority check failed: {e}"
-            );
-            return Admission::Skipped(format!("owner authority: {e}"));
+            Ok(()) => {}
+            // Not a decision: no run now (fail-closed), and the dispatch
+            // queue retries instead of recording a final skip.
+            Err(e @ WorkflowError::AuthorityLookupFailed(_)) => {
+                tracing::warn!(
+                    workflow_id = %workflow.id,
+                    "Deferring workflow — owner authority lookup failed: {e}"
+                );
+                return Admission::Retryable(format!("owner authority: {e}"));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    workflow_id = %workflow.id,
+                    "Skipping workflow — owner authority check failed: {e}"
+                );
+                return Admission::Skipped(format!("owner authority: {e}"));
+            }
         }
 
         let trigger_ctx_json = match serde_json::to_value(&trigger_ctx) {

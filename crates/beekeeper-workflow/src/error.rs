@@ -60,10 +60,16 @@ pub enum WorkflowError {
     Database(String),
 
     /// The workflow's owner is not currently authorized to run it (removed
-    /// from the channel, insufficient role for the definition's actions, or
-    /// the authority lookup failed — all deny, fail-closed).
+    /// from the channel, or insufficient role for the definition's actions).
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+
+    /// The owner's current authority could not be read (a database error).
+    /// Still a denial — no run may be created on it (fail-closed) — but not a
+    /// decision: a caller that can retry later (the dispatch queue) should,
+    /// rather than record a final skip.
+    #[error("owner authority lookup failed (fail-closed): {0}")]
+    AuthorityLookupFailed(String),
 
     /// The action is defined but not yet implemented.
     #[error("action not implemented: {0}")]
@@ -89,6 +95,7 @@ impl WorkflowError {
             Self::CapacityExceeded => "capacity_exceeded",
             Self::Database(_) => "database_error",
             Self::Unauthorized(_) => "owner_unauthorized",
+            Self::AuthorityLookupFailed(_) => "owner_authority_lookup_failed",
             Self::NotImplemented(_) => "action_not_implemented",
             Self::SuspensionFailed(_) => "suspension_failed",
         }
@@ -126,5 +133,13 @@ mod tests {
         let conflict = WorkflowError::CiResultConflict("existing event abc".into());
         assert_eq!(conflict.code(), "ci_result_conflict");
         assert!(conflict.to_string().contains("existing event abc"));
+
+        let lookup = WorkflowError::AuthorityLookupFailed("pool timed out".into());
+        assert_eq!(lookup.code(), "owner_authority_lookup_failed");
+        assert_ne!(
+            lookup.code(),
+            WorkflowError::Unauthorized(String::new()).code()
+        );
+        assert!(lookup.to_string().contains("fail-closed"));
     }
 }

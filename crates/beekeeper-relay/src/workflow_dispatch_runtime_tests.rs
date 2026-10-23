@@ -467,6 +467,57 @@ async fn a_partial_admission_retries_only_the_failed_workflow() {
     assert_eq!(fx.queue(&event).await, ("done".to_owned(), 2, None));
 }
 
+/// A failed owner-authority lookup is not a decision: no run is created
+/// (fail-closed), the outcome stays pending and the row goes back to
+/// pending for a retry; once the lookup works the retry admits the run.
+/// The failure is injected by hiding `channel_members`, the table
+/// `get_member_role` reads, for the length of one claim (tests run serially).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires Postgres and Redis"]
+async fn a_failed_authority_lookup_is_retried_not_skipped() {
+    let fx = fixture().await;
+    let workflow = fx.workflow("authority", PUSH).await;
+    let event = fx.relay_event().await;
+    let hidden = format!("channel_members_hidden_{}", Uuid::new_v4().simple());
+    sqlx::raw_sql(AssertSqlSafe(format!(
+        "ALTER TABLE channel_members RENAME TO {hidden}"
+    )))
+    .execute(&fx.pool)
+    .await
+    .expect("hide channel_members");
+    let attempt = run_once(&fx.state, Some(fx.community)).await;
+    sqlx::raw_sql(AssertSqlSafe(format!(
+        "ALTER TABLE {hidden} RENAME TO channel_members"
+    )))
+    .execute(&fx.pool)
+    .await
+    .expect("restore channel_members");
+    assert_eq!(attempt.expect("dispatch batch"), 1);
+
+    assert!(fx.runs(workflow).await.is_empty(), "fail-closed: no run");
+    let (state, attempts, terminal) = fx.queue(&event).await;
+    assert_eq!((state.as_str(), attempts, terminal), ("pending", 1, None));
+    let outcomes = fx.outcomes(&event).await;
+    let pending = disposition_of(&outcomes, workflow);
+    assert_eq!(pending.disposition, "pending", "not a final skip");
+    assert!(
+        pending
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("owner authority lookup failed")),
+        "{:?}",
+        pending.reason
+    );
+
+    fx.make_due(&event).await;
+    fx.drain().await;
+    let runs = fx.runs(workflow).await;
+    assert_eq!(runs.len(), 1, "the retry admits it");
+    let outcomes = fx.outcomes(&event).await;
+    assert_eq!(disposition_of(&outcomes, workflow).disposition, "admitted");
+    assert_eq!(fx.queue(&event).await, ("done".to_owned(), 2, None));
+}
+
 /// A workflow that fails every attempt: after the 8th the row is failed and
 /// kept, the failure is on the outcome, and the healthy admission stands.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
