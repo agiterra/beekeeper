@@ -800,6 +800,26 @@ test-ci-completion: _ensure-services
     DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" BEEKEEPER_TEST_BEE_BIN="${target_dir}/debug/bee" \
         cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
 
+# Workflow dispatch and vendor ingress (docs/plugins.md): the durable queue,
+# B1 delivery recording and the relay worker, including the seal -> B1 ->
+# run_once test, which loads the built test-webhook component. `#[ignore]`d so
+# `test-unit` stays infra-free; run here against a database this run creates,
+# migrates and drops, and Redis logical DB 14. The filter list is
+# scripts/test-workflow-dispatch.sh, which `.woodpecker/gate.yml` runs too.
+test-workflow-dispatch: _ensure-services plugins-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    db="buzz_wf_dispatch_$$_$(date +%s)"
+    source scripts/lib/dev-services.sh
+    cleanup() { dev_pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
+    trap cleanup EXIT
+    dev_pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
+    scratch="$(dev_pg_url "${db}")"
+    DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
+    target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+    DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" REDIS_URL="$(dev_redis_url 14)" \
+        BEEKEEPER_PLUGIN_ARTIFACTS="${target_dir}/plugins" ./scripts/test-workflow-dispatch.sh
+
 # CI-managed turn continuation (docs/CI_MANAGED_CONTINUATION_IMPL.md): composes
 # the real beekeeper-relay binary (its own scratch database, dropped on exit; Redis
 # logical DB 14, never DB 0 or the dev database), the built `bee` CLI, and the

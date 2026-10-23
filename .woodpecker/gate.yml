@@ -175,6 +175,11 @@ steps:
       - ./scripts/plugins-lint.sh clippy
       - cargo test --manifest-path plugins/planning/Cargo.toml
       - BEEKEEPER_PLUGIN_ARTIFACTS="$CARGO_TARGET_DIR/plugins" cargo test -p beekeeper-plugin-host -- --include-ignored
+      # Workflow dispatch and vendor ingress, end to end through the built
+      # test-webhook component (seal -> B1 -> run_once). Needs the plugins
+      # built above. The filter list lives in the script, shared with
+      # `just test-workflow-dispatch`; extend it there.
+      - BEEKEEPER_PLUGIN_ARTIFACTS="$CARGO_TARGET_DIR/plugins" ./scripts/test-workflow-dispatch.sh
 
   desktop:
     image: buzz-ci:1
