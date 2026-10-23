@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::channel::{create_channel_with_id, ChannelType, ChannelVisibility};
+use beekeeper_core::application_event::APPLICATION_EVENT_NAMESPACE;
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 use sqlx::AssertSqlSafe;
 
@@ -31,15 +32,102 @@ fn installation_stub(enabled: bool) -> VendorInstallation {
     }
 }
 
-fn app_event(channel: Uuid, created_at: u64) -> nostr::Event {
+/// What the plugin host seals for a delivery to `installation`, signed by
+/// `relay`: one `h` naming the installation's channel, the namespace and
+/// type labels, and the installation's source tag.
+fn app_event(installation: &VendorInstallation, relay: &Keys, created_at: u64) -> nostr::Event {
+    app_event_with(installation, relay, created_at, |_| {})
+}
+
+/// [`app_event`] with its tags edited before signing.
+fn app_event_with(
+    installation: &VendorInstallation,
+    signer: &Keys,
+    created_at: u64,
+    edit: impl FnOnce(&mut Vec<Vec<String>>),
+) -> nostr::Event {
+    let mut tags = vec![
+        vec!["h".to_owned(), installation.channel_id.to_string()],
+        vec!["L".to_owned(), APPLICATION_EVENT_NAMESPACE.to_owned()],
+        vec![
+            "l".to_owned(),
+            "com.github.push".to_owned(),
+            APPLICATION_EVENT_NAMESPACE.to_owned(),
+        ],
+        vec![
+            SOURCE_TAG.to_owned(),
+            installation.plugin.clone(),
+            installation.id.to_string(),
+        ],
+    ];
+    edit(&mut tags);
     EventBuilder::new(
         Kind::Custom(KIND_APPLICATION_EVENT as u16),
         r#"{"schema":1,"data":{"ref":"refs/heads/main"}}"#,
     )
-    .tags([Tag::parse(["h", &channel.to_string()]).expect("h tag")])
+    .tags(tags.into_iter().map(|t| Tag::parse(t).expect("tag")))
     .custom_created_at(Timestamp::from(created_at))
-    .sign_with_keys(&Keys::generate())
+    .sign_with_keys(signer)
     .expect("sign")
+}
+
+/// Every way an accepted event can fail B1's checks, each built from a
+/// valid event for `installation` signed by `relay`, with its reason.
+fn invalid_accepts(
+    installation: &VendorInstallation,
+    relay: &Keys,
+) -> Vec<(nostr::Event, &'static str)> {
+    let at = 1_700_000_500;
+    let mut tampered = app_event(installation, relay, at);
+    tampered.content = r#"{"schema":1,"data":{"ref":"refs/heads/evil"}}"#.to_owned();
+    vec![
+        (
+            app_event(installation, &Keys::generate(), at),
+            "not signed by the relay",
+        ),
+        (tampered, "invalid id or signature"),
+        (
+            app_event_with(installation, relay, at, |tags| {
+                tags[0][1] = Uuid::new_v4().to_string();
+            }),
+            "installation's channel",
+        ),
+        (
+            app_event_with(installation, relay, at, |tags| tags[3][1] = "gitlab".into()),
+            "does not name this installation",
+        ),
+        (
+            app_event_with(installation, relay, at, |tags| {
+                tags[3][2] = Uuid::new_v4().to_string();
+            }),
+            "does not name this installation",
+        ),
+        (
+            app_event_with(installation, relay, at, |tags| {
+                tags.remove(3);
+            }),
+            "no source tag",
+        ),
+        (
+            app_event_with(installation, relay, at, |tags| {
+                let source = tags[3].clone();
+                tags.push(source);
+            }),
+            "more than one source tag",
+        ),
+        (
+            app_event_with(installation, relay, at, |tags| {
+                tags[3][2] = "not-a-uuid".into()
+            }),
+            "source tag is malformed",
+        ),
+        (
+            app_event_with(installation, relay, at, |tags| {
+                tags.remove(1);
+            }),
+            "not a valid application event",
+        ),
+    ]
 }
 
 fn accept<'a>(id: &'a str, event: &'a nostr::Event) -> Delivery<'a> {
@@ -76,19 +164,45 @@ fn debug_never_prints_the_secret() {
 #[test]
 fn deliveries_are_validated_before_any_write() {
     let enabled = installation_stub(true);
-    let event = app_event(enabled.channel_id, 1_700_000_000);
-    assert!(validate_delivery(&enabled, &accept("d-1", &event)).is_ok());
-    assert!(validate_delivery(&installation_stub(false), &accept("d-1", &event)).is_err());
-    assert!(validate_delivery(&enabled, &accept("", &event)).is_err());
+    let relay = Keys::generate();
+    let relay_pk = relay.public_key();
+    let event = app_event(&enabled, &relay, 1_700_000_000);
+    assert!(validate_delivery(&enabled, &relay_pk, &accept("d-1", &event)).is_ok());
+    assert!(
+        validate_delivery(&installation_stub(false), &relay_pk, &accept("d-1", &event)).is_err()
+    );
+    assert!(validate_delivery(&enabled, &relay_pk, &accept("", &event)).is_err());
     let long_id = "x".repeat(MAX_DELIVERY_ID_LEN + 1);
-    assert!(validate_delivery(&enabled, &accept(&long_id, &event)).is_err());
+    assert!(validate_delivery(&enabled, &relay_pk, &accept(&long_id, &event)).is_err());
     let mut short_digest = accept("d-1", &event);
     short_digest.plugin_digest = &DIGEST[..31];
-    assert!(validate_delivery(&enabled, &short_digest).is_err());
+    assert!(validate_delivery(&enabled, &relay_pk, &short_digest).is_err());
     let kind_nine = EventBuilder::new(Kind::Custom(9), "hi")
-        .sign_with_keys(&Keys::generate())
+        .sign_with_keys(&relay)
         .expect("sign");
-    assert!(validate_delivery(&enabled, &accept("d-1", &kind_nine)).is_err());
+    assert!(validate_delivery(&enabled, &relay_pk, &accept("d-1", &kind_nine)).is_err());
+}
+
+/// Each refusal names its own check: a valid event passes, and every
+/// single-defect variant fails with that defect's reason.
+#[test]
+fn an_accepted_event_must_be_relay_signed_scoped_and_sourced() {
+    let installation = installation_stub(true);
+    let relay = Keys::generate();
+    let relay_pk = relay.public_key();
+    let valid = app_event(&installation, &relay, 1_700_000_500);
+    validate_delivery(&installation, &relay_pk, &accept("d-1", &valid)).expect("valid event");
+    // The source tag's installation is a UUID: case does not matter.
+    let upper = app_event_with(&installation, &relay, 1_700_000_500, |tags| {
+        tags[3][2] = tags[3][2].to_uppercase();
+    });
+    validate_delivery(&installation, &relay_pk, &accept("d-1", &upper)).expect("upper-case uuid");
+    for (event, reason) in invalid_accepts(&installation, &relay) {
+        let error = validate_delivery(&installation, &relay_pk, &accept("d-1", &event))
+            .expect_err(reason)
+            .to_string();
+        assert!(error.contains(reason), "expected {reason:?}, got {error:?}");
+    }
 }
 
 #[test]
@@ -106,6 +220,7 @@ struct Fx {
     pool: PgPool,
     community: CommunityId,
     installation: VendorInstallation,
+    relay: Keys,
 }
 
 async fn fixture() -> Fx {
@@ -157,6 +272,7 @@ async fn fixture() -> Fx {
         pool,
         community,
         installation,
+        relay: Keys::generate(),
     }
 }
 
@@ -211,7 +327,7 @@ impl Fx {
     }
 
     fn event(&self, created_at: u64) -> nostr::Event {
-        app_event(self.installation.channel_id, created_at)
+        app_event(&self.installation, &self.relay, created_at)
     }
 }
 
@@ -230,6 +346,7 @@ async fn accept_writes_event_queue_and_delivery_atomically() {
     let outcome = record_delivery(
         &mut tx,
         &fx.installation,
+        &fx.relay.public_key(),
         &accept(&delivery_id, &rolled_back),
     )
     .await
@@ -253,10 +370,14 @@ async fn accept_writes_event_queue_and_delivery_atomically() {
     assert!(fx.delivery(&delivery_id).await.is_none());
 
     let event = fx.event(1_700_000_002);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &event))
-            .await
-            .expect("record committed");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &event),
+    )
+    .await
+    .expect("record committed");
     let DeliveryOutcome::Accepted(stored) = outcome else {
         panic!("expected Accepted, got {outcome:?}");
     };
@@ -294,8 +415,13 @@ async fn a_failure_after_the_event_insert_leaves_none_of_the_three() {
     .expect("inject failure");
 
     let event = fx.event(1_700_000_003);
-    let result =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &event)).await;
+    let result = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &event),
+    )
+    .await;
 
     sqlx::raw_sql(AssertSqlSafe(format!(
         "DROP TRIGGER {name} ON vendor_deliveries; DROP FUNCTION {name}();"
@@ -331,17 +457,25 @@ async fn a_duplicate_authenticated_delivery_writes_no_second_event() {
     let fx = fixture().await;
     let delivery_id = Uuid::new_v4().to_string();
     let first = fx.event(1_700_000_010);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &first))
-            .await
-            .expect("first");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &first),
+    )
+    .await
+    .expect("first");
     assert!(matches!(outcome, DeliveryOutcome::Accepted(_)));
 
     let second = fx.event(1_700_000_011);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &second))
-            .await
-            .expect("redelivery");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &second),
+    )
+    .await
+    .expect("redelivery");
     let DeliveryOutcome::Duplicate {
         disposition,
         event_id,
@@ -360,16 +494,21 @@ async fn a_duplicate_authenticated_delivery_writes_no_second_event() {
     let outcome = record_delivery_committed(
         &fx.pool,
         &fx.installation,
+        &fx.relay.public_key(),
         &not_accept(&ignored_id, false, "ping"),
     )
     .await
     .expect("ignore");
     assert!(matches!(outcome, DeliveryOutcome::Ignored));
     let late = fx.event(1_700_000_012);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&ignored_id, &late))
-            .await
-            .expect("accept after ignore");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&ignored_id, &late),
+    )
+    .await
+    .expect("accept after ignore");
     assert!(
         matches!(outcome, DeliveryOutcome::Duplicate { ref disposition, .. } if disposition == "ignored")
     );
@@ -381,12 +520,18 @@ async fn a_duplicate_authenticated_delivery_writes_no_second_event() {
     for n in 0..8_u64 {
         let pool = fx.pool.clone();
         let installation = fx.installation.clone();
+        let relay = fx.relay.clone();
         let racing_id = racing_id.clone();
         tasks.push(tokio::spawn(async move {
-            let event = app_event(installation.channel_id, 1_700_000_100 + n);
-            record_delivery_committed(&pool, &installation, &accept(&racing_id, &event))
-                .await
-                .expect("racing delivery")
+            let event = app_event(&installation, &relay, 1_700_000_100 + n);
+            record_delivery_committed(
+                &pool,
+                &installation,
+                &relay.public_key(),
+                &accept(&racing_id, &event),
+            )
+            .await
+            .expect("racing delivery")
         }));
     }
     let mut accepted = 0;
@@ -412,34 +557,32 @@ async fn a_duplicate_authenticated_delivery_writes_no_second_event() {
 #[ignore = "requires Postgres"]
 async fn a_repeated_projection_of_one_delivery_publishes_and_admits_once() {
     let fx = fixture().await;
-    let relay = Keys::generate();
     let delivery_id = Uuid::new_v4().to_string();
-    let project = || {
-        EventBuilder::new(
-            Kind::Custom(KIND_APPLICATION_EVENT as u16),
-            r#"{"schema":1,"data":{"ref":"refs/heads/main"}}"#,
-        )
-        .tags([Tag::parse(["h", &fx.installation.channel_id.to_string()]).expect("h tag")])
-        .custom_created_at(Timestamp::from(1_700_000_200))
-        .sign_with_keys(&relay)
-        .expect("sign")
-    };
+    let project = || fx.event(1_700_000_200);
     let first = project();
     let retried = project();
     assert_eq!(first.id, retried.id, "one delivery, one event id");
 
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &first))
-            .await
-            .expect("first projection");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &first),
+    )
+    .await
+    .expect("first projection");
     assert!(
         matches!(outcome, DeliveryOutcome::Accepted(_)),
         "{outcome:?}"
     );
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &retried))
-            .await
-            .expect("repeated projection");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &retried),
+    )
+    .await
+    .expect("repeated projection");
     let DeliveryOutcome::Duplicate {
         disposition,
         event_id,
@@ -562,10 +705,14 @@ async fn an_unauthenticated_rejection_does_not_occupy_the_delivery_key() {
     );
 
     let event = fx.event(1_700_000_020);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&guessed_id, &event))
-            .await
-            .expect("genuine delivery");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&guessed_id, &event),
+    )
+    .await
+    .expect("genuine delivery");
     assert!(
         matches!(outcome, DeliveryOutcome::Accepted(_)),
         "{outcome:?}"
@@ -594,6 +741,7 @@ async fn a_rejected_delivery_is_reprojected_by_a_redelivery() {
     let outcome = record_delivery_committed(
         &fx.pool,
         &fx.installation,
+        &fx.relay.public_key(),
         &not_accept(&delivery_id, true, "payload missing repository"),
     )
     .await
@@ -608,6 +756,7 @@ async fn a_rejected_delivery_is_reprojected_by_a_redelivery() {
     let outcome = record_delivery_committed(
         &fx.pool,
         &fx.installation,
+        &fx.relay.public_key(),
         &not_accept(&delivery_id, true, "still malformed"),
     )
     .await
@@ -615,10 +764,14 @@ async fn a_rejected_delivery_is_reprojected_by_a_redelivery() {
     assert!(matches!(outcome, DeliveryOutcome::Rejected));
 
     let event = fx.event(1_700_000_030);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &event))
-            .await
-            .expect("re-projection");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &event),
+    )
+    .await
+    .expect("re-projection");
     assert!(
         matches!(outcome, DeliveryOutcome::Accepted(_)),
         "{outcome:?}"
@@ -633,10 +786,14 @@ async fn a_rejected_delivery_is_reprojected_by_a_redelivery() {
     assert!(fx.queue_present(&event).await);
 
     let again = fx.event(1_700_000_031);
-    let outcome =
-        record_delivery_committed(&fx.pool, &fx.installation, &accept(&delivery_id, &again))
-            .await
-            .expect("redelivery");
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &again),
+    )
+    .await
+    .expect("redelivery");
     assert!(matches!(outcome, DeliveryOutcome::Duplicate { .. }));
     assert_eq!(fx.app_events_in_channel().await, 1);
 }
@@ -658,11 +815,14 @@ async fn a_disabled_installation_records_nothing() {
     let disabled = fx.reload().await;
     let event = fx.event(1_700_000_040);
     let delivery_id = Uuid::new_v4().to_string();
-    assert!(
-        record_delivery_committed(&fx.pool, &disabled, &accept(&delivery_id, &event))
-            .await
-            .is_err()
-    );
+    assert!(record_delivery_committed(
+        &fx.pool,
+        &disabled,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &event)
+    )
+    .await
+    .is_err());
     assert!(!fx.event_present(&event).await);
     assert!(fx.delivery(&delivery_id).await.is_none());
 }
@@ -675,9 +835,14 @@ async fn retention_prunes_only_old_deliveries() {
     let old_id = Uuid::new_v4().to_string();
     let new_id = Uuid::new_v4().to_string();
     for id in [&old_id, &new_id] {
-        record_delivery_committed(&fx.pool, &fx.installation, &not_accept(id, false, "ping"))
-            .await
-            .expect("ignore");
+        record_delivery_committed(
+            &fx.pool,
+            &fx.installation,
+            &fx.relay.public_key(),
+            &not_accept(id, false, "ping"),
+        )
+        .await
+        .expect("ignore");
     }
     sqlx::query(
         "UPDATE vendor_deliveries SET received_at = now() - interval '31 days' \
@@ -694,4 +859,61 @@ async fn retention_prunes_only_old_deliveries() {
         .expect("prune");
     assert!(fx.delivery(&old_id).await.is_none());
     assert!(fx.delivery(&new_id).await.is_some());
+}
+
+/// B1 refuses every invalid accepted event before any write: no event, no
+/// dispatch queue row, no delivery row, and the delivery id stays free for
+/// the genuine delivery.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn an_invalid_accepted_event_writes_nothing() {
+    let fx = fixture().await;
+    let delivery_id = Uuid::new_v4().to_string();
+    for (event, reason) in invalid_accepts(&fx.installation, &fx.relay) {
+        let error = record_delivery_committed(
+            &fx.pool,
+            &fx.installation,
+            &fx.relay.public_key(),
+            &accept(&delivery_id, &event),
+        )
+        .await
+        .expect_err(reason)
+        .to_string();
+        assert!(error.contains(reason), "expected {reason:?}, got {error:?}");
+        assert!(!fx.event_present(&event).await, "{reason}: event stored");
+        assert!(!fx.queue_present(&event).await, "{reason}: queue row");
+        assert!(
+            fx.delivery(&delivery_id).await.is_none(),
+            "{reason}: delivery row"
+        );
+    }
+    // A valid event checked against a different relay key is refused too.
+    let other_relay = Keys::generate();
+    let event = fx.event(1_700_000_600);
+    let error = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &other_relay.public_key(),
+        &accept(&delivery_id, &event),
+    )
+    .await
+    .expect_err("another relay key");
+    assert!(
+        error.to_string().contains("not signed by the relay"),
+        "{error}"
+    );
+    assert_eq!(fx.app_events_in_channel().await, 0);
+
+    let outcome = record_delivery_committed(
+        &fx.pool,
+        &fx.installation,
+        &fx.relay.public_key(),
+        &accept(&delivery_id, &event),
+    )
+    .await
+    .expect("the genuine delivery");
+    assert!(
+        matches!(outcome, DeliveryOutcome::Accepted(_)),
+        "{outcome:?}"
+    );
 }

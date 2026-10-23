@@ -4319,9 +4319,11 @@ impl Db {
     pub async fn record_vendor_delivery(
         &self,
         installation: &vendor_ingress::VendorInstallation,
+        relay_pubkey: &nostr::PublicKey,
         delivery: &vendor_ingress::Delivery<'_>,
     ) -> Result<vendor_ingress::DeliveryOutcome> {
-        vendor_ingress::record_delivery_committed(&self.pool, installation, delivery).await
+        vendor_ingress::record_delivery_committed(&self.pool, installation, relay_pubkey, delivery)
+            .await
     }
 
     /// See [`vendor_ingress::record_unauthenticated_rejection`].

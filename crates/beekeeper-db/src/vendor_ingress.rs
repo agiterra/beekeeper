@@ -6,7 +6,12 @@
 //! - **accept**: the relay-signed kind:50000 event (whose insert fires the
 //!   `events` trigger that writes its `workflow_dispatch_queue` row) and the
 //!   `accepted` delivery row, in that order, in one transaction. Either all
-//!   of event, queue row and delivery row commit, or none does.
+//!   of event, queue row and delivery row commit, or none does. This path
+//!   does not pass through ordinary ingest, so the event is checked here
+//!   before any write: the application-event envelope, the relay's own
+//!   signature (pubkey and a verifying id/sig), its `h` tag naming the
+//!   installation's channel, and its [`SOURCE_TAG`] naming the
+//!   installation's plugin and id.
 //! - **ignore** / **reject** (authenticated): the delivery row only.
 //!
 //! The delivery key `(community, installation, delivery_id)` is taken only by
@@ -20,6 +25,7 @@
 
 use std::time::Duration;
 
+use beekeeper_core::application_event::validate_application_event;
 use beekeeper_core::kind::KIND_APPLICATION_EVENT;
 use beekeeper_core::{CommunityId, StoredEvent};
 use chrono::{DateTime, Utc};
@@ -28,6 +34,11 @@ use uuid::Uuid;
 
 use crate::error::{DbError, Result};
 use crate::event::insert_event_with_thread_metadata_tx;
+
+/// The provenance tag the plugin host seals on every application event:
+/// `["beekeeper:source", <plugin>, <installation uuid>]`. The same shape the
+/// workflow engine's `application_event` trigger reads.
+pub const SOURCE_TAG: &str = "beekeeper:source";
 
 /// Longest vendor delivery id stored (GitHub's is a 36-character GUID).
 pub const MAX_DELIVERY_ID_LEN: usize = 200;
@@ -317,7 +328,11 @@ pub async fn record_installation_error(
     Ok(())
 }
 
-fn validate_delivery(installation: &VendorInstallation, delivery: &Delivery<'_>) -> Result<()> {
+fn validate_delivery(
+    installation: &VendorInstallation,
+    relay_pubkey: &nostr::PublicKey,
+    delivery: &Delivery<'_>,
+) -> Result<()> {
     if !installation.enabled {
         return Err(DbError::InvalidData(
             "vendor installation is disabled".into(),
@@ -339,13 +354,74 @@ fn validate_delivery(installation: &VendorInstallation, delivery: &Delivery<'_>)
         )));
     }
     if let DeliveryDisposition::Accept { event } = &delivery.disposition {
-        if u32::from(event.kind.as_u16()) != KIND_APPLICATION_EVENT {
-            return Err(DbError::InvalidData(format!(
-                "an accepted vendor delivery must be a kind {KIND_APPLICATION_EVENT} event"
-            )));
-        }
+        validate_accepted_event(installation, relay_pubkey, event)?;
     }
     Ok(())
+}
+
+/// The event of an accepted delivery: a well-formed application event,
+/// signed by the relay, scoped to the installation's channel and sourced
+/// from the installation. Nothing about it is taken on trust from the
+/// caller, because nothing downstream re-checks it before it is stored.
+fn validate_accepted_event(
+    installation: &VendorInstallation,
+    relay_pubkey: &nostr::PublicKey,
+    event: &nostr::Event,
+) -> Result<()> {
+    let invalid = |reason: String| Err(DbError::InvalidData(reason));
+    if u32::from(event.kind.as_u16()) != KIND_APPLICATION_EVENT {
+        return invalid(format!(
+            "an accepted vendor delivery must be a kind {KIND_APPLICATION_EVENT} event"
+        ));
+    }
+    if let Err(error) = validate_application_event(event) {
+        return invalid(format!(
+            "accepted vendor delivery is not a valid application event: {error}"
+        ));
+    }
+    if &event.pubkey != relay_pubkey {
+        return invalid("accepted vendor delivery is not signed by the relay".into());
+    }
+    if let Err(error) = event.verify() {
+        return invalid(format!(
+            "accepted vendor delivery has an invalid id or signature: {error}"
+        ));
+    }
+    // validate_application_event guarantees exactly one well-formed h tag.
+    let channel = event
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice())
+        .find(|parts| parts.first().map(String::as_str) == Some("h"))
+        .and_then(|parts| Uuid::parse_str(&parts[1]).ok());
+    if channel != Some(installation.channel_id) {
+        return invalid(
+            "accepted vendor delivery is not scoped to the installation's channel".into(),
+        );
+    }
+    let mut source = None;
+    for parts in event.tags.iter().map(|tag| tag.as_slice()) {
+        if parts.first().map(String::as_str) != Some(SOURCE_TAG) {
+            continue;
+        }
+        if source.is_some() {
+            return invalid("accepted vendor delivery carries more than one source tag".into());
+        }
+        if parts.len() != 3 || parts[1].is_empty() {
+            return invalid("accepted vendor delivery source tag is malformed".into());
+        }
+        let Ok(id) = Uuid::parse_str(&parts[2]) else {
+            return invalid("accepted vendor delivery source tag is malformed".into());
+        };
+        source = Some((parts[1].as_str(), id));
+    }
+    match source {
+        None => invalid("accepted vendor delivery has no source tag".into()),
+        Some((plugin, id)) if plugin == installation.plugin && id == installation.id => Ok(()),
+        Some(_) => {
+            invalid("accepted vendor delivery source tag does not name this installation".into())
+        }
+    }
 }
 
 /// Record an AUTHENTICATED delivery in the caller's transaction (B1).
@@ -359,6 +435,10 @@ fn validate_delivery(installation: &VendorInstallation, delivery: &Delivery<'_>)
 /// commit and then sees its row, so a racing redelivery is a duplicate, not
 /// a second event.
 ///
+/// `relay_pubkey` is the relay's signing key: an accepted event must be
+/// signed by it (and pass the other checks in the module doc), or nothing is
+/// written.
+///
 /// For an accept the event is inserted first (its insert writes the
 /// dispatch queue row through the `events` trigger) and the delivery row
 /// second; an error from either aborts the transaction, so neither the event
@@ -366,9 +446,10 @@ fn validate_delivery(installation: &VendorInstallation, delivery: &Delivery<'_>)
 pub async fn record_delivery(
     tx: &mut Transaction<'_, Postgres>,
     installation: &VendorInstallation,
+    relay_pubkey: &nostr::PublicKey,
     delivery: &Delivery<'_>,
 ) -> Result<DeliveryOutcome> {
-    validate_delivery(installation, delivery)?;
+    validate_delivery(installation, relay_pubkey, delivery)?;
     let community_id = installation.community_id;
     let lock_key = format!(
         "beekeeper:vendor-delivery:{}:{}:{}",
@@ -478,10 +559,11 @@ pub async fn record_delivery(
 pub async fn record_delivery_committed(
     pool: &PgPool,
     installation: &VendorInstallation,
+    relay_pubkey: &nostr::PublicKey,
     delivery: &Delivery<'_>,
 ) -> Result<DeliveryOutcome> {
     let mut tx = pool.begin().await?;
-    let outcome = record_delivery(&mut tx, installation, delivery).await?;
+    let outcome = record_delivery(&mut tx, installation, relay_pubkey, delivery).await?;
     tx.commit().await?;
     Ok(outcome)
 }
