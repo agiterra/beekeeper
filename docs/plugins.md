@@ -382,7 +382,8 @@ signs, and is not "the same seal, signed by the relay":
 - **Reserved tags.** `RESERVED_TAG_KEYS` is one set for every world and
   kind: `a`, `h`, `p`, `e`, `q`, `k`, `A`, `E`, `K`, `P`, `L`, `l`, and `-`
   (NIP-70 protected), `expiration` (NIP-40), `delegation` (NIP-26), `proxy`
-  (NIP-48). A host whose allowlist for any kind names one refuses to load —
+  (NIP-48), `beekeeper:source` (the plugin and installation an
+  application event came from, which the host writes). A host whose allowlist for any kind names one refuses to load —
   `a` included, though `DraftKind` also drops `a` from what the seal lets a
   plugin propose; Planning's `td-*` keys name none.
 - **Limits.** An auth plan's delivery id is 1–128 printable ASCII bytes, its

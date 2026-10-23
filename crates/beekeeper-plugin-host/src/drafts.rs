@@ -59,7 +59,9 @@ pub const CHANNEL_SCOPE_TAG: &str = "h";
 /// - `-` — NIP-70's protected marker, which says who may publish the event;
 /// - `expiration` — NIP-40, which decides when relays drop it;
 /// - `delegation` — NIP-26, which claims another key's authority;
-/// - `proxy` — NIP-48, which claims an origin outside Nostr.
+/// - `proxy` — NIP-48, which claims an origin outside Nostr;
+/// - `beekeeper:source` — the plugin and installation an application event
+///   was projected from, which the workflow trigger and the B1 store trust.
 ///
 /// One set for every world: Planning's allowlist (NIP-TD `td-*` keys) names
 /// none of them — an assignee is content, not a `p` tag.
@@ -80,6 +82,7 @@ pub const RESERVED_TAG_KEYS: &[&str] = &[
     "expiration",
     "delegation",
     "proxy",
+    "beekeeper:source",
 ];
 
 /// `true` when `key` is in [`RESERVED_TAG_KEYS`].

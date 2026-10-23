@@ -512,6 +512,7 @@ impl WebhookCall<'_> {
                     kind,
                     &self.plugin.entry.grants.type_prefix,
                     delivery.channel,
+                    (&self.plugin.entry.name, &self.installation),
                     verified.received_at(),
                     ProposedEvent {
                         event_type: event.event_type,

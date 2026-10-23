@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use beekeeper_plugin_host::webhook::{
     AuthFailure, Header, VerifiedDelivery, VerifyError, WebhookOutcome,
-    APPLICATION_EVENT_NAMESPACE, KIND_APPLICATION_EVENT,
+    APPLICATION_EVENT_NAMESPACE, KIND_APPLICATION_EVENT, SOURCE_TAG,
 };
 use beekeeper_plugin_host::{
     sha256_hex, Access, Delivery, DraftKind, DraftReferences, DraftValidators, HostConfig,
@@ -789,6 +789,11 @@ fn an_accepted_event_is_built_by_the_host() {
                 "l".to_owned(),
                 "com.example.push".to_owned(),
                 APPLICATION_EVENT_NAMESPACE.to_owned()
+            ],
+            vec![
+                SOURCE_TAG.to_owned(),
+                "test-webhook".to_owned(),
+                "i".to_owned()
             ],
         ]
     );

@@ -43,6 +43,12 @@ pub const KIND_APPLICATION_EVENT: u32 = 50000;
 /// The NIP-32 namespace an application event's `L` and `l` labels carry.
 /// Ingest requires exactly this value; its validator is the authority.
 pub const APPLICATION_EVENT_NAMESPACE: &str = "org.agiterra.application-event";
+/// The provenance tag the host writes on every sealed application event:
+/// `["beekeeper:source", <plugin>, <installation>]`, from the
+/// [`VerifiedDelivery`] the event was projected from. Reserved
+/// ([`crate::RESERVED_TAG_KEYS`]): no plugin may propose it. The workflow
+/// engine's `application_event` trigger and the B1 store both read it.
+pub const SOURCE_TAG: &str = "beekeeper:source";
 /// Bytes of a projected `data` object.
 pub const MAX_DATA_BYTES: usize = 64 * 1024;
 /// Bytes of an application-event type.
@@ -436,12 +442,14 @@ pub(crate) fn verify_delivery(
 }
 
 /// Build the application event for `proposed` in `channel`, stamped
-/// `received_at`, and run `kind`'s validator on it. Any failure refuses the
-/// whole delivery's output; nothing is ever repaired.
+/// `received_at` and sourced from `plugin`'s `installation` (the
+/// [`SOURCE_TAG`]), and run `kind`'s validator on it. Any failure refuses
+/// the whole delivery's output; nothing is ever repaired.
 pub(crate) fn seal_application_event(
     kind: &DraftKind,
     type_prefix: &str,
     channel: &str,
+    source: (&str, &str),
     received_at: u64,
     proposed: ProposedEvent,
 ) -> Result<SealedEvent, String> {
@@ -483,6 +491,12 @@ pub(crate) fn seal_application_event(
         event_type,
         APPLICATION_EVENT_NAMESPACE.to_owned(),
     ]);
+    let (plugin, installation) = source;
+    tags.push(vec![
+        SOURCE_TAG.to_owned(),
+        plugin.to_owned(),
+        installation.to_owned(),
+    ]);
     check_constructed_caps(&tags)?;
     kind.validate(&tags, &content)?;
     Ok(SealedEvent {
@@ -501,6 +515,8 @@ mod tests {
     use crate::drafts::DraftReferences;
 
     const CHANNEL: &str = "6f1c2b9e-3d4a-4f5b-8c7d-9e0f1a2b3c4d";
+    const INSTALLATION: &str = "0b5e6a3c-1d2f-4e8a-9b7c-5d4e3f2a1b0c";
+    const SOURCE: (&str, &str) = ("github", INSTALLATION);
 
     fn kind(data_tags: &[&str]) -> DraftKind {
         DraftKind::new(data_tags, Arc::new(|_, _| Ok(DraftReferences::default())))
@@ -525,6 +541,7 @@ mod tests {
             &kind(&[]),
             "com.github",
             CHANNEL,
+            SOURCE,
             1_800_000_000,
             event("com.github.pull-request.opened", vec![tag(&["h", CHANNEL])]),
         )
@@ -541,6 +558,7 @@ mod tests {
                     "com.github.pull-request.opened",
                     APPLICATION_EVENT_NAMESPACE
                 ]),
+                tag(&[SOURCE_TAG, "github", INSTALLATION]),
             ]
         );
         assert_eq!(sealed.content, r#"{"data":{"action":"opened"},"schema":1}"#);
@@ -554,9 +572,15 @@ mod tests {
             "com.github",
             "com.github.",
         ] {
-            let error =
-                seal_application_event(&kind(&[]), "com.github", CHANNEL, 1, event(bad, vec![]))
-                    .unwrap_err();
+            let error = seal_application_event(
+                &kind(&[]),
+                "com.github",
+                CHANNEL,
+                SOURCE,
+                1,
+                event(bad, vec![]),
+            )
+            .unwrap_err();
             assert!(error.contains("prefix"), "{bad}: {error}");
         }
     }
@@ -565,16 +589,18 @@ mod tests {
     fn data_must_be_a_bounded_object_and_schema_positive() {
         let mut e = event("com.github.push", vec![]);
         e.schema = 0;
-        assert!(seal_application_event(&kind(&[]), "com.github", CHANNEL, 1, e).is_err());
+        assert!(seal_application_event(&kind(&[]), "com.github", CHANNEL, SOURCE, 1, e).is_err());
         for data in ["[]", "1", "not json"] {
             let mut e = event("com.github.push", vec![]);
             e.data_json = data.to_owned();
-            assert!(seal_application_event(&kind(&[]), "com.github", CHANNEL, 1, e).is_err());
+            assert!(
+                seal_application_event(&kind(&[]), "com.github", CHANNEL, SOURCE, 1, e).is_err()
+            );
         }
         let mut e = event("com.github.push", vec![]);
         e.data_json = format!("{{\"x\":\"{}\"}}", "y".repeat(MAX_DATA_BYTES));
         assert!(
-            seal_application_event(&kind(&[]), "com.github", CHANNEL, 1, e)
+            seal_application_event(&kind(&[]), "com.github", CHANNEL, SOURCE, 1, e)
                 .unwrap_err()
                 .contains("data is over")
         );
@@ -589,12 +615,15 @@ mod tests {
             tag(&["e", "aa"]),
             tag(&["L", APPLICATION_EVENT_NAMESPACE]),
             tag(&["l", "com.github.other", APPLICATION_EVENT_NAMESPACE]),
+            tag(&[SOURCE_TAG, "github", INSTALLATION]),
+            tag(&[SOURCE_TAG, "other", "00000000-0000-4000-8000-000000000000"]),
         ] {
             assert!(
                 seal_application_event(
                     &kind(&[]),
                     "com.github",
                     CHANNEL,
+                    SOURCE,
                     1,
                     event("com.github.push", vec![proposed.clone()])
                 )
@@ -607,6 +636,7 @@ mod tests {
             &kind(&["r"]),
             "com.github",
             CHANNEL,
+            SOURCE,
             1,
             event("com.github.push", vec![tag(&["r", "https://example"])]),
         )
@@ -621,6 +651,7 @@ mod tests {
             &refusing,
             "com.github",
             CHANNEL,
+            SOURCE,
             1,
             event("com.github.push", vec![]),
         )
