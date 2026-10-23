@@ -10,6 +10,18 @@
 //! Rows are never deleted when attempts run out or the source event is gone:
 //! they end in state `failed` with a reason, so a dispatch that did not
 //! happen stays visible.
+//!
+//! **What the queue guarantees is durable, at-most-once ADMISSION** — a
+//! committed `workflow_runs` row per (workflow, event) — **not execution.**
+//! The run is created `pending` by [`create_dispatch_run`] and only the
+//! process that created it starts it (`execute_run` marks it `running`). A
+//! crash after that commit and before `execute_run` starts leaves the run
+//! `pending` with `started_at` NULL; the resumed queue row finds the run
+//! ([`DispatchRunOutcome::Existing`]), records it admitted and does not
+//! spawn it, and nothing restarts it yet. [`list_stranded_dispatch_runs`]
+//! makes such runs visible; recovering them is not implemented. (Migration
+//! 0047's header predates this wording; migrations are checksummed, so it
+//! is corrected here rather than there.)
 
 use std::time::Duration;
 
@@ -595,13 +607,78 @@ pub async fn prune_dispatch_queue(
     Ok((deleted[0], deleted[1]))
 }
 
+/// Most stranded runs [`list_stranded_dispatch_runs`] returns per call.
+pub const STRANDED_REPORT_LIMIT: i64 = 50;
+
+/// A dispatch-admitted run that never started (see the module doc).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrandedRun {
+    /// The run's community.
+    pub community_id: CommunityId,
+    /// The run.
+    pub run_id: Uuid,
+    /// Its workflow.
+    pub workflow_id: Uuid,
+    /// When it was admitted.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Read only: runs the dispatch queue admitted (`dispatch_event_id` set)
+/// that are still `pending` with `started_at` NULL more than `older_than`
+/// after they were created — runs whose creator died before starting them.
+/// Returns the total count and up to `limit` of them, oldest first. Nothing
+/// is changed: recovery is not implemented, this only makes the gap
+/// visible.
+pub async fn list_stranded_dispatch_runs(
+    pool: &PgPool,
+    older_than: Duration,
+    limit: i64,
+) -> Result<(i64, Vec<StrandedRun>)> {
+    let rows = sqlx::query(
+        r#"
+        SELECT community_id, id, workflow_id, created_at, count(*) OVER () AS total
+        FROM workflow_runs
+        WHERE status = 'pending' AND started_at IS NULL
+          AND dispatch_event_id IS NOT NULL
+          AND created_at < now() - make_interval(secs => $1)
+        ORDER BY created_at, id
+        LIMIT $2
+        "#,
+    )
+    .bind(older_than.as_secs_f64())
+    .bind(limit.max(1))
+    .fetch_all(pool)
+    .await?;
+    let total = match rows.first() {
+        Some(row) => row.try_get("total")?,
+        None => 0,
+    };
+    let runs = rows
+        .iter()
+        .map(|row| {
+            Ok(StrandedRun {
+                community_id: CommunityId::from_uuid(row.try_get("community_id")?),
+                run_id: row.try_get("id")?,
+                workflow_id: row.try_get("workflow_id")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((total, runs))
+}
+
 /// Result of [`create_dispatch_run`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchRunOutcome {
-    /// This call created the run; the caller spawns its execution.
+    /// This call created the run (`pending`, committed); the caller spawns
+    /// its execution. If the caller dies before `execute_run` marks the run
+    /// `running`, the run stays `pending` and nothing restarts it (see the
+    /// module doc and [`list_stranded_dispatch_runs`]).
     Created(Uuid),
     /// A run for this (workflow, event) already existed — a retry after a
-    /// crash, or a racing claimer. The caller must NOT spawn it again.
+    /// crash, or a racing claimer. The caller must NOT spawn it again. This
+    /// says the run was admitted, not that it was ever started: after a
+    /// crash it may still be `pending`, stranded.
     Existing(Uuid),
     /// The published definition is no longer the one the caller parsed; no
     /// run exists and the outcome is unchanged (ledger 199: never retried).
@@ -1615,6 +1692,113 @@ mod db_tests {
             .await
             .expect("outcomes");
         assert_eq!(pending[0].disposition, "pending");
+    }
+
+    /// A dispatch-admitted run that is still `pending` and unstarted past the
+    /// threshold is listed; a started one, a young one and a run the queue
+    /// did not create are not. The query changes nothing.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn stranded_dispatch_runs_are_listed_and_left_alone() {
+        let pool = setup_pool().await;
+        let community = make_community(&pool).await;
+        let stranded_wf = make_workflow(&pool, community).await;
+        let started_wf = make_workflow(&pool, community).await;
+        let ids = enqueue_events(&pool, community, 1).await;
+        let batch = claim_dispatch_batch_in(&pool, Some(community), 10, lease(60))
+            .await
+            .expect("claim")
+            .expect("due");
+        freeze_candidates(
+            &pool,
+            community,
+            &ids[0],
+            batch.claim_id,
+            &[stranded_wf, started_wf],
+        )
+        .await
+        .expect("freeze");
+        let run = |workflow| {
+            let pool = pool.clone();
+            let event = ids[0].clone();
+            async move {
+                match create_dispatch_run(&pool, community, &event, workflow, None, &[3; 32])
+                    .await
+                    .expect("admit")
+                {
+                    DispatchRunOutcome::Created(id) => id,
+                    other => panic!("expected Created, got {other:?}"),
+                }
+            }
+        };
+        let stranded = run(stranded_wf).await;
+        let started = run(started_wf).await;
+        sqlx::query(
+            "UPDATE workflow_runs SET status = 'running', started_at = now() \
+             WHERE community_id = $1 AND id = $2",
+        )
+        .bind(community.as_uuid())
+        .bind(started)
+        .execute(&pool)
+        .await
+        .expect("start one run");
+        // A pending run the queue did not create (dispatch_event_id NULL).
+        let live = crate::workflow::create_workflow_run(
+            &pool,
+            community,
+            stranded_wf,
+            Some(&ids[0]),
+            None,
+            &[3; 32],
+        )
+        .await
+        .expect("live run");
+        let crate::workflow::CreateRunOutcome::Created(live) = live else {
+            panic!("expected a live run, got {live:?}");
+        };
+
+        let listed = |older_than: Duration| {
+            let pool = pool.clone();
+            async move {
+                let (total, runs) = list_stranded_dispatch_runs(&pool, older_than, 100_000)
+                    .await
+                    .expect("list stranded");
+                assert!(total >= runs.len() as i64);
+                runs.into_iter()
+                    .filter(|r| r.community_id == community)
+                    .map(|r| (r.run_id, r.workflow_id))
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(
+            listed(Duration::ZERO).await,
+            vec![(stranded, stranded_wf)],
+            "only the unstarted dispatch run"
+        );
+        assert!(
+            listed(Duration::from_secs(3600)).await.is_empty(),
+            "a run younger than the threshold is not stranded"
+        );
+        let statuses: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status::text FROM workflow_runs WHERE community_id = $1 ORDER BY id",
+        )
+        .bind(community.as_uuid())
+        .fetch_all(&pool)
+        .await
+        .expect("statuses");
+        let status = |id: Uuid| {
+            statuses
+                .iter()
+                .find(|(run, _)| *run == id)
+                .map(|(_, s)| s.as_str())
+        };
+        assert_eq!(status(stranded), Some("pending"), "read only");
+        assert_eq!(status(started), Some("running"));
+        assert_eq!(status(live), Some("pending"));
+        let (_, one) = list_stranded_dispatch_runs(&pool, Duration::ZERO, 1)
+            .await
+            .expect("bounded");
+        assert_eq!(one.len(), 1, "the limit bounds the list");
     }
 
     /// The 46008 candidate lookup: enabled, active `ci_result` workflows of

@@ -344,15 +344,25 @@ async fn an_application_event_starts_exactly_one_run_per_matching_workflow() {
     assert_eq!(fx.queue(&forged).await.0, "done");
 }
 
-/// Crash between admission and completion: the run exists, the row is still
-/// claimed. After the lease expires the next claim resumes it and finds the
-/// run — still exactly one run, outcome admitted, row done.
+/// Crash between admission and execution: the run row committed (the
+/// creator's `create_dispatch_run`), then the process died before
+/// `execute_run` started it and before `complete_dispatch`. After the lease
+/// expires the next claim resumes the row and finds the run — still exactly
+/// one run, outcome admitted, row done.
+///
+/// This pins the KNOWN GAP honestly: the resumed row does not start the
+/// existing run (only its creator would have), so the run stays `pending`
+/// with `started_at` NULL and nothing restarts it; the stranded-run query
+/// is what reports it. The crash is simulated at the DB layer because an
+/// engine admission in this process would spawn `execute_run`, which a real
+/// crash would not.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires Postgres and Redis"]
 async fn a_crash_after_admission_resumes_without_a_second_run() {
     let fx = fixture().await;
     let workflow = fx.workflow("crash", PUSH).await;
     let event = fx.relay_event().await;
+    let event_id = event.event.id.as_bytes().to_vec();
 
     let batch = fx
         .state
@@ -361,14 +371,21 @@ async fn a_crash_after_admission_resumes_without_a_second_run() {
         .await
         .expect("claim")
         .expect("due");
-    let report = fx
+    fx.state
+        .db
+        .freeze_dispatch_candidates(fx.community, &event_id, batch.claim_id, &[workflow])
+        .await
+        .expect("freeze");
+    let created = fx
         .state
-        .workflow_engine
-        .dispatch_claimed_event(fx.community, batch.claim_id, &batch.jobs[0].event, false)
+        .db
+        .create_dispatch_run(fx.community, &event_id, workflow, None, &[5_u8; 32])
         .await
         .expect("admit");
-    assert_eq!(report.admitted.len(), 1);
-    // ...and the worker dies here: no complete_dispatch.
+    let beekeeper_db::workflow_dispatch::DispatchRunOutcome::Created(run_id) = created else {
+        panic!("expected Created, got {created:?}");
+    };
+    // ...and the worker dies here: no execute_run, no complete_dispatch.
     assert_eq!(fx.queue(&event).await.0, "claimed");
     sqlx::query(
         "UPDATE workflow_dispatch_queue SET lease_until = now() - interval '1 second' \
@@ -383,11 +400,35 @@ async fn a_crash_after_admission_resumes_without_a_second_run() {
     fx.drain().await;
     let runs = fx.runs(workflow).await;
     assert_eq!(runs.len(), 1, "the resumed row must not start a second run");
+    assert_eq!(runs[0].id, run_id);
     let outcomes = fx.outcomes(&event).await;
     assert_eq!(outcomes.len(), 1);
     assert_eq!(outcomes[0].disposition, "admitted");
-    assert_eq!(outcomes[0].run_id, Some(runs[0].id));
+    assert_eq!(outcomes[0].run_id, Some(run_id));
     assert_eq!(fx.queue(&event).await, ("done".to_owned(), 2, None));
+
+    // The gap: admitted, never started, and nothing restarts it.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let run = fx
+        .state
+        .db
+        .get_workflow_run(fx.community, run_id)
+        .await
+        .expect("load run");
+    assert_eq!(run.status, beekeeper_db::workflow::RunStatus::Pending);
+    assert!(run.started_at.is_none(), "nothing started the stranded run");
+    let (_, stranded) = fx
+        .state
+        .db
+        .list_stranded_dispatch_runs(Duration::ZERO, 100_000)
+        .await
+        .expect("list stranded");
+    assert!(
+        stranded
+            .iter()
+            .any(|r| r.community_id == fx.community && r.run_id == run_id),
+        "the stranded-run query reports it"
+    );
 }
 
 /// Partial admission: A admits, B hits a DB error. The row goes back to

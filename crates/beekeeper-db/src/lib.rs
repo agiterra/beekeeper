@@ -4499,6 +4499,15 @@ impl Db {
         .await
     }
 
+    /// See [`workflow_dispatch::list_stranded_dispatch_runs`].
+    pub async fn list_stranded_dispatch_runs(
+        &self,
+        older_than: std::time::Duration,
+        limit: i64,
+    ) -> Result<(i64, Vec<workflow_dispatch::StrandedRun>)> {
+        workflow_dispatch::list_stranded_dispatch_runs(&self.pool, older_than, limit).await
+    }
+
     /// See [`workflow_dispatch::fail_exhausted_dispatches`].
     pub async fn fail_exhausted_dispatches(&self) -> Result<u64> {
         workflow_dispatch::fail_exhausted_dispatches(&self.pool).await

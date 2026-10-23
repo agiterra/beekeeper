@@ -673,7 +673,11 @@ impl WorkflowEngine {
                 .await
             {
                 Ok(beekeeper_db::workflow_dispatch::DispatchRunOutcome::Created(id)) => (id, true),
-                // A previous attempt created it; whoever created it spawned it.
+                // A previous attempt created it, so it is admitted; do not
+                // spawn it again. That attempt spawned it only if its process
+                // lived: after a crash between the run's commit and
+                // execute_run the run stays `pending` and nothing restarts
+                // it yet (`list_stranded_dispatch_runs` reports it).
                 Ok(beekeeper_db::workflow_dispatch::DispatchRunOutcome::Existing(id)) => {
                     (id, false)
                 }

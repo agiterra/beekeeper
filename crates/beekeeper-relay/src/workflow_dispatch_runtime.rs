@@ -3,7 +3,9 @@
 //! Every committed kind:50000 application event and kind:46008 CI result has
 //! a `workflow_dispatch_queue` row, written by the `events` trigger in the
 //! insert's own transaction (migration 0047). This worker is the only thing
-//! that turns those rows into workflow runs:
+//! that turns those rows into workflow runs. What it guarantees is durable,
+//! at-most-once ADMISSION — a committed run row per (workflow, event) — not
+//! execution:
 //!
 //! 1. claim a batch from one community (lease, `SKIP LOCKED`), no larger than
 //!    the engine's free run permits;
@@ -15,8 +17,12 @@
 //!    can never be dispatched → `failed` with that reason.
 //!
 //! A crash anywhere leaves the row `claimed`; its lease expires and the next
-//! claim resumes it. Admission is idempotent, so a resumed row never starts a
-//! second run for a workflow that was already admitted.
+//! claim resumes it. Admission is idempotent, so a resumed row never creates
+//! a second run for a workflow that was already admitted. It also never
+//! starts the existing one: a run is started only by the process that
+//! created it, so a crash after the run commits and before `execute_run`
+//! marks it `running` leaves it `pending`, and nothing restarts it yet. The
+//! sweep reports such runs ([`STRANDED_AFTER`]); it does not recover them.
 //!
 //! Retention: the periodic sweep deletes `done` rows 7 days after they
 //! finish and `failed` rows after 30 days (`prune_dispatch_queue`, bounded
@@ -30,6 +36,7 @@ use std::time::Duration;
 use beekeeper_core::CommunityId;
 use beekeeper_db::workflow_dispatch::{
     dispatch_backoff, ClaimedDispatchBatch, RescheduleOutcome, DONE_RETENTION, FAILED_RETENTION,
+    STRANDED_REPORT_LIMIT,
 };
 use chrono::{TimeDelta, Utc};
 use tracing::{error, info, warn};
@@ -46,6 +53,10 @@ pub const BATCH_LIMIT: usize = 16;
 pub const IDLE_POLL: Duration = Duration::from_secs(1);
 /// How often the exhausted-row and retention sweep runs.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+/// A dispatch-admitted run still `pending` and unstarted this long after it
+/// was created is reported as stranded by the sweep. Far above the time
+/// between a run's commit and `execute_run` marking it `running`.
+pub const STRANDED_AFTER: Duration = Duration::from_secs(5 * 60);
 
 /// Start the worker. Called unconditionally at startup.
 pub fn spawn(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
@@ -91,6 +102,27 @@ async fn sweep(state: &AppState) {
         Ok((0, 0)) => {}
         Ok((done, failed)) => info!(done, failed, "workflow dispatch retention pruned rows"),
         Err(e) => error!("workflow dispatch retention sweep failed: {e}"),
+    }
+    match state
+        .db
+        .list_stranded_dispatch_runs(STRANDED_AFTER, STRANDED_REPORT_LIMIT)
+        .await
+    {
+        Ok((0, _)) => {}
+        Ok((total, runs)) => {
+            let ids = runs
+                .iter()
+                .map(|run| format!("{}/{}", run.community_id.as_uuid(), run.run_id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            warn!(
+                total,
+                listed = runs.len(),
+                runs = %ids,
+                "workflow dispatch: admitted runs never started (creator died before                  execute_run); not recovered"
+            );
+        }
+        Err(e) => error!("workflow dispatch stranded-run check failed: {e}"),
     }
 }
 
