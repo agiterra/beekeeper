@@ -220,6 +220,45 @@ pub(crate) async fn project_action_delegation_admitted(
     decide_project_action_delegation(capability, &lookup, &writing_granters, vocabulary)
 }
 
+/// Whether `owner` may still save a definition of `project` in `channel_id`:
+/// the rule `handle_workflow_command` applies at save, read again at run
+/// admission (bee issue 1f0d7b3e). A current project writer, or else a live
+/// `PublishDefinition` delegation.
+///
+/// # Errors
+/// `Err(())` when either read could not decide; the caller must retry, not
+/// refuse.
+pub(crate) async fn owner_writes_project(
+    state: &Arc<AppState>,
+    community: beekeeper_core::CommunityId,
+    channel_id: Uuid,
+    project: &str,
+    owner: &[u8],
+) -> Result<bool, ()> {
+    if project_write_admitted(state, community, project, &hex::encode(owner))
+        .await?
+        .is_ok()
+    {
+        return Ok(true);
+    }
+    match project_action_delegation_admitted(
+        state,
+        community,
+        channel_id,
+        project,
+        owner,
+        ProjectActionCapability::PublishDefinition,
+        // Save has no project team record in hand either; see there.
+        RoleVocabulary::foundation(),
+    )
+    .await
+    {
+        ProjectActionDelegation::Admitted { .. } => Ok(true),
+        ProjectActionDelegation::Refused(ProjectActionDelegationRefusal::Undecidable) => Err(()),
+        ProjectActionDelegation::Refused(_) => Ok(false),
+    }
+}
+
 #[cfg(test)]
 #[path = "project_action_grant_tests.rs"]
 mod tests;

@@ -227,7 +227,12 @@ impl WorkflowEngine {
     /// - the owner must still be an active member of the workflow's channel;
     /// - if the definition contains an exfiltration-capable action
     ///   (`call_webhook`), the owner must currently hold the `owner` or
-    ///   `admin` role.
+    ///   `admin` role;
+    /// - if the definition names a `project`, the owner must still write that
+    ///   project, by the rule the relay applied at save
+    ///   ([`ActionSink::owner_writes_project`]). Save checks it once; an owner
+    ///   removed from the project but still in the channel would otherwise
+    ///   keep firing it.
     ///
     /// Any lookup error denies (fail-closed): a removed owner must never keep
     /// exfiltration authority because a membership read happened to fail.
@@ -246,12 +251,29 @@ impl WorkflowEngine {
             .get_member_role(community_id, channel_id, owner_pubkey)
             .await
             .map_err(|e| WorkflowError::AuthorityLookupFailed(e.to_string()))?;
-        if owner_authority_allows(role.as_deref(), def.requires_elevated_authority()) {
-            Ok(())
-        } else {
-            Err(WorkflowError::Unauthorized(
+        if !owner_authority_allows(role.as_deref(), def.requires_elevated_authority()) {
+            return Err(WorkflowError::Unauthorized(
                 "workflow owner lacks current channel authority".into(),
-            ))
+            ));
+        }
+        let Some(project) = &def.project else {
+            return Ok(());
+        };
+        // An unwired sink is not a decision either: no run, and retry.
+        let sink = self
+            .action_sink()
+            .map_err(|e| WorkflowError::AuthorityLookupFailed(e.to_string()))?;
+        match sink
+            .owner_writes_project(community_id, channel_id, project, owner_pubkey)
+            .await
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(WorkflowError::Unauthorized(format!(
+                "workflow owner no longer writes project {project}"
+            ))),
+            Err(e) => Err(WorkflowError::AuthorityLookupFailed(format!(
+                "project access: {e}"
+            ))),
         }
     }
 
@@ -2636,6 +2658,77 @@ steps:
         );
     }
 
+    /// Bee issue 1f0d7b3e: a project definition's owner must still write the
+    /// project when a run is admitted, not only when the definition was
+    /// saved. A decided "no" refuses; a failed read is retryable; an unwired
+    /// sink is retryable; a definition with no project never asks.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn owner_authority_rechecks_project_access() {
+        use std::sync::atomic::Ordering;
+        let db = setup_db().await;
+        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+        let project = format!("30621:{}:pulse", "1".repeat(64));
+        let (project_def, _) = WorkflowEngine::parse_yaml(&format!(
+            "name: p\nproject: '{project}'\ntrigger:\n  on: message_posted\nsteps:\n  - id: s1\n    action: send_message\n    text: hi\n"
+        ))
+        .expect("parse project def");
+        let (plain_def, _) = WorkflowEngine::parse_yaml(
+            "name: q\ntrigger:\n  on: message_posted\nsteps:\n  - id: s1\n    action: send_message\n    text: hi\n",
+        )
+        .expect("parse plain def");
+
+        let unwired = WorkflowEngine::new(db.clone(), WorkflowConfig::default());
+        assert!(matches!(
+            unwired
+                .check_owner_authority(community, channel_id, &member, &project_def)
+                .await,
+            Err(WorkflowError::AuthorityLookupFailed(_))
+        ));
+
+        let engine = WorkflowEngine::new(db.clone(), WorkflowConfig::default());
+        let sink = Arc::new(RecordingSink::default());
+        engine.set_action_sink(sink.clone());
+        engine
+            .check_owner_authority(community, channel_id, &member, &project_def)
+            .await
+            .expect("project writer is admitted");
+
+        sink.project_denied.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            engine
+                .check_owner_authority(community, channel_id, &member, &project_def)
+                .await,
+            Err(WorkflowError::Unauthorized(_))
+        ));
+
+        sink.project_lookup_fails.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            engine
+                .check_owner_authority(community, channel_id, &member, &project_def)
+                .await,
+            Err(WorkflowError::AuthorityLookupFailed(_))
+        ));
+        engine
+            .check_owner_authority(community, channel_id, &member, &plain_def)
+            .await
+            .expect("no project: the sink is never asked");
+
+        // The channel check still comes first: a removed owner is refused
+        // even while the project read would fail.
+        db.remove_member(community, channel_id, &member, &creator)
+            .await
+            .expect("remove member");
+        assert!(matches!(
+            engine
+                .check_owner_authority(community, channel_id, &member, &project_def)
+                .await,
+            Err(WorkflowError::Unauthorized(_))
+        ));
+    }
+
     /// `on_event` never starts an `application_event` workflow, even for a
     /// relay-signed, plugin-sourced kind:50000 that the trigger would accept:
     /// the durable queue is the only dispatch path for 50000. (The relay's
@@ -3273,6 +3366,10 @@ steps:
         /// Every message a step actually posted: the observable effect a
         /// definition substitution would produce (ledger 199).
         pub(crate) messages: std::sync::Mutex<Vec<String>>,
+        /// `owner_writes_project` answers `Ok(false)` when set.
+        pub(crate) project_denied: std::sync::atomic::AtomicBool,
+        /// `owner_writes_project` answers `Err` when set.
+        pub(crate) project_lookup_fails: std::sync::atomic::AtomicBool,
     }
 
     impl ActionSink for RecordingSink {
@@ -3328,6 +3425,24 @@ steps:
                 .expect("host steps lock")
                 .push(request.clone());
             Box::pin(async { Ok("bb".repeat(32)) })
+        }
+
+        fn owner_writes_project(
+            &self,
+            _community_id: CommunityId,
+            _channel_id: Uuid,
+            _project: &str,
+            _owner_pubkey: &[u8],
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, ActionSinkError>> + Send + '_>,
+        > {
+            use std::sync::atomic::Ordering;
+            let answer = if self.project_lookup_fails.load(Ordering::SeqCst) {
+                Err(ActionSinkError::Database("roster read failed".into()))
+            } else {
+                Ok(!self.project_denied.load(Ordering::SeqCst))
+            };
+            Box::pin(async move { answer })
         }
     }
 
