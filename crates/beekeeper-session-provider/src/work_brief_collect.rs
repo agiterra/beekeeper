@@ -6,12 +6,9 @@
 //! host-store reads. Keeping the render free of I/O is what lets the render be
 //! tested without a relay.
 //!
-//! **Every read here is best-effort and every failure is a sentence.** A brief
-//! is a saving, never a gate: a relay that did not answer, a plan blob this
-//! host does not have, a work record set that could not be paged — each of
-//! those produces a brief with that section replaced by its reason, and the
-//! turn opens exactly when it would have opened anyway. Nothing in this module
-//! may refuse, defer or delay a turn.
+//! Required facts must be complete before admission. A failure refuses only
+//! the dependent assignment turn through the provider's durable receipt path.
+//! The disk copy is preparation, never evidence of adapter delivery.
 //!
 //! Plan amendment A3.1: the fold's inputs are assembled by
 //! `beekeeper_core::project_work_inputs::assemble_fold_inputs` and by nothing else.
@@ -22,9 +19,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use beekeeper_core::coding_session_team_transaction::{
-    validate_coding_session_team_transaction_envelope, CodingSessionTeamAssignment,
-    CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
-    CodingSessionTeamDecisionRequest, CodingSessionTeamTransactionBody,
+    fold_coding_session_team_transactions, validate_coding_session_team_transaction_envelope,
+    CodingSessionTeamAssignment, CodingSessionTeamDecisionChoice, CodingSessionTeamFoldDecision,
+    CodingSessionTeamTransactionBody,
 };
 use beekeeper_core::kind::{KIND_CODING_SESSION_GOAL, KIND_PROJECT_WORK_RECORD};
 use beekeeper_core::project_plan::parse_plan;
@@ -41,7 +38,7 @@ use crate::agents_plan_blob::read_blob_at_commit;
 use crate::work_brief::{
     assemble_work_brief, AssignmentFacts, CommandFacts, ContractFacts, CriterionExcerpt,
     DecisionFacts, DecisionSummary, InputEstablishment, PermissionFacts, RuntimeFacts,
-    WorkBriefInputs, WORK_BRIEF_FILE_NAME,
+    WorkBriefInputs, WorkBriefRefusal, WORK_BRIEF_FILE_NAME,
 };
 
 /// Everything the caller already holds, handed over rather than looked up.
@@ -84,14 +81,11 @@ pub(crate) struct WorkBriefRequest<'a> {
     pub binding: Option<crate::execution_scope::ExecutionBinding>,
 }
 
-/// Assemble and render one work brief, or `None` when this turn is not an
-/// assignment turn this host can speak about.
-///
-/// `None` is the honest answer in exactly two cases: the pointer does not
-/// resolve to a canonical assignment bound to this seat, role and command, or
-/// the relay could not be read at all. Both mean the host has nothing
-/// *verified* to say, and an unverified brief would be worse than none.
-pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<String> {
+/// Collect a complete brief for a canonical assignment, or refuse the
+/// dependent turn. Ordinary prose is filtered by the provider before this call.
+pub(crate) async fn collect_work_brief(
+    request: WorkBriefRequest<'_>,
+) -> Result<Option<String>, WorkBriefRefusal> {
     // The seat's own project's role names, from the agents clone beside its
     // worktree; the fold below and every role check in this brief use them.
     let vocabulary = crate::team_wake::vocabulary_near(request.cwd.as_deref());
@@ -110,7 +104,7 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
                 %error,
                 "no work brief: the session's verified facts were unavailable"
             );
-            return None;
+            return Err(WorkBriefRefusal::Unavailable);
         }
     };
     let assignment = canonical_assignment(
@@ -119,7 +113,8 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
         request.command_id,
         request.actor,
         request.role,
-    )?;
+    )
+    .ok_or(WorkBriefRefusal::Unavailable)?;
     let reads = RelayAndClone {
         rest: request.rest,
         channel_ref: request.scope.channel_ref,
@@ -128,8 +123,17 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
             .project_ref
             .and_then(|project| agents_record(request.projects_file, project)),
     };
+    let fold_context = crate::team_wake::fold_context(
+        request.scope,
+        &snapshot.founder_pubkey,
+        &snapshot.authority,
+        &snapshot.vocabulary,
+    );
+    let fold = fold_coding_session_team_transactions(&snapshot.team_events, &fold_context)
+        .map_err(|_| WorkBriefRefusal::Unavailable)?;
     let context = BriefContext {
         operation_id: request.operation_id,
+        decisions: fold.decisions,
         role: request.role,
         channel: request.scope.channel_ref.to_string(),
         session_ref: request.scope.session_ref.clone(),
@@ -143,7 +147,7 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
         runtime: request.runtime.clone(),
         binding: request.binding.clone(),
     };
-    Some(
+    Ok(Some(
         assemble_brief_text(
             &context,
             &assignment,
@@ -151,8 +155,8 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
             &included_report_ids(&snapshot),
             &reads,
         )
-        .await,
-    )
+        .await?,
+    ))
 }
 
 /// Everything the brief needs that is **not** a read.
@@ -164,6 +168,8 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
 pub(crate) struct BriefContext<'a> {
     /// The assignment event id this turn's pointer names.
     pub operation_id: &'a str,
+    /// Current decision state from the canonical authority fold, before interpreting text.
+    pub decisions: Vec<CodingSessionTeamFoldDecision>,
     /// The seat's role slug.
     pub role: &'a str,
     /// Channel UUID, as text.
@@ -202,9 +208,8 @@ pub(crate) struct BriefContext<'a> {
 pub(crate) trait WorkBriefReads {
     /// Every record of `kind` in this session, as the fold's event type.
     ///
-    /// `Err` is a **read failure**, never an empty result: the brief prints
-    /// its sentence and drops section (c) rather than saying nothing is
-    /// adopted.
+    /// `Err` is a read failure, never an empty result. Required facts cannot
+    /// be established, so the dependent assignment turn is refused.
     async fn records(&self, kind: u32) -> Result<Vec<ProjectWorkEvent>, String>;
 
     /// The plan blob at a declaration's own pinned commit.
@@ -278,7 +283,7 @@ pub(crate) async fn assemble_brief_text(
     team_events: &[Event],
     included_reports: &std::collections::BTreeSet<String>,
     reads: &impl WorkBriefReads,
-) -> String {
+) -> Result<String, WorkBriefRefusal> {
     let establishment = establishment_for(
         &context.state_dir,
         context.operation_id,
@@ -287,7 +292,13 @@ pub(crate) async fn assemble_brief_text(
         &context.vocabulary,
     );
     let (contract, goal_ref, goal_first_line) = contract_for(context, reads).await;
-    let decisions = answered_decisions(team_events, context.operation_id);
+    if matches!(
+        contract,
+        ContractFacts::Unread { .. } | ContractFacts::PlanUnreadable { .. }
+    ) {
+        return Err(WorkBriefRefusal::Unavailable);
+    }
+    let decisions = answered_decisions(team_events, &context.decisions, context.operation_id)?;
     let permissions = match &context.binding {
         Some(binding) => prepared_agents_grant(binding),
         None => agents_grant(context.cwd.as_deref(), context.role),
@@ -302,7 +313,7 @@ pub(crate) async fn assemble_brief_text(
 
     let brief_path = crate::session::seat_bundle_dir(&context.state_dir, &context.session_id)
         .join(WORK_BRIEF_FILE_NAME);
-    let inputs = WorkBriefInputs {
+    let mut inputs = WorkBriefInputs {
         assignment: AssignmentFacts {
             assignment_ref: context.operation_id.to_owned(),
             role: context.role.to_owned(),
@@ -339,9 +350,14 @@ pub(crate) async fn assemble_brief_text(
         runtime: context.runtime.clone(),
         brief_path: Some(brief_path.display().to_string()),
     };
-    let text = assemble_work_brief(&inputs).render();
-    write_brief_copy(&brief_path, &text);
-    text
+    let text = assemble_work_brief(&inputs).render()?;
+    if write_brief_copy(&brief_path, &text).is_err() {
+        // The inline brief is the delivery payload. Do not claim an unwritten
+        // file exists. Removing the pointer can only reduce its byte count.
+        inputs.brief_path = None;
+        return assemble_work_brief(&inputs).render();
+    }
+    Ok(text)
 }
 
 /// The assignment behind the pointer, proven canonical and bound to this seat.
@@ -350,7 +366,7 @@ pub(crate) async fn assemble_brief_text(
 /// keeps — fold membership, envelope validation, then the actor/role/command
 /// binding — minus its role gate, because a builder's brief is worth exactly
 /// as much as a verifier's and that gate exists for a different question (what
-/// a turn *claims about a commit*). Nothing here decides whether a turn opens.
+/// a turn *claims about a commit*). An unresolved assignment cannot be briefed.
 fn canonical_assignment(
     events: &[Event],
     operation_id: &str,
@@ -481,10 +497,10 @@ async fn contract_for(
         Ok(events) => events,
         Err(reason) => return (ContractFacts::Unread { reason }, None, None),
     };
-    let goal_events = reads
-        .records(KIND_CODING_SESSION_GOAL)
-        .await
-        .unwrap_or_default();
+    let goal_events = match reads.records(KIND_CODING_SESSION_GOAL).await {
+        Ok(events) => events,
+        Err(reason) => return (ContractFacts::Unread { reason }, None, None),
+    };
     let goal_text: BTreeMap<String, String> = goal_events
         .iter()
         .map(|event| (event.id.clone(), event.content.clone()))
@@ -549,7 +565,7 @@ async fn contract_for(
     let goal_first_line = goal_ref
         .as_deref()
         .and_then(|id| goal_text.get(id))
-        .map(|text| first_line(text));
+        .cloned();
 
     let projection = fold_work(&inputs);
     let bound = projection.declarations.iter().find(|declaration| {
@@ -614,6 +630,30 @@ async fn contract_for(
             .flat_map(|(_, criterion_ids)| criterion_ids.clone())
             .collect();
     }
+    // Projection enumerates criteria present in the blob; it cannot expose a
+    // binding's missing criterion. Check the full admitted binding too. Do
+    // not let records the authority/envelope fold excluded add obligations.
+    let admitted_bindings: Vec<_> = inputs
+        .events
+        .iter()
+        .filter(|event| {
+            !projection
+                .excluded
+                .iter()
+                .any(|row| row.event_id == event.id)
+        })
+        .cloned()
+        .collect();
+    for (_, bound_ids) in assignment_bindings(&admitted_bindings, context.operation_id)
+        .into_iter()
+        .filter(|(id, _)| id == &declaration.declaration_ref)
+    {
+        for id in bound_ids {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
     let key = (
         declaration.plan_ref.repository.clone(),
         declaration.plan_ref.commit.clone(),
@@ -635,6 +675,18 @@ async fn contract_for(
             goal_first_line,
         );
     };
+    if ids
+        .iter()
+        .any(|id| !plan.criteria.iter().any(|criterion| &criterion.id == id))
+    {
+        return (
+            ContractFacts::Unread {
+                reason: "a bound criterion is absent from the pinned plan".to_owned(),
+            },
+            goal_ref,
+            goal_first_line,
+        );
+    }
     let provenance = plan_provenance(&declaration.plan_ref);
     let criteria = plan
         .criteria
@@ -708,50 +760,63 @@ fn plan_refs(events: &[ProjectWorkEvent]) -> Vec<ProjectWorkPlanRef> {
 }
 
 /// Answered decisions whose request named this assignment in `blocks`.
-fn answered_decisions(events: &[Event], assignment_ref: &str) -> Vec<DecisionSummary> {
-    let mut requests: BTreeMap<String, CodingSessionTeamDecisionRequest> = BTreeMap::new();
-    let mut answers: Vec<(String, CodingSessionTeamDecisionAnswer)> = Vec::new();
-    for event in events {
-        let Ok(payload) = validate_coding_session_team_transaction_envelope(event) else {
+fn answered_decisions(
+    events: &[Event],
+    decisions: &[CodingSessionTeamFoldDecision],
+    assignment_ref: &str,
+) -> Result<Vec<DecisionSummary>, WorkBriefRefusal> {
+    let mut summaries = Vec::new();
+    for decision in decisions {
+        if !decision
+            .blocks
+            .iter()
+            .any(|id| id.eq_ignore_ascii_case(assignment_ref))
+        {
+            continue;
+        }
+        // An unanswered canonical request remains unanswered; rejected or old
+        // answers may neither supply instructions nor manufacture a refusal.
+        let Some(event_id) = &decision.answer_event_id else {
             continue;
         };
-        match payload.body {
-            CodingSessionTeamTransactionBody::DecisionRequest(request) => {
-                requests.insert(event.id.to_hex(), request);
-            }
-            CodingSessionTeamTransactionBody::DecisionAnswer(answer) => {
-                answers.push((event.id.to_hex(), answer));
-            }
-            _ => {}
-        }
-    }
-    let mut summaries: Vec<DecisionSummary> = answers
-        .into_iter()
-        .filter_map(|(event_id, answer)| {
-            let request = requests.get(&answer.request_ref)?;
-            if !request
-                .blocks
+        let body = |id: &str| {
+            events
                 .iter()
-                .any(|id| id.eq_ignore_ascii_case(assignment_ref))
-            {
-                return None;
-            }
-            let chosen = match &answer.choice {
+                .find(|event| event.id.to_hex() == id)
+                .and_then(|event| validate_coding_session_team_transaction_envelope(event).ok())
+                .map(|payload| payload.body)
+                .ok_or(WorkBriefRefusal::Unavailable)
+        };
+        let CodingSessionTeamTransactionBody::DecisionRequest(request) =
+            body(&decision.request_event_id)?
+        else {
+            return Err(WorkBriefRefusal::Unavailable);
+        };
+        let CodingSessionTeamTransactionBody::DecisionAnswer(answer) = body(event_id)? else {
+            return Err(WorkBriefRefusal::Unavailable);
+        };
+        let chosen =
+            match &answer.choice {
                 CodingSessionTeamDecisionChoice::Index(index) => request
                     .options
                     .get(*index as usize)
-                    .cloned()
-                    .unwrap_or_else(|| format!("option {index}")),
-                CodingSessionTeamDecisionChoice::Text(text) => text.clone(),
+                    .ok_or(WorkBriefRefusal::Unavailable)?,
+                CodingSessionTeamDecisionChoice::Text(text) => text,
             };
-            Some(DecisionSummary {
-                event_id,
-                summary: format!("{} — answered: {}", first_line(&request.question), chosen),
-            })
-        })
-        .collect();
+        let mut summary = format!("{} — answered: {}", request.question, chosen);
+        if let Some(note) = &answer.note {
+            summary.push_str(&format!("\nNote: {note}"));
+        }
+        if let Some(condition) = &answer.condition {
+            summary.push_str(&format!("\nScope of ruling: {condition}"));
+        }
+        summaries.push(DecisionSummary {
+            event_id: event_id.clone(),
+            summary,
+        });
+    }
     summaries.sort_by(|a, b| a.event_id.cmp(&b.event_id));
-    summaries
+    Ok(summaries)
 }
 
 /// The report a verifier's assignment is about: the one whose `headSha` is
@@ -798,23 +863,6 @@ fn report_under_review(
     matches.next().is_none().then_some(first)
 }
 
-/// The first non-empty line of some text, bounded.
-fn first_line(text: &str) -> String {
-    let line = text
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("");
-    if line.len() <= 200 {
-        return line.to_owned();
-    }
-    let mut end = 200;
-    while end > 0 && !line.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &line[..end])
-}
-
 /// This host's clone of the project's agents repository, when it recorded one.
 fn agents_record(
     projects_file: Option<&Path>,
@@ -829,18 +877,13 @@ fn agents_record(
 /// Put the same bytes in the seat's own bundle so the brief can be re-read
 /// without scrolling a transcript.
 ///
-/// Failure is logged and nothing else: the brief in the turn is the delivery,
-/// and a seat whose disk is full still gets its work.
-fn write_brief_copy(path: &Path, text: &str) {
+/// Failure removes the disk pointer from the prepared inline payload. Neither
+/// success nor failure proves the adapter received the turn.
+fn write_brief_copy(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            tracing::debug!(target: "csp::work_brief", %error, "the seat bundle directory could not be created for the work brief");
-            return;
-        }
+        std::fs::create_dir_all(parent)?;
     }
-    if let Err(error) = std::fs::write(path, text) {
-        tracing::debug!(target: "csp::work_brief", %error, "the work brief could not be written into the seat bundle");
-    }
+    std::fs::write(path, text)
 }
 
 #[cfg(test)]

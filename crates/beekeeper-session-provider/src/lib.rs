@@ -128,6 +128,7 @@ mod turn_interrupted;
 pub mod verification_input;
 pub mod wake_relevance;
 pub mod work_brief;
+mod work_brief_admission;
 mod work_brief_collect;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -4991,9 +4992,14 @@ impl Provider {
                         return Ok(TurnDisposition::Answered(failure.code.into()));
                     }
                 };
-                let work_brief = self
+                let prepared = self
                     .assignment_work_brief(&target, &command_id, &text)
                     .await;
+                let work_brief =
+                    match self.admit_work_brief(channel_id, &command_id, &target, prepared)? {
+                        Ok(brief) => brief,
+                        Err(disposition) => return Ok(disposition),
+                    };
                 let framing = self
                     .turn_framing(
                         &target.session_id,
@@ -5913,6 +5919,9 @@ impl Provider {
                 framing.delivery = CodingSessionDelivery::Boundary;
                 framing
             });
+        if !self.admit_fallback_work_brief(attempt, framing.as_ref())? {
+            return Ok(());
+        }
         let turn = SessionCommand::Turn {
             command_id: command_id.clone(),
             text: attempt.text.clone(),
@@ -8034,82 +8043,6 @@ impl Provider {
             routing.class, routing.tier
         ),
     }
-    }
-
-    /// The host-assembled work brief for an assignment turn, or `None`.
-    ///
-    /// Thin on purpose: every fact-gathering decision lives in
-    /// [`crate::work_brief_collect`] and every rendering decision in
-    /// [`crate::work_brief`], so this method is only the provider handing over
-    /// what it already holds — the session record, the relay seam, the host's
-    /// `projects.json` and its state directory.
-    ///
-    /// Never refuses, never defers, never delays a turn past lane 202's
-    /// existing bounds. A pointer that is not an assignment, a session record
-    /// this provider does not own, a relay that did not answer: each returns
-    /// `None`, and the turn is delivered exactly as it would have been.
-    async fn assignment_work_brief(
-        &mut self,
-        target: &CodingSessionTarget,
-        command_id: &str,
-        text: &str,
-    ) -> Option<String> {
-        let operation_id = verification_input::assignment_pointer(text)?;
-        let record = self.state.session(&target.session_id)?;
-        if self.target_for(record) != *target {
-            return None;
-        }
-        let role = record.role.clone()?;
-        let actor = record.actor.clone()?;
-        let session_ref = record.session_ref.clone()?;
-        let genesis_ref = record.genesis_ref.clone()?;
-        let runtime = work_brief::RuntimeFacts {
-            runtime: record.runtime.clone(),
-            model: record.model.clone(),
-            model_source: Self::model_source_words(record),
-            compose_app_version: record
-                .compose_ref
-                .as_ref()
-                .map(|compose| compose.app_version.clone()),
-            compose_digest: record
-                .compose_ref
-                .as_ref()
-                .map(|compose| compose.digest.clone()),
-        };
-        let scope = team_wake::WakeScope {
-            channel_ref: record.channel_id,
-            session_ref,
-            genesis_ref,
-        };
-        let project_ref = record.project_ref.clone();
-        let recorded_cwd = record.cwd.clone();
-        let binding = record.execution_binding.clone();
-        let rest = self.rest_client.clone()?;
-        let relay_self = self.relay_self.clone()?;
-        let cwd = gate_cwd::resolve(
-            self.config.projects_file.as_deref(),
-            &target.session_id,
-            &recorded_cwd,
-        )
-        .present()
-        .map(Path::to_path_buf);
-        work_brief_collect::collect_work_brief(work_brief_collect::WorkBriefRequest {
-            rest: &rest,
-            relay_self: &relay_self,
-            scope: &scope,
-            operation_id: &operation_id,
-            command_id,
-            actor: &actor,
-            role: &role,
-            project_ref: project_ref.as_deref(),
-            projects_file: self.config.projects_file.as_deref(),
-            state_dir: &self.config.state_dir,
-            session_id: &target.session_id,
-            cwd,
-            runtime,
-            binding,
-        })
-        .await
     }
 
     /// Decide whether a turn may open against the input its assignment names.
@@ -12203,6 +12136,8 @@ mod tests {
     mod rewind_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
+    #[path = "work_brief_admission_tests.rs"]
+    mod work_brief_admission_tests;
     // Stops are shown by process groups disappearing: Unix only.
     #[cfg(unix)]
     #[path = "withdrawn_authority_tests.rs"]

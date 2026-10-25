@@ -179,6 +179,7 @@ fn assignment() -> CodingSessionTeamAssignment {
 fn context(state_dir: &Path) -> BriefContext<'static> {
     BriefContext {
         operation_id: ASSIGNMENT,
+        decisions: Vec::new(),
         role: "builder",
         channel: CHANNEL.to_owned(),
         session_ref: SESSION.to_owned(),
@@ -272,7 +273,8 @@ async fn the_collector_excerpts_the_criterion_from_the_pinned_commit_and_leaves_
         &BTreeSet::new(),
         &reads,
     )
-    .await;
+    .await
+    .unwrap();
 
     // (c) from the pinned commit, not the tip and not the working copy.
     assert!(
@@ -292,7 +294,7 @@ async fn the_collector_excerpts_the_criterion_from_the_pinned_commit_and_leaves_
     assert!(!text.contains("delivered-main"), "{text}");
     // (d) came through the same assembled input set.
     assert!(text.contains("Ship the kettle CLI"), "{text}");
-    assert!(!text.contains("and nothing else"), "{text}");
+    assert!(text.contains("and nothing else"), "{text}");
 
     // The seat's own bundle holds the same bytes, and the brief names it last.
     let bundle =
@@ -327,14 +329,7 @@ async fn a_commit_this_host_does_not_have_names_the_criterion_ids_and_why() {
         &reads,
     )
     .await;
-
-    assert!(
-        text.contains("plan text unavailable (that commit is not in this host's clone)"),
-        "{text}"
-    );
-    assert!(text.contains("cli-behaviour"), "{text}");
-    // Nothing was invented for a criterion whose bytes were never read.
-    assert!(!text.contains("accept:"), "{text}");
+    assert_eq!(text, Err(WorkBriefRefusal::Unavailable));
 }
 
 #[tokio::test]
@@ -357,35 +352,11 @@ async fn a_plan_path_that_could_escape_the_repository_is_refused_by_name() {
         &reads,
     )
     .await;
-
-    // The fold refuses the record before git is ever asked, and the brief
-    // prints the fold's own sentence rather than inventing one.
-    assert!(
-        text.contains(
-            "plan text unavailable (planRef.path must start with plans/ and contain no ..)"
-        ),
-        "{text}"
-    );
-    // The binding still names what this seat owes, because the record says so
-    // even though the declaration was left out.
-    assert!(text.contains("cli-behaviour"), "{text}");
-    assert!(
-        !text.contains("No adopted plan for this session"),
-        "an excluded declaration is not the same as no declaration: {text}"
-    );
-    assert!(
-        !text.contains("root:"),
-        "nothing outside the repository was read: {text}"
-    );
-    // `read_blob_at_commit` refuses the same path on its own — see
-    // `agents_plan_blob::tests::a_path_that_could_escape_or_become_a_revision_is_refused`.
-    assert!(!crate::agents_plan_blob::is_safe_blob_path(
-        "../../etc/passwd"
-    ));
+    assert_eq!(text, Err(WorkBriefRefusal::Unavailable));
 }
 
 #[tokio::test]
-async fn a_failed_record_read_drops_the_contract_and_names_the_reason() {
+async fn a_failed_record_read_refuses_instead_of_claiming_an_absent_contract() {
     let tmp = tempfile::tempdir().unwrap();
     let reads = Reads {
         records: Err("relay kind-44249 partition could not be exhausted".to_owned()),
@@ -400,19 +371,7 @@ async fn a_failed_record_read_drops_the_contract_and_names_the_reason() {
         &reads,
     )
     .await;
-
-    assert!(
-        text.contains(
-            "could not read the session's work records (relay kind-44249 partition could not be \
-             exhausted)"
-        ),
-        "{text}"
-    );
-    // A failed read never becomes "no plan is adopted".
-    assert!(!text.contains("No adopted plan for this session"), "{text}");
-    // And it never costs the seat its work or its way to answer.
-    assert!(text.contains("Build the kettle CLI"), "{text}");
-    assert!(text.contains("$BEE sessions report --channel"), "{text}");
+    assert_eq!(text, Err(WorkBriefRefusal::Unavailable));
 }
 
 #[tokio::test]
@@ -430,7 +389,8 @@ async fn a_session_with_no_declaration_gets_the_legacy_line() {
         &BTreeSet::new(),
         &reads,
     )
-    .await;
+    .await
+    .unwrap();
 
     assert!(text.contains("No adopted plan for this session"), "{text}");
     assert!(text.contains("Ship the kettle CLI"), "{text}");
@@ -455,9 +415,12 @@ async fn a_bundle_copy_that_cannot_be_written_never_costs_the_turn_its_brief() {
         &BTreeSet::new(),
         &reads,
     )
-    .await;
+    .await
+    .unwrap();
 
     assert!(text.contains("Build the kettle CLI"), "{text}");
+    assert!(!text.contains("This brief is also at"));
+    assert!(text.len() <= crate::work_brief::WORK_BRIEF_BUDGET_BYTES);
     assert!(blocked.is_file(), "the blocking file was not disturbed");
 }
 
@@ -545,4 +508,339 @@ fn the_reviewed_reports_assignment_is_read_from_the_report_itself() {
         None,
         "verifier is not a role of this project"
     );
+}
+
+/// Collector -> provider admission, with no relay service or model process.
+/// This is deliberately downstream of complete canonical reads and upstream
+/// of SessionCommand construction, exactly the production admission seam.
+#[tokio::test]
+async fn required_overflow_cannot_cross_collector_provider_admission() {
+    use crate::work_brief::WORK_BRIEF_BUDGET_BYTES;
+    struct CompleteReads {
+        plan: String,
+        extra: bool,
+    }
+    impl WorkBriefReads for CompleteReads {
+        async fn records(&self, kind: u32) -> Result<Vec<ProjectWorkEvent>, String> {
+            Ok(if kind == KIND_CODING_SESSION_GOAL {
+                vec![goal_record()]
+            } else {
+                vec![
+                    declared(&"a".repeat(40), "plans/kettle.md"),
+                    if self.extra {
+                        record(
+                            BINDING,
+                            1_001,
+                            ProjectWorkRecordType::AssignmentBound,
+                            ProjectWorkBody::AssignmentBound(ProjectWorkAssignmentBound {
+                                declaration_ref: DECLARATION.into(),
+                                criterion_ids: (0..10).map(|i| format!("criterion-{i}")).collect(),
+                                assignment_ref: ASSIGNMENT.into(),
+                                replaces_binding: None,
+                            }),
+                        )
+                    } else {
+                        bound_to_assignment()
+                    },
+                ]
+            })
+        }
+        async fn plan_blob(&self, _: &ProjectWorkPlanRef) -> Result<String, String> {
+            Ok(self.plan.clone())
+        }
+    }
+    for field in ["objective", "brief", "criteria", "permissions"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = context(dir.path());
+        let mut assignment = assignment();
+        let mut reads = CompleteReads {
+            plan: PLAN.to_owned(),
+            extra: false,
+        };
+        let long = "界".repeat(4096);
+        match field {
+            "objective" => assignment.objective = long,
+            "brief" => assignment.brief = long,
+            "criteria" => {
+                let criteria = (0..10)
+                    .map(|i| {
+                        format!(
+                            " - id: criterion-{i}\n   accept: {}\n   proof: {{kind: review}}\n",
+                            "界".repeat(300)
+                        )
+                    })
+                    .collect::<String>();
+                let start = PLAN.find("criteria:\n").unwrap() + "criteria:\n".len();
+                let end = PLAN.find("retired_criteria:").unwrap();
+                reads.plan = format!("{}{}{}", &PLAN[..start], criteria, &PLAN[end..]);
+                reads.extra = true;
+            }
+            "permissions" => {
+                ctx.binding = Some(crate::execution_scope::ExecutionBinding {
+                    scope_digest: "digest".into(),
+                    project_ref: None,
+                    actor: None,
+                    tree: None,
+                    agents: Some(PathBuf::from(long)),
+                    branch: None,
+                    agents_writable: false,
+                })
+            }
+            _ => unreachable!(),
+        }
+        let prepared = assemble_brief_text(&ctx, &assignment, &[], &BTreeSet::new(), &reads).await;
+        assert_eq!(prepared, Err(WorkBriefRefusal::TooLarge), "{field}");
+        assert!(
+            !crate::session::seat_bundle_dir(dir.path(), &ctx.session_id)
+                .join(WORK_BRIEF_FILE_NAME)
+                .exists()
+        );
+        let mut provider = crate::tests::provider(&dir.path().join("provider"), None);
+        let target = crate::CodingSessionTarget {
+            driver: "claude-agent-acp".into(),
+            instance_id: provider.config.instance_id.clone(),
+            session_id: ctx.session_id.clone(),
+            generation: 1,
+        };
+        let admitted = provider
+            .admit_work_brief(
+                uuid::Uuid::parse_str(CHANNEL).unwrap(),
+                "oversize",
+                &target,
+                prepared.map(Some),
+            )
+            .unwrap();
+        assert!(
+            matches!(admitted, Err(crate::TurnDisposition::Answered(ref code)) if code == "WORK_BRIEF_TOO_LARGE")
+        );
+        assert!(provider.state.is_command_refused("oversize"));
+        assert!(!provider.state.is_command_consumed("oversize"));
+        assert!(provider
+            .state
+            .terminal_dispositions()
+            .iter()
+            .all(|(_, row)| row.event.content.len() < WORK_BRIEF_BUDGET_BYTES));
+    }
+}
+
+#[tokio::test]
+async fn decision_questions_notes_and_scope_are_complete_or_the_turn_is_refused() {
+    use beekeeper_core::coding_session_team_transaction::*;
+    use beekeeper_sdk::coding_session_team_transaction::*;
+    let keys = nostr::Keys::generate();
+    let sign = |body| {
+        build_coding_session_team_transaction(
+            CHANNEL,
+            coding_session_team_transaction_payload(SESSION, GENESIS, None, None, body),
+        )
+        .unwrap()
+        .sign_with_keys(&keys)
+        .unwrap()
+    };
+    let question = format!("{}\nDo not touch production.", "é".repeat(110));
+    let request = sign(CodingSessionTeamTransactionBody::DecisionRequest(
+        CodingSessionTeamDecisionRequest {
+            question: question.clone(),
+            options: vec!["local only".into()],
+            held_on: "founder".into(),
+            blocks: vec![ASSIGNMENT.into()],
+            recommendation: None,
+        },
+    ));
+    let answer = sign(CodingSessionTeamTransactionBody::DecisionAnswer(
+        CodingSessionTeamDecisionAnswer {
+            request_ref: request.id.to_hex(),
+            choice: CodingSessionTeamDecisionChoice::Index(0),
+            note: Some("Never publish credentials.".into()),
+            condition: Some("Only on an isolated checkout.".into()),
+        },
+    ));
+    let events = vec![request, answer];
+    let dir = tempfile::tempdir().unwrap();
+    let reads = Reads {
+        records: Ok(vec![]),
+        goals: vec![],
+        agents: None,
+    };
+    let mut ctx = context(dir.path());
+    // Renderer fixture only; the relay-backed provider tests prove authority admission.
+    let projected = |events: &[Event]| {
+        events
+            .chunks_exact(2)
+            .map(|pair| CodingSessionTeamFoldDecision {
+                request_event_id: pair[0].id.to_hex(),
+                held_on: "founder".into(),
+                blocks: vec![ASSIGNMENT.into()],
+                answered_by: Some(keys.public_key().to_hex()),
+                answer_event_id: Some(pair[1].id.to_hex()),
+            })
+            .collect()
+    };
+    ctx.decisions = projected(&events);
+    let text = assemble_brief_text(&ctx, &assignment(), &events, &BTreeSet::new(), &reads)
+        .await
+        .unwrap();
+    for required in [
+        &question,
+        "Never publish credentials.",
+        "Only on an isolated checkout.",
+    ] {
+        assert!(text.contains(required));
+    }
+    // Many distinct valid decisions, rather than invalid oversize wire fields.
+    let mut many = Vec::new();
+    for n in 0..40 {
+        let request = sign(CodingSessionTeamTransactionBody::DecisionRequest(
+            CodingSessionTeamDecisionRequest {
+                question: format!("{n}: {question}"),
+                options: vec!["local only".into()],
+                held_on: "founder".into(),
+                blocks: vec![ASSIGNMENT.into()],
+                recommendation: None,
+            },
+        ));
+        let answer = sign(CodingSessionTeamTransactionBody::DecisionAnswer(
+            CodingSessionTeamDecisionAnswer {
+                request_ref: request.id.to_hex(),
+                choice: CodingSessionTeamDecisionChoice::Index(0),
+                note: None,
+                condition: None,
+            },
+        ));
+        many.extend([request, answer]);
+    }
+    ctx.decisions = projected(&many);
+    let prepared = assemble_brief_text(&ctx, &assignment(), &many, &BTreeSet::new(), &reads).await;
+    assert_eq!(prepared, Err(WorkBriefRefusal::TooLarge));
+    let mut provider = crate::tests::provider(&dir.path().join("provider"), None);
+    let target = crate::CodingSessionTarget {
+        driver: "claude-agent-acp".into(),
+        instance_id: provider.config.instance_id.clone(),
+        session_id: ctx.session_id.clone(),
+        generation: 1,
+    };
+    assert!(provider
+        .admit_work_brief(
+            uuid::Uuid::parse_str(CHANNEL).unwrap(),
+            "decisions",
+            &target,
+            prepared.map(Some)
+        )
+        .unwrap()
+        .is_err());
+    assert!(provider.state.is_command_refused("decisions"));
+}
+
+#[tokio::test]
+async fn rendering_changed_facts_does_not_reuse_cached_partial_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = context(dir.path());
+    let reads = Reads {
+        records: Ok(vec![]),
+        goals: vec![],
+        agents: None,
+    };
+    let mut assigned = assignment();
+    assigned.brief = "é".repeat(8192);
+    assert_eq!(
+        assemble_brief_text(&ctx, &assigned, &[], &BTreeSet::new(), &reads).await,
+        Err(WorkBriefRefusal::TooLarge)
+    );
+    assigned.brief = "Corrected complete instruction. Never edit outside kettle/.".into();
+    let text = assemble_brief_text(&ctx, &assigned, &[], &BTreeSet::new(), &reads)
+        .await
+        .unwrap();
+    assert!(text.contains(&assigned.brief));
+    assert_eq!(
+        std::fs::read_to_string(
+            crate::session::seat_bundle_dir(dir.path(), &ctx.session_id).join(WORK_BRIEF_FILE_NAME)
+        )
+        .unwrap(),
+        text
+    );
+}
+
+#[tokio::test]
+async fn failed_goal_read_is_unknown_not_no_goal() {
+    struct MissingGoal;
+    impl WorkBriefReads for MissingGoal {
+        async fn records(&self, kind: u32) -> Result<Vec<ProjectWorkEvent>, String> {
+            if kind == KIND_CODING_SESSION_GOAL {
+                Err("unavailable".into())
+            } else {
+                Ok(vec![])
+            }
+        }
+        async fn plan_blob(&self, _: &ProjectWorkPlanRef) -> Result<String, String> {
+            unreachable!()
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        assemble_brief_text(
+            &context(dir.path()),
+            &assignment(),
+            &[],
+            &BTreeSet::new(),
+            &MissingGoal
+        )
+        .await,
+        Err(WorkBriefRefusal::Unavailable)
+    );
+}
+
+#[tokio::test]
+async fn a_partially_resolved_binding_does_not_silently_lose_its_missing_criterion() {
+    let dir = tempfile::tempdir().unwrap();
+    let (agents, pinned) = agents_repo(dir.path()).await;
+    let binding = record(
+        BINDING,
+        1_001,
+        ProjectWorkRecordType::AssignmentBound,
+        ProjectWorkBody::AssignmentBound(ProjectWorkAssignmentBound {
+            declaration_ref: DECLARATION.into(),
+            criterion_ids: vec!["cli-behaviour".into(), "missing-constraint".into()],
+            assignment_ref: ASSIGNMENT.into(),
+            replaces_binding: None,
+        }),
+    );
+    let reads = Reads {
+        records: Ok(vec![declared(&pinned, "plans/kettle.md"), binding.clone()]),
+        goals: vec![goal_record()],
+        agents: Some(agents),
+    };
+    assert_eq!(
+        assemble_brief_text(
+            &context(dir.path()),
+            &assignment(),
+            &[],
+            &BTreeSet::new(),
+            &reads
+        )
+        .await,
+        Err(WorkBriefRefusal::Unavailable)
+    );
+    // A record excluded by the authority fold must not manufacture a
+    // mandatory constraint or denial for this assignment.
+    let mut foreign = binding;
+    foreign.id = "8".repeat(64);
+    foreign.pubkey = "9".repeat(64);
+    let reads = Reads {
+        records: Ok(vec![
+            declared(&pinned, "plans/kettle.md"),
+            bound_to_assignment(),
+            foreign,
+        ]),
+        goals: vec![goal_record()],
+        agents: reads.agents,
+    };
+    assert!(assemble_brief_text(
+        &context(dir.path()),
+        &assignment(),
+        &[],
+        &BTreeSet::new(),
+        &reads
+    )
+    .await
+    .is_ok());
 }

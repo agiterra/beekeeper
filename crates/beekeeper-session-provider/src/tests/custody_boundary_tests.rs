@@ -23,6 +23,9 @@ use crate::assignment_inputs::{
 };
 use crate::verification_input::VERIFICATION_INPUT_MOVED_AT_START;
 
+#[path = "custody_brief_fixture.rs"]
+mod custody_brief_fixture;
+
 /// `git` in `cwd` with the repository-selection variables cleared, so a test
 /// running under a hook cannot target the developer's own repository.
 fn git(cwd: &Path, args: &[&str]) {
@@ -322,22 +325,28 @@ async fn a_turn_refused_at_the_dequeue_is_discharged_with_a_visible_answer() {
     let channel_id = Uuid::new_v4();
     let projects = write_projects(dir.path(), channel_id, &seat);
     let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
-    let mut provider = Provider::new(config_of(Keys::generate(), &state, Some(&projects), agent))
-        .expect("provider");
+    let mut provider = Provider::new(config_of(
+        test_operator_keys().clone(),
+        &state,
+        Some(&projects),
+        agent,
+    ))
+    .expect("provider");
     let create = create_event(&provider, channel_id, "create-1");
     provider
         .handle_command_event(channel_id, &create)
         .await
         .expect("handle");
     pump_available(&mut provider).await;
-    let record = provider.state().sessions().next().expect("session").clone();
+    let mut record = provider.state().sessions().next().expect("session").clone();
+    let (assignment, server) =
+        custody_brief_fixture::prepare_assignment(&mut provider, &mut record, &second).await;
     let target = provider.target_for(&record);
     let session_id = record.session_id.clone();
 
     // A requirement for a commit the tree does **not** hold: this is the
     // state left behind when another assignment moved the tree between the
     // provider's decision and this prompt.
-    let assignment = "ef".repeat(32);
     let store = queued_store(&state, dir.path(), &seat, &assignment, &second);
     crate::assignment_custody::remember_requirement(
         &session_id,
@@ -415,6 +424,7 @@ async fn a_turn_refused_at_the_dequeue_is_discharged_with_a_visible_answer() {
         "the durable answer is idempotent under the same command id"
     );
     assert_eq!(head_of(&seat), first, "nothing moved");
+    server.abort();
 }
 
 /// R3, the interleaving Astra gives: the dequeue observes a mismatch, an

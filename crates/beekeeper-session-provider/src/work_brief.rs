@@ -32,16 +32,31 @@ use beekeeper_core::project_plan::PlanProof;
 
 /// Total budget for one rendered brief, from README § (e).
 ///
-/// A brief over budget is not truncated arbitrarily: whole sections are
-/// dropped in [`DROP_ORDER`] and the brief **says** which, so a seat is never
-/// left to wonder whether a missing section means "nothing there" or "no room".
+/// Only optional runtime detail may be omitted, with disclosure. Required
+/// content that cannot fit refuses the dependent turn.
 pub const WORK_BRIEF_BUDGET_BYTES: usize = 8_192;
 
-/// Per-criterion excerpt ceiling, from README § (e) row 1.
-pub const MAX_CRITERION_EXCERPT_BYTES: usize = 512;
+/// A dependent assignment turn cannot be safely briefed.
+/// Messages contain no source prose and remain bounded even for hostile inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WorkBriefRefusal {
+    /// Required content exceeds the complete submitted brief budget.
+    #[error("WORK_BRIEF_TOO_LARGE: assignment turn not submitted; required work brief exceeds 8192 bytes. Reduce or split the required content, then reissue the assignment with a new operation ID and bound delivery command. Recreate applicable criterion, decision and verification-input bindings for the new operation before delivery; the refused command remains terminal.")]
+    TooLarge,
+    /// Required canonical facts could not be established.
+    #[error("WORK_BRIEF_UNAVAILABLE: assignment turn not submitted; required assignment, contract, goal or decision facts could not be established. Restore the canonical records and pinned plan, then reissue the assignment with a new operation ID and bound delivery command. Recreate applicable criterion, decision and verification-input bindings for the new operation before delivery; the refused command remains terminal.")]
+    Unavailable,
+}
 
-/// Ceiling on the lead's own prose, from README § (e) row 8.
-pub const MAX_FREE_PROSE_BYTES: usize = 1_024;
+impl WorkBriefRefusal {
+    /// Stable lifecycle refusal code.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::TooLarge => "WORK_BRIEF_TOO_LARGE",
+            Self::Unavailable => "WORK_BRIEF_UNAVAILABLE",
+        }
+    }
+}
 
 /// The file the brief is also written to, inside the seat's own bundle.
 pub const WORK_BRIEF_FILE_NAME: &str = "work-brief.md";
@@ -99,19 +114,8 @@ impl WorkBriefSection {
     }
 }
 
-/// The order sections are given up in when the render is over budget.
-///
-/// Lowest value first. (f) goes before (d) because a seat that does not know
-/// which model it is can still do the work, and an answered decision it cannot
-/// see is at worst a question it asks again — whereas without (a) it has no
-/// task, without (b) it cannot answer, without (c) it does not know what
-/// "done" means, and without (e) it may exceed its authority.
-pub const DROP_ORDER: [WorkBriefSection; 4] = [
-    WorkBriefSection::Runtime,
-    WorkBriefSection::Decisions,
-    WorkBriefSection::Contract,
-    WorkBriefSection::Permissions,
-];
+/// Only runtime detail is optional; obligations and authority never are.
+pub const DROP_ORDER: [WorkBriefSection; 1] = [WorkBriefSection::Runtime];
 
 /// What the host did about the commit this assignment names (ledger 202).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +146,7 @@ pub struct AssignmentFacts {
     pub role: String,
     /// The outcome this assignment owns.
     pub objective: String,
-    /// The lead's own framing, verbatim, bounded at render time.
+    /// The lead's own framing, verbatim; never truncated.
     pub brief: String,
     /// The branch this seat's worktree is on, as the host pinned it when it
     /// prepared the execution — the one branch the seat can commit to.
@@ -244,7 +248,7 @@ pub struct DecisionSummary {
 pub struct DecisionFacts {
     /// The session's current kind:44227 goal event id.
     pub goal_ref: Option<String>,
-    /// Its first line.
+    /// Its complete text (the field name is retained for compatibility).
     pub goal_first_line: Option<String>,
     /// Answered decisions whose request named this assignment in `blocks`.
     pub decisions: Vec<DecisionSummary>,
@@ -361,8 +365,7 @@ impl WorkBrief {
     /// that has to drop something is measured with the disclosure included; a
     /// budget that could only be met by hiding the disclosure would be the
     /// silent truncation this whole rule exists to prevent.
-    #[must_use]
-    pub fn render(&self) -> String {
+    pub fn render(&self) -> Result<String, WorkBriefRefusal> {
         let mut dropped: Vec<WorkBriefSection> = Vec::new();
         for candidate in [None].into_iter().chain(DROP_ORDER.map(Some)) {
             if let Some(section) = candidate {
@@ -370,18 +373,10 @@ impl WorkBrief {
             }
             let text = self.render_without(&dropped);
             if text.len() <= WORK_BRIEF_BUDGET_BYTES {
-                return text;
+                return Ok(text);
             }
         }
-        // Even (a) and (b) alone are over budget: keep them, because a seat
-        // with no task and no way to answer is worse than a long brief, and
-        // say so rather than cutting an identifier in half.
-        let text = self.render_without(&dropped);
-        format!(
-            "{text}\n\nThis brief is {} bytes, over the {WORK_BRIEF_BUDGET_BYTES}-byte budget \
-             even with every optional section dropped. Nothing above was cut mid-identifier.",
-            text.len()
-        )
+        Err(WorkBriefRefusal::TooLarge)
     }
 
     fn render_without(&self, dropped: &[WorkBriefSection]) -> String {
@@ -415,25 +410,6 @@ impl WorkBrief {
     }
 }
 
-/// Cut `text` to at most `budget` bytes on a character boundary, appending a
-/// marker naming where the whole of it is.
-///
-/// Never mid-identifier in the sense that matters: the cut is announced, and
-/// the provenance the marker names is a coordinate a seat can read the full
-/// text from.
-fn bounded(text: &str, budget: usize, whole: &str) -> String {
-    if text.len() <= budget {
-        return text.to_owned();
-    }
-    let marker = format!(" […truncated; the whole of it is at {whole}]");
-    let room = budget.saturating_sub(marker.len());
-    let mut end = room.min(text.len());
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{marker}", &text[..end])
-}
-
 fn render_owed(facts: &AssignmentFacts) -> String {
     let mut out = String::from(WorkBriefSection::Owed.heading());
     let _ = write!(
@@ -442,15 +418,7 @@ fn render_owed(facts: &AssignmentFacts) -> String {
         facts.role, facts.assignment_ref, facts.objective
     );
     if !facts.brief.is_empty() {
-        let _ = write!(
-            out,
-            "\n\nThe lead's brief, verbatim:\n{}",
-            bounded(
-                &facts.brief,
-                MAX_FREE_PROSE_BYTES,
-                &format!("assignment {}", facts.assignment_ref)
-            )
-        );
+        let _ = write!(out, "\n\nThe lead's brief, verbatim:\n{}", facts.brief);
     }
     if !facts.acceptance_steps.is_empty() {
         out.push_str("\n\nAcceptance steps, in order:");
@@ -620,11 +588,7 @@ fn render_contract(facts: &ContractFacts) -> String {
                     "\n\n- {} — {}\n  accept: {}\n  {}",
                     criterion.id,
                     criterion.provenance,
-                    bounded(
-                        &criterion.accept,
-                        MAX_CRITERION_EXCERPT_BYTES,
-                        &criterion.provenance
-                    ),
+                    criterion.accept,
                     proof_words(criterion.proof.as_ref())
                 );
             }

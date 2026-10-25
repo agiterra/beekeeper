@@ -43,37 +43,6 @@ fn command_lines(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// A brief whose optional sections are deliberately bulky, so a test can see
-/// which of them the budget gives up first rather than guess from a total.
-fn over_budget_inputs(criteria: usize, decisions: usize) -> WorkBriefInputs {
-    let mut inputs = builder_inputs();
-    inputs.runtime.model_source = format!(
-        "routed by the project's model registry; {}",
-        "y".repeat(760)
-    );
-    inputs.decisions.decisions = (0..decisions)
-        .map(|index| DecisionSummary {
-            event_id: format!("{index:064}"),
-            summary: "z".repeat(90),
-        })
-        .collect();
-    inputs.contract = ContractFacts::Declared {
-        declaration_ref: "d".repeat(64),
-        plan_provenance: "kettle-beekeeper-agents@0123456789ab:plans/kettle.md".into(),
-        criteria: (0..criteria)
-            .map(|index| CriterionExcerpt {
-                id: format!("criterion-{index:02}"),
-                accept: "x".repeat(600),
-                provenance: format!(
-                    "kettle-beekeeper-agents@0123456789ab:plans/kettle.md#criterion-{index:02}"
-                ),
-                proof: Some(PlanProof::Review),
-            })
-            .collect(),
-    };
-    inputs
-}
-
 fn builder_inputs() -> WorkBriefInputs {
     WorkBriefInputs {
         assignment: AssignmentFacts {
@@ -153,7 +122,7 @@ fn builder_inputs() -> WorkBriefInputs {
 
 #[test]
 fn a_builder_under_a_declaration_gets_both_criteria_verbatim_with_provenance() {
-    let text = assemble_work_brief(&builder_inputs()).render();
+    let text = assemble_work_brief(&builder_inputs()).render().unwrap();
 
     // (a)
     assert!(
@@ -231,7 +200,7 @@ fn a_verifier_is_given_its_verdict_line_its_report_and_the_established_commit() 
     inputs.assignment.establishment = InputEstablishment::Established {
         commit: "b".repeat(40),
     };
-    let text = assemble_work_brief(&inputs).render();
+    let text = assemble_work_brief(&inputs).render().unwrap();
 
     assert!(
         text.contains("this host has already put this worktree on"),
@@ -257,7 +226,7 @@ fn a_verifier_whose_report_could_not_be_resolved_is_told_so_rather_than_given_a_
     inputs.assignment.role = "verifier".into();
     inputs.commands.role = "verifier".into();
     inputs.commands.report_ref = None;
-    let text = assemble_work_brief(&inputs).render();
+    let text = assemble_work_brief(&inputs).render().unwrap();
     assert!(
         text.contains("could not resolve which report this verification is about"),
         "{text}"
@@ -285,7 +254,7 @@ fn a_verdict_names_the_reviewed_reports_assignment_never_the_verifiers_own() {
     inputs.commands.role = "verifier".into();
     inputs.commands.report_ref = Some("9".repeat(64));
     inputs.commands.verdict_assignment_ref = Some(reviewed.clone());
-    let text = assemble_work_brief(&inputs).render();
+    let text = assemble_work_brief(&inputs).render().unwrap();
     assert!(
         text.contains(&format!("its `assignmentRef` is {reviewed}")),
         "{text}"
@@ -309,7 +278,7 @@ fn the_brief_names_the_allocated_branch_and_pushes_to_the_assignments_name() {
     let mut inputs = builder_inputs();
     inputs.assignment.branch = Some("coding-session-builder-1".into());
     inputs.assignment.assignment_branch = Some("work/lapbook-cli".into());
-    let text = assemble_work_brief(&inputs).render();
+    let text = assemble_work_brief(&inputs).render().unwrap();
     assert!(
         text.contains("Branch: `coding-session-builder-1`, allocated to this worktree by the host"),
         "{text}"
@@ -326,7 +295,7 @@ fn a_legacy_session_with_no_declaration_still_gets_a_useful_brief() {
     let mut inputs = builder_inputs();
     inputs.contract = ContractFacts::None;
     inputs.decisions = DecisionFacts::default();
-    let text = assemble_work_brief(&inputs).render();
+    let text = assemble_work_brief(&inputs).render().unwrap();
 
     assert!(text.contains("No adopted plan for this session"), "{text}");
     assert!(
@@ -353,7 +322,7 @@ fn an_unreadable_plan_blob_names_the_criterion_ids_and_says_why() {
         reason: "that commit is not in this host's clone".into(),
         criterion_ids: vec!["cli-behaviour".into(), "gates-green".into()],
     };
-    let text = assemble_work_brief(&inputs).render();
+    let text = assemble_work_brief(&inputs).render().unwrap();
 
     assert!(
         text.contains("plan text unavailable (that commit is not in this host's clone)"),
@@ -365,65 +334,68 @@ fn an_unreadable_plan_blob_names_the_criterion_ids_and_says_why() {
 }
 
 #[test]
-fn an_over_budget_brief_drops_what_you_are_then_decisions_and_says_which() {
-    let text = assemble_work_brief(&over_budget_inputs(8, 7)).render();
-
-    assert!(
-        text.len() <= WORK_BRIEF_BUDGET_BYTES,
-        "{} bytes",
-        text.len()
-    );
-    assert!(
-        text.contains(
-            "Dropped to fit the 8192-byte brief budget: what you are, decisions in force."
-        ),
-        "{text}"
-    );
-    assert!(!text.contains("## WHAT YOU ARE"), "{text}");
-    assert!(!text.contains("## DECISIONS IN FORCE"), "{text}");
-    // (a), (b) and the contract survive: they are what the turn is for.
-    assert!(text.contains("## WHAT YOU OWE"), "{text}");
-    assert!(text.contains("## HOW TO ANSWER (ready to run)"), "{text}");
-    assert!(text.contains("## THE CONTRACT"), "{text}");
-    // Each excerpt was cut with its own provenance named, never mid-nothing.
-    assert!(
-        text.contains("…truncated; the whole of it is at kettle-beekeeper-agents@0123456789ab:plans/kettle.md#criterion-00"),
-        "{text}"
-    );
-    // No identifier was cut: the assignment id the seat must quote is whole.
-    assert!(text.contains(&"a".repeat(64)), "{text}");
+fn required_sections_are_never_dropped_or_truncated() {
+    for section in [
+        WorkBriefSection::Owed,
+        WorkBriefSection::Commands,
+        WorkBriefSection::Contract,
+        WorkBriefSection::Decisions,
+        WorkBriefSection::Permissions,
+    ] {
+        let mut brief = assemble_work_brief(&builder_inputs());
+        brief
+            .sections
+            .iter_mut()
+            .find(|s| s.section == section)
+            .unwrap()
+            .body = "義務".repeat(4096);
+        assert_eq!(
+            brief.render(),
+            Err(WorkBriefRefusal::TooLarge),
+            "{section:?}"
+        );
+    }
 }
 
 #[test]
-fn what_you_are_is_given_up_before_decisions_are() {
-    let text = assemble_work_brief(&over_budget_inputs(8, 1)).render();
-    assert!(
-        text.len() <= WORK_BRIEF_BUDGET_BYTES,
-        "{} bytes",
-        text.len()
-    );
-    assert!(
-        text.contains("Dropped to fit the 8192-byte brief budget: what you are."),
-        "{text}"
-    );
-    assert!(!text.contains("## WHAT YOU ARE"), "{text}");
-    assert!(text.contains("## DECISIONS IN FORCE"), "{text}");
+fn only_runtime_can_be_omitted_with_disclosure_inside_the_byte_bound() {
+    let mut inputs = builder_inputs();
+    inputs.runtime.model_source = "🦀".repeat(8192);
+    let text = assemble_work_brief(&inputs).render().unwrap();
+    assert!(text.len() <= WORK_BRIEF_BUDGET_BYTES);
+    assert!(text.contains("Dropped to fit the 8192-byte brief budget: what you are."));
+    for heading in [
+        "## WHAT YOU OWE",
+        "## THE CONTRACT",
+        "## DECISIONS IN FORCE",
+        "## WHAT YOU MAY DO",
+    ] {
+        assert!(text.contains(heading));
+    }
 }
 
 #[test]
-fn the_drop_order_never_gives_up_what_you_owe_or_how_to_answer() {
-    assert!(!DROP_ORDER.contains(&WorkBriefSection::Owed));
-    assert!(!DROP_ORDER.contains(&WorkBriefSection::Commands));
-    assert_eq!(DROP_ORDER[0], WorkBriefSection::Runtime);
-    assert_eq!(DROP_ORDER[1], WorkBriefSection::Decisions);
+fn field_thresholds_do_not_hide_constraints_in_prose_or_criteria() {
+    let mut inputs = builder_inputs();
+    inputs.assignment.brief = format!("{}\nNever publish private material.", "é".repeat(550));
+    if let ContractFacts::Declared { criteria, .. } = &mut inputs.contract {
+        criteria[0].accept = format!("{}\nOnly with the recorded grant.", "界".repeat(180));
+    }
+    let text = assemble_work_brief(&inputs).render().unwrap();
+    assert!(text.contains(&inputs.assignment.brief));
+    assert!(text.contains("Only with the recorded grant."));
+    assert!(!text.contains("truncated"));
+    inputs.assignment.brief = "é".repeat(8192);
+    assert_eq!(
+        assemble_work_brief(&inputs).render(),
+        Err(WorkBriefRefusal::TooLarge)
+    );
 }
 
 #[test]
-fn an_excerpt_is_cut_on_a_character_boundary_and_names_where_the_rest_is() {
-    let whole = "repo@abc123456789:plans/p.md#c";
-    let text = bounded(&"é".repeat(400), MAX_CRITERION_EXCERPT_BYTES, whole);
-    assert!(text.len() <= MAX_CRITERION_EXCERPT_BYTES, "{}", text.len());
-    assert!(text.contains(whole), "{text}");
-    // Valid UTF-8 by construction: a panicking slice would have failed above.
-    assert!(text.starts_with('é'));
+fn refusal_messages_are_bounded_and_do_not_echo_required_content() {
+    for refusal in [WorkBriefRefusal::TooLarge, WorkBriefRefusal::Unavailable] {
+        assert!(refusal.to_string().len() < WORK_BRIEF_BUDGET_BYTES);
+        assert!(refusal.to_string().contains("not submitted"));
+    }
 }

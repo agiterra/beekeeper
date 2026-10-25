@@ -1001,31 +1001,57 @@ Exit `0` whatever the coverage says; `2`/`3` for relay and auth failures.
 
 ## (e) The work brief
 
-What a seat is handed when its assignment is bound to criteria. Total budget
-**8 192 bytes**, allocated per field. Over budget, an excerpt is truncated
-with an explicit marker naming the full path and commit — never silently.
+A host-prepared brief for a canonical assignment has a strict **8 192-byte
+UTF-8 bound**, including headings, provenance, disk pointer and omission text.
+This bounds the work brief, not the whole turn envelope or role bundle.
 
-| # | field | budget | content |
-|---|---|---|---|
-| 1 | criterion excerpts | 4 096 B (≤ 512 B each) | for each bound criterion: its `id`, its `accept` **verbatim**, and provenance `<repo>@<commit-12>:<path>` |
-| 2 | goal and decision refs | 512 B | the `goalRef` and any decision events that bound the scope, event id + one line each |
-| 3 | exact code base | 512 B | code repository id, `delivery_ref`, the full 40-hex base commit, and the absolute worktree path the seat runs in |
-| 4 | role obligations | 256 B | the staged role's template name and revision, and the absolute path to its bundle — a **pointer**, never the role text (the seat already has it) |
-| 5 | effective permissions | 512 B | plan access (`none` \| `read` \| `write`), whether host-step approval is held (it never is, for a seat), push authority |
-| 6 | model source | 256 B | routed or unrouted, and which registry answered (agents repository \| code checkout \| shipped default) |
-| 7 | report example | 1 024 B | the exact `bee sessions report --example` command and the required key list |
-| 8 | free prose | 1 024 B | the lead's own framing |
+| Field | Required content |
+|---|---|
+| Assignment | Objective, lead framing, acceptance steps, owned paths, allocated/assignment branch and exact base/worktree facts |
+| Commands | Assignment/session/genesis/channel references and report/verdict commands |
+| Contract | Every bound criterion's complete `accept` text, proof form and pinned `<repo>@<commit-12>:<path>#<criterion>` provenance |
+| Decisions | Complete current goal text and applicable answered questions, selected answers, notes and ruling scope, with event references |
+| Permissions | Recorded agents-repository access/path and push authority; the brief itself grants nothing |
+| Runtime (optional) | Effective runtime/model/source and composed template revision |
 
-Rules:
+Required text is never shortened to a per-field excerpt. In particular, the
+former 512-byte criterion and 1 024-byte prose ceilings must not hide a trailing
+constraint behind a full-record pointer. No model fetch of missing mandatory
+information is presumed. Small briefs retain their normal content and order.
+Only the runtime section may be omitted, with a disclosure counted in the bound.
+The whole repository, unbound criteria, role prose and transcripts remain out.
 
-- **Never the whole repository, never the whole plan body.** Only the bound
-  criteria's `accept` text, with provenance.
-- Access grants: `none` means no clone and only the excerpt above; `read`
-  means inspect the clone and propose an edit through a report; `write` is for
-  the lead and Project Setup in this slice. The grant concerns the working
-  copy, not relay push permission.
-- Provenance is mandatory on every excerpt. A criterion quoted without its
-  commit is a quotation a seat cannot re-read.
+If required content still cannot fit, the provider refuses **that assignment
+turn**, before constructing/submitting its adapter command, with
+`WORK_BRIEF_TOO_LARGE`. If the canonical assignment, work/goal reads or pinned
+bound criteria cannot be established, it refuses with `WORK_BRIEF_UNAVAILABLE`.
+A successful empty work read still permits legacy assignments with no adopted
+plan. Ordinary unassigned prose receives no work brief and is unchanged.
+
+Refusals use the existing staged `turn_refused` receipt/outbox machinery. Their
+bounded messages do not echo source prose, and do not claim a prompt ran.
+A redelivery cannot retry the refused command; its staged answer is replayed
+while publication is owed. After correcting the source, reissue the assignment
+with a new operation ID and its own bound delivery command (superseding the old
+assignment when replacing the same responsibility). Recreate applicable work
+criterion bindings, decision requests/answers and verification-input establishment
+against the new operation before delivery. A new command pointing to the old
+assignment fails its immutable `deliveryCommandId` binding. Restoring data alone
+does not reopen the refused command. Applicable decisions come from the canonical
+authority fold's current request/answer projection: unauthorized and superseded
+answers are neither instructions nor budget inputs; unanswered requests remain
+unanswered. A reconstructed native-steer fallback that lost its prepared brief
+also refuses; it must not deliver a bare assignment pointer. This is a deliberate
+compatibility change from best-effort omission
+and oversized fallback, limited to dependent assignment turns. The host and
+unrelated conversations continue. Prompt text is not authorization enforcement;
+existing grant and execution fences remain authoritative.
+
+The disk copy is optional preparation. A failed write removes its pointer from
+the inline payload; it does not remove the brief or claim delivery. Only the
+existing adapter delivery/turn receipts report submission or execution. Tests
+cover collector-to-provider admission, field overflow, Unicode, unavailable
+records, copy failure and durable refusal replay, without a live model.
 
 ---
 
