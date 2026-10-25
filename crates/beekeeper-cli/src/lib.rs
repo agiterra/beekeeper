@@ -3466,6 +3466,9 @@ pub enum SessionsCmd {
     /// Resume an exact disconnected execution as its next generation.
     /// Waits for the provider receipt; relay acceptance alone is unconfirmed.
     /// Does not replay turns or recover an orphaned runtime run.
+    #[command(
+        after_help = "Recipe:\n  bee sessions resume --channel <uuid> --to <exact-cs-target>\n\nUse the complete target from `bee sessions list`, including its generation. Inspect the signed receipt for context warnings; resume does not replay a prior turn."
+    )]
     Resume(SessionsResumeArgs),
     /// Ask an umbrella's host to seat a new agent on a role (kind 44221
     /// `session.hire`).
@@ -7284,6 +7287,7 @@ mod tests {
                 "policy",
                 "registry",
                 "report",
+                "resume",
                 "revoke",
                 "revoke-seat",
                 "rewind",
@@ -7505,7 +7509,7 @@ mod tests {
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
             // C3b lane C: `rewind` (SV-29).
-            ("sessions", 46),
+            ("sessions", 47),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),
