@@ -42,37 +42,41 @@ fn exercise(logging: LoggingMode, level: tracing::Level) -> (String, String) {
         .build()
         .unwrap();
     let tail = runtime.block_on(async {
+        // Bash, its builtins and coreutils sleep: the Linux CI image (scripts/ci-image)
+        // carries no python3 or jq. Requests arrive as compact serde_json with
+        // the numeric `id` key first, so the first `"id":N` is the request's.
         let script = format!(r#"
-import json, sys, time
-print('{STDERR}', file=sys.stderr, flush=True)
-def emit(value):
-    print(json.dumps(value), flush=True)
-def update(value):
-    emit({{'jsonrpc':'2.0','method':'session/update','params':{{'sessionId':'{ID}','update':value}}}})
-for line in sys.stdin:
-    msg=json.loads(line)
-    method=msg.get('method')
-    if method=='initialize':
-        result={{'protocolVersion':1,'agentInfo':{{'name':'{INIT}'}}}}
-    elif method=='session/new':
-        result={{'sessionId':'{ID}'}}
-    elif method=='session/prompt':
-        update({{'sessionUpdate':'agent_message_chunk','content':{{'type':'text','text':'{INCOMING}'}}}})
-        update({{'sessionUpdate':'agent_thought_chunk','content':{{'type':'text','text':'{INCOMING}'}}}})
-        update({{'sessionUpdate':'tool_call','toolCallId':'{TOOL}','title':'{TOOL}','kind':'read'}})
-        update({{'sessionUpdate':'tool_call_update','toolCallId':'{TOOL}','status':'completed'}})
-        emit({{'jsonrpc':'2.0','id':'{PERMISSION}','method':'session/request_permission','params':{{'sessionId':'{ID}','options':[{{'kind':'allow_once','optionId':'{PERMISSION}'}}]}}}})
-        json.loads(sys.stdin.readline())
-        result={{'stopReason':'end_turn'}}
-    else:
-        continue
-    emit({{'jsonrpc':'2.0','id':msg['id'],'result':result}})
-    if method=='session/prompt':
-        time.sleep(0.02)
-        print('{LATE}', file=sys.stderr, flush=True)
+printf '%s\n' '{STDERR}' >&2
+emit() {{ printf '%s\n' "$1"; }}
+update() {{ emit '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"{ID}","update":'"$1"'}}}}'; }}
+while IFS= read -r line; do
+    [[ $line =~ \"id\":([0-9]+) ]] || continue
+    id=${{BASH_REMATCH[1]}}
+    case $line in
+        *'"method":"initialize"'*)
+            result='{{"protocolVersion":1,"agentInfo":{{"name":"{INIT}"}}}}' ;;
+        *'"method":"session/new"'*)
+            result='{{"sessionId":"{ID}"}}' ;;
+        *'"method":"session/prompt"'*)
+            update '{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"{INCOMING}"}}}}'
+            update '{{"sessionUpdate":"agent_thought_chunk","content":{{"type":"text","text":"{INCOMING}"}}}}'
+            update '{{"sessionUpdate":"tool_call","toolCallId":"{TOOL}","title":"{TOOL}","kind":"read"}}'
+            update '{{"sessionUpdate":"tool_call_update","toolCallId":"{TOOL}","status":"completed"}}'
+            emit '{{"jsonrpc":"2.0","id":"{PERMISSION}","method":"session/request_permission","params":{{"sessionId":"{ID}","options":[{{"kind":"allow_once","optionId":"{PERMISSION}"}}]}}}}'
+            IFS= read -r permission_reply
+            result='{{"stopReason":"end_turn"}}' ;;
+        *)
+            continue ;;
+    esac
+    emit '{{"jsonrpc":"2.0","id":'"$id"',"result":'"$result"'}}'
+    if [[ $line == *'"method":"session/prompt"'* ]]; then
+        sleep 0.02
+        printf '%s\n' '{LATE}' >&2
+    fi
+done
 "#);
         let mut client = AcpClient::spawn_with_env_fence_and_overrides_and_logging(
-            "python3", &["-u".into(), "-c".into(), script], &[], false,
+            "bash", &["-c".into(), script], &[], false,
             &EnvFence::OPEN, &[], None, logging,
         ).await.unwrap();
         client.initialize().await.unwrap();
