@@ -3174,3 +3174,74 @@ The same binding again publishes nothing. `status` then reads the criterion
    with its reason; `--without-coverage "<reason>"` publishes and prints that
    the reason is **not** on the wire and must be recorded in Pulse. A session
    with no declaration completes exactly as before.
+
+## Private continuity (`bee mem continuity`)
+
+Run the deterministic CLI/HTTP workflow without shared services or real keys:
+
+```bash
+cargo test -p beekeeper-cli --test mem_continuity
+cargo test -p beekeeper-cli commands::mem::tests
+cargo clippy -p beekeeper-cli --all-targets -- -D warnings
+```
+
+`mem_continuity` uses fixture signatures, an isolated loopback relay, and the
+actual binary's parsing/dispatch. It covers create → correction B (A removed
+from the relay) → owner read → withdrawal, fresh evidence checks after removal
+or access failure, exact head readback, stale bases, visible forks, malformed
+newest heads, invalid signatures, bounds, and uncertain submission after lost
+acknowledgement/readback. Socket loss after storing the event must produce one
+submission and `submitted_unknown` with that exact event ID.
+
+For an authorized private workflow (stdout contains private claims/evidence):
+
+```bash
+bee --format compact mem continuity get --channel <uuid> [--session <uuid>] \
+  [--claim <id> ...] [--owner <owner-hex>]
+bee --format compact mem continuity put --channel <uuid> [--session <uuid>] \
+  --file <complete-record.json-or-> --base-event <head-hex-or-absent> \
+  [--owner <owner-hex>]
+# Owner-side recovery, with the owner's signing key:
+bee --format compact mem continuity get --channel <uuid> --agent <actor-hex>
+```
+
+Agent-side continuity requires a cryptographically verified NIP-OA attestation;
+`--owner` only asserts a match to that custody, never establishes authority.
+The current relay enforces access on every read/submission. Owner-side `--agent`
+is read-only and cannot be combined with `--owner`. Ordinary `mem` behavior is
+unchanged. Non-root relay paths are refused by the continuity scope convention.
+
+Put accepts the complete decoded `beekeeper-continuity/1` record specified in
+NIP-AE's companion contract. Duplicate/unknown fields, omitted prior claims,
+wrong bases, unannotated changes and oversized input are refused before send.
+Use withdrawal, not omission. The body base and `--base-event` must both match
+an immediately observed valid head; `absent` requires a complete empty query,
+never a tombstone or failed query. A visible fork needs an explicit correction.
+
+The write emits `confirmed_at_read` only after acceptance and an exact signed
+head ID/value readback. It uses the existing client's one-shot authenticated
+POST (`post_bootstrap`) to `/events`, because `submit_event` retries stored
+events even after acknowledgement loss. No new relay endpoint or transport is
+introduced. Failure after sending emits `submitted_unknown` with the attempted
+ID, exit 2; resolve it with a read instead of blindly repeating put. A different
+observed head is `conflict`, exit 5. Input/auth failures are exits 1/3. Head
+uncertainty is a JSON `unknown` plus exit 2; individual unknown claims remain a
+successful snapshot read, with bounded reason codes and unresolved source IDs.
+
+Get reports the canonical relay/scope, head ID, exact value hash, head read
+time/result count/coverage and evidence completion time. Sources are queried
+by exact ID, kind and channel, then signature/content/excerpt checked; successful
+results are never reused on a later invocation. A signed assertion with readable
+evidence is not proof of truth. Withdrawals never return text as a current claim.
+
+These are single-community read-time observations, not CAS, immutable history,
+or lossless multi-writer storage. Two writers may each briefly confirm; a relay
+may discard an unseen loser. Later writes or revocation can supersede a success.
+Full live fresh-native-conversation acceptance remains the parent C4 workflow.
+
+Known codec limitation: a visible fork-only claim ID absent from the winning
+head cannot currently be explicitly corrected by the structured writer. The
+shared transition validator forbids correction metadata on a new ID, while
+silently omitting the losing claim would conceal conflict. The CLI refuses both
+omission and invented provenance; `fork_only_claim_remains_refused_until_core_can_express_resolution`
+pins this conservative behavior pending the core owner's protocol decision.

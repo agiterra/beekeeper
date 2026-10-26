@@ -123,6 +123,7 @@ type Waiter = oneshot::Sender<Result<serde_json::Value, AcpError>>;
 /// Everything the reader decides with, behind one lock so a routing decision
 /// and an attach or detach can never interleave.
 pub(super) struct RouterState {
+    logging: LoggingMode,
     waiters: HashMap<u64, Waiter>,
     inbox_tx: Option<mpsc::UnboundedSender<Inbound>>,
     answer_tx: Option<mpsc::UnboundedSender<serde_json::Value>>,
@@ -153,10 +154,12 @@ impl Router {
     pub(super) fn start(
         stdout: ChildStdout,
         stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
+        logging: LoggingMode,
     ) -> (Self, mpsc::UnboundedReceiver<Inbound>) {
         let (inbox_tx, inbox_rx) = mpsc::unbounded_channel();
         let (answer_tx, answer_rx) = mpsc::unbounded_channel();
         let router = Router(Arc::new(Mutex::new(RouterState {
+            logging,
             waiters: HashMap::new(),
             inbox_tx: Some(inbox_tx),
             answer_tx: Some(answer_tx),
@@ -277,7 +280,7 @@ impl RouterState {
             Some(tx) => {
                 let _ = tx.send(msg);
             }
-            None => tracing::warn!(
+            None => acp_log!(self.logging, warn,
                 target: "acp::wire",
                 "agent request arrived after the answerer stopped; it goes unanswered"
             ),
@@ -360,6 +363,7 @@ fn route(router: &Router, msg: serde_json::Value, len: usize) {
 
 /// The one reader of the adapter's stdout.
 async fn read_stdout(stdout: ChildStdout, router: Router) {
+    let logging = router.lock().logging;
     // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the read
     // level — the buffer never grows beyond the limit, so a rogue agent
     // writing endless bytes without a newline cannot exhaust memory.
@@ -387,7 +391,7 @@ async fn read_stdout(stdout: ChildStdout, router: Router) {
                 if trimmed.is_empty() {
                     continue;
                 }
-                tracing::debug!(target: "acp::wire", "← {trimmed}");
+                acp_log!(logging, debug, target: "acp::wire", "← {trimmed}");
                 match serde_json::from_str::<serde_json::Value>(trimmed) {
                     Ok(msg) => route(&router, msg, trimmed.len()),
                     Err(error) => {
@@ -398,7 +402,7 @@ async fn read_stdout(stdout: ChildStdout, router: Router) {
                                 "error": error.to_string(),
                             }),
                         );
-                        tracing::warn!(
+                        acp_log!(logging, warn,
                             target: "acp::wire",
                             "failed to parse line as JSON: {error} — skipping"
                         );
@@ -415,17 +419,17 @@ async fn read_stdout(stdout: ChildStdout, router: Router) {
 /// permission request with no usable option is answered `cancelled` rather
 /// than left hanging, because between turns there is no turn to fail in its
 /// place. Any other request is answered -32601, as every read loop does.
-fn reply_to(msg: &serde_json::Value) -> serde_json::Value {
+fn reply_to(msg: &serde_json::Value, logging: LoggingMode) -> serde_json::Value {
     let id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
     let method = msg
         .get("method")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
     if method == "session/request_permission" {
-        return match permission_reply(msg) {
+        return match permission_reply(msg, logging) {
             Ok(reply) => reply,
             Err(error) => {
-                tracing::warn!(
+                acp_log!(logging, warn,
                     target: "acp::permission",
                     "between-turn permission request id={id} has no usable option ({error}); \
                      answering cancelled"
@@ -434,7 +438,7 @@ fn reply_to(msg: &serde_json::Value) -> serde_json::Value {
             }
         };
     }
-    tracing::debug!(target: "acp::wire", "ignoring unknown method: {method}");
+    acp_log!(logging, debug, target: "acp::wire", "ignoring unknown method: {method}");
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -448,8 +452,9 @@ async fn answer_requests(
     stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
     router: Router,
 ) {
+    let logging = router.lock().logging;
     while let Some(msg) = requests.recv().await {
-        let reply = reply_to(&msg);
+        let reply = reply_to(&msg, logging);
         let Ok(line) = serde_json::to_string(&reply) else {
             continue;
         };
@@ -463,9 +468,9 @@ async fn answer_requests(
         match written {
             Ok(Ok(())) => router.lock().observe("acp_write", reply),
             Ok(Err(error)) => {
-                tracing::warn!(target: "acp::wire", "between-turn reply failed: {error}");
+                acp_log!(logging, warn, target: "acp::wire", "between-turn reply failed: {error}");
             }
-            Err(_) => tracing::warn!(
+            Err(_) => acp_log!(logging, warn,
                 target: "acp::wire",
                 "between-turn reply timed out after {ANSWER_WRITE_TIMEOUT:?}: the agent stopped reading"
             ),
@@ -518,7 +523,7 @@ impl AcpClient {
         }
         for msg in leftovers {
             if !self.route_late_steer_ack(&msg) {
-                tracing::debug!(target: "acp::wire", "dropping stray response left after the prompt");
+                acp_log!(self.logging, debug, target: "acp::wire", "dropping stray response left after the prompt");
             }
         }
     }
@@ -569,7 +574,7 @@ impl AcpClient {
             if msg.get("method").is_some() {
                 self.apply_notification(&msg);
             } else if !self.route_late_steer_ack(&msg) {
-                tracing::debug!(target: "acp::wire", "skipping stray response");
+                acp_log!(self.logging, debug, target: "acp::wire", "skipping stray response");
             }
         }
     }
@@ -610,7 +615,10 @@ impl AcpClient {
 
 /// The policy answer to a `session/request_permission`: `allow_once` found by
 /// kind, else `reject_once` — never a hard-coded option id.
-pub(super) fn permission_reply(msg: &serde_json::Value) -> Result<serde_json::Value, AcpError> {
+pub(super) fn permission_reply(
+    msg: &serde_json::Value,
+    logging: LoggingMode,
+) -> Result<serde_json::Value, AcpError> {
     let id = msg
         .get("id")
         .cloned()
@@ -618,7 +626,7 @@ pub(super) fn permission_reply(msg: &serde_json::Value) -> Result<serde_json::Va
     let options = msg["params"]["options"]
         .as_array()
         .ok_or_else(|| AcpError::Protocol("permission request missing options".into()))?;
-    tracing::debug!(
+    acp_log!(logging, debug,
         target: "acp::permission",
         "session/request_permission id={id}, {} options",
         options.len()
@@ -632,13 +640,13 @@ pub(super) fn permission_reply(msg: &serde_json::Value) -> Result<serde_json::Va
         let option_id = opt["optionId"]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("allow_once option missing optionId".into()))?;
-        tracing::info!(
+        acp_log!(logging, info,
             target: "acp::permission",
             "auto-approving permission id={id} with allow_once optionId={option_id:?}"
         );
         return Ok(permission_response_selected(&id, option_id));
     }
-    tracing::warn!(
+    acp_log!(logging, warn,
         target: "acp::permission",
         "no allow_once option found in permission request id={id}, falling back to reject_once"
     );

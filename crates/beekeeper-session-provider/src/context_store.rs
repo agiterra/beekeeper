@@ -368,6 +368,266 @@ fn set_private_file_permissions(_file: &File) -> Result<(), ContextStoreError> {
     Ok(())
 }
 
+/// Persist one private continuity phase under the execution's existing cleanup root.
+/// Contains references/digest only, never decrypted payload. Restart does not replay it.
+pub fn write_continuity_receipt(
+    state_dir: &Path,
+    receipt: &crate::continuity_bootstrap::Receipt,
+) -> Result<(), ContextStoreError> {
+    let root = context_package_root(state_dir)?;
+    let opening = receipt.phase == crate::continuity_bootstrap::Phase::Prepared;
+    if opening {
+        std::fs::create_dir_all(&root)
+            .map_err(|e| storage_error("cannot create private receipt root", e))?;
+    } else {
+        require_existing_directory(&root)?;
+    }
+    reject_symlink_or_non_directory(&root)?;
+    set_private_directory_permissions(&root)?;
+    let directory = package_directory(state_dir, &receipt.target.session_id)?;
+    if opening {
+        std::fs::create_dir_all(&directory)
+            .map_err(|e| storage_error("cannot create private receipt directory", e))?;
+    } else {
+        require_existing_directory(&directory)?;
+    }
+    reject_symlink_or_non_directory(&directory)?;
+    set_private_directory_permissions(&directory)?;
+    let command = beekeeper_core::continuity::value_hash(receipt.command_id.as_bytes());
+    let phase = match receipt.phase {
+        crate::continuity_bootstrap::Phase::Prepared => "prepared",
+        crate::continuity_bootstrap::Phase::SubmissionIntent => "submission_intent",
+        crate::continuity_bootstrap::Phase::Submitted => "submitted",
+        crate::continuity_bootstrap::Phase::Confirmed => "confirmed",
+    };
+    let path = directory.join(format!(
+        "continuity-{}-{command}-{phase}.receipt",
+        receipt.target.generation
+    ));
+    let bytes = serde_json::to_vec(receipt)
+        .map_err(|_| ContextStoreError::Storage("cannot encode private receipt".into()))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    configure_private_file(&mut options);
+    let mut file = match options.open(&path) {
+        Ok(file) => file,
+        // Phase events are advisory snapshots: the actor already persisted the
+        // evidence before sending them. Accept only an identical durable copy.
+        Err(error) if !opening && error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return if private_bytes(&path)? == bytes {
+                Ok(())
+            } else {
+                Err(ContextStoreError::Storage("private receipt differs".into()))
+            };
+        }
+        Err(error) => return Err(storage_error("cannot create private receipt", error)),
+    };
+    set_private_file_permissions(&file)?;
+    if let Err(error) = write_and_sync(&mut file, &bytes) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(error);
+    }
+    // Persist the new directory entry too: a successful file sync alone does
+    // not make the phase discoverable after a filesystem restart.
+    for parent in [&directory, &root] {
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| {
+                ContextStoreError::Storage("private receipt durability unavailable".into())
+            })?;
+    }
+    Ok(())
+}
+
+const CONTINUITY_ARCHIVE_MAX_BYTES: usize = 256 * 1024;
+fn continuity_paths(
+    state_dir: &Path,
+    session: &str,
+) -> Result<(PathBuf, PathBuf), ContextStoreError> {
+    let session = uuid::Uuid::parse_str(session)
+        .map_err(|_| ContextStoreError::Storage("invalid private archive identity".into()))?;
+    let root = absolute_path(state_dir)?.join("continuity-private");
+    let markers = absolute_path(state_dir)?.join("continuity-required");
+    reject_symlink_if_present(&root)?;
+    reject_symlink_if_present(&markers)?;
+    Ok((
+        markers.join(format!("{session}.required")),
+        root.join(format!("{session}.archive")),
+    ))
+}
+fn private_bytes(path: &Path) -> Result<Vec<u8>, ContextStoreError> {
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|_| ContextStoreError::Storage("private continuity archive unavailable".into()))?;
+    if !meta.is_file()
+        || meta.file_type().is_symlink()
+        || meta.len() > CONTINUITY_ARCHIVE_MAX_BYTES as u64
+    {
+        return Err(ContextStoreError::Storage(
+            "private continuity archive invalid".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(ContextStoreError::Storage(
+                "private continuity archive permissions unsafe".into(),
+            ));
+        }
+    }
+    std::fs::read(path)
+        .map_err(|_| ContextStoreError::Storage("private continuity archive unreadable".into()))
+}
+/// An absent marker is an ordinary conversation; an existing marker with a
+/// missing/bad archive is always a refusal. This root survives package cleanup
+/// and startup sweeps because native history remains resumable after disconnect.
+pub(crate) fn read_continuity_archive(
+    state_dir: &Path,
+    session: &str,
+) -> Result<Option<crate::continuity_archive::Archive>, ContextStoreError> {
+    let (marker, path) = continuity_paths(state_dir, session)?;
+    match std::fs::symlink_metadata(&marker) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if path.exists() {
+                return Err(ContextStoreError::Storage(
+                    "private continuity marker missing".into(),
+                ));
+            }
+            return Ok(None);
+        }
+        Err(_) => {
+            return Err(ContextStoreError::Storage(
+                "private continuity marker unavailable".into(),
+            ))
+        }
+        Ok(_) => {}
+    }
+    let marker: crate::continuity_archive::Marker =
+        serde_json::from_slice(&private_bytes(&marker)?)
+            .map_err(|_| ContextStoreError::Storage("private continuity marker invalid".into()))?;
+    let archive_bytes = private_bytes(&path)?;
+    if beekeeper_core::continuity::value_hash(&archive_bytes) != marker.digest {
+        return Err(ContextStoreError::Storage(
+            "private continuity archive digest mismatch".into(),
+        ));
+    }
+    let archive: crate::continuity_archive::Archive = serde_json::from_slice(&archive_bytes)
+        .map_err(|_| ContextStoreError::Storage("private continuity archive invalid".into()))?;
+    if marker.binding != archive.binding || marker.binding.target.session_id != session {
+        return Err(ContextStoreError::Storage(
+            "private continuity archive binding mismatch".into(),
+        ));
+    }
+    let mut translator = crate::transcript::TranscriptTranslator::new(false);
+    translator
+        .register_continuity_fragments(&archive.fragments)
+        .map_err(|_| {
+            ContextStoreError::Storage("private continuity archive bounds invalid".into())
+        })?;
+    if archive.fragments.is_empty() {
+        return Err(ContextStoreError::Storage(
+            "private continuity archive empty".into(),
+        ));
+    }
+    Ok(Some(archive))
+}
+fn replace_private(path: &Path, bytes: &[u8]) -> Result<(), ContextStoreError> {
+    if bytes.len() > CONTINUITY_ARCHIVE_MAX_BYTES {
+        return Err(ContextStoreError::Storage(
+            "private continuity archive exceeds bound".into(),
+        ));
+    }
+    reject_symlink_if_present(path)?;
+    let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    configure_private_file(&mut opts);
+    let mut file = opts.open(&tmp).map_err(|_| {
+        ContextStoreError::Storage("private continuity archive write unavailable".into())
+    })?;
+    let result = write_and_sync(&mut file, bytes).and_then(|()| {
+        std::fs::rename(&tmp, path).map_err(|_| {
+            ContextStoreError::Storage("private continuity archive replace unavailable".into())
+        })
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(tmp);
+    }
+    result
+}
+/// Archive before any submission. A failed/interrupted replacement leaves a
+/// marker/archive mismatch and makes restore refuse rather than lose protection.
+pub(crate) fn write_continuity_archive(
+    state_dir: &Path,
+    archive: &crate::continuity_archive::Archive,
+) -> Result<(), ContextStoreError> {
+    let (marker, path) = continuity_paths(state_dir, &archive.binding.target.session_id)?;
+    let roots = [marker.parent(), path.parent()];
+    for root in roots {
+        let root = root
+            .ok_or_else(|| ContextStoreError::Storage("private continuity root invalid".into()))?;
+        std::fs::create_dir_all(root).map_err(|_| {
+            ContextStoreError::Storage("private continuity root unavailable".into())
+        })?;
+        reject_symlink_or_non_directory(root)?;
+        set_private_directory_permissions(root)?;
+    }
+    let mut translator = crate::transcript::TranscriptTranslator::new(false);
+    translator
+        .register_continuity_fragments(&archive.fragments)
+        .map_err(|_| {
+            ContextStoreError::Storage("private continuity archive bounds invalid".into())
+        })?;
+    let bytes = serde_json::to_vec(archive).map_err(|_| {
+        ContextStoreError::Storage("private continuity archive encoding failed".into())
+    })?;
+    let marker_value = crate::continuity_archive::Marker {
+        binding: archive.binding.clone(),
+        digest: beekeeper_core::continuity::value_hash(&bytes),
+    };
+    let marker_bytes = serde_json::to_vec(&marker_value).map_err(|_| {
+        ContextStoreError::Storage("private continuity marker encoding failed".into())
+    })?;
+    if bytes.len() > CONTINUITY_ARCHIVE_MAX_BYTES {
+        return Err(ContextStoreError::Storage(
+            "private continuity archive exceeds bound".into(),
+        ));
+    }
+    replace_private(&marker, &marker_bytes)?;
+    replace_private(&path, &bytes)?;
+    for root in roots {
+        let root = root
+            .ok_or_else(|| ContextStoreError::Storage("private continuity root invalid".into()))?;
+        File::open(root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| {
+                ContextStoreError::Storage("private continuity durability unavailable".into())
+            })?;
+    }
+    Ok(())
+}
+/// Remove only when the execution is no longer resumable, never on disconnect.
+pub(crate) fn remove_continuity_archive(
+    state_dir: &Path,
+    session: &str,
+) -> Result<(), ContextStoreError> {
+    let (marker, path) = continuity_paths(state_dir, session)?;
+    for path in [path, marker] {
+        reject_symlink_if_present(&path)?;
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(ContextStoreError::Storage(
+                    "private continuity cleanup unavailable".into(),
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]

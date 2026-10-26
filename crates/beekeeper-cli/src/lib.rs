@@ -2451,6 +2451,9 @@ pub enum MediaCmd {
 /// Subcommands for `bee mem`.
 #[derive(Subcommand)]
 pub enum MemCmd {
+    /// Read or update bounded private continuity claims (observed-head semantics).
+    #[command(subcommand)]
+    Continuity(commands::mem_continuity::ContinuityCmd),
     /// List non-tombstoned memory entries
     Ls {
         /// Owner pubkey (hex). Overrides BEEKEEPER_AUTH_TAG.

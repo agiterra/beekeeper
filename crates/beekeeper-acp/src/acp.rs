@@ -24,6 +24,19 @@ use crate::usage::{
     PromptResponseUsage, StandardAdapterKind, StandardUsageTracker, TurnUsage, UsageTracker,
 };
 
+// Every private entry has a bounded, static schema. The source location identifies
+// the diagnostic without formatting any adapter-controlled field or error.
+macro_rules! acp_log {
+    ($mode:expr, $level:ident, $($fields:tt)*) => {
+        if $mode == LoggingMode::Private {
+            tracing::$level!(target: "acp::private", source = file!(), line = line!(),
+                "private ACP diagnostic (payload withheld)");
+        } else {
+            tracing::$level!($($fields)*);
+        }
+    };
+}
+
 /// The clock the turn deadlines are measured against. See
 /// [`idle_clock::TurnClock`].
 #[path = "acp_idle_clock.rs"]
@@ -37,6 +50,17 @@ pub use router::Unsolicited;
 use router::{permission_reply, Inbound, Router};
 
 use idle_clock::{SystemTurnClock, TurnClock};
+
+/// Logging policy fixed before an adapter process starts and retained for its lifetime.
+/// Private sessions emit only fixed diagnostic labels, never adapter-controlled text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LoggingMode {
+    /// Preserve the ordinary ACP diagnostic payloads.
+    #[default]
+    Ordinary,
+    /// Suppress all payload fields, including stderr retained for later failures.
+    Private,
+}
 
 /// Maximum allowed size of a single NDJSON line from the agent's stdout.
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
@@ -123,6 +147,7 @@ impl DeadlineKind {
         last_activity_at: tokio::time::Instant,
         wire: &TurnWire,
         now: tokio::time::Instant,
+        logging: LoggingMode,
     ) -> AcpError {
         // One snapshot for every arm: the diagnosis is the same set of facts
         // whichever budget expired, and taking it once means the three cannot
@@ -132,7 +157,7 @@ impl DeadlineKind {
         let summary = Box::new(wire.summarize(now, stall_watch));
         match self {
             Self::Idle => {
-                tracing::warn!(
+                acp_log!(logging, warn,
                     target: "acp::stall",
                     "idle timeout ({idle_timeout:?}) — {}",
                     summary.one_line()
@@ -144,7 +169,7 @@ impl DeadlineKind {
             }
             Self::AnswerStall => {
                 let quiet = stall_watch.timeout.unwrap_or_default();
-                tracing::warn!(
+                acp_log!(logging, warn,
                     target: "acp::stall",
                     "answer stall ({quiet:?}) — the agent finished answering with no tool \
                      in flight and never resolved the prompt — {}",
@@ -157,7 +182,7 @@ impl DeadlineKind {
             }
             Self::Hard => {
                 let silence = now.saturating_duration_since(last_activity_at);
-                tracing::warn!(
+                acp_log!(logging, warn,
                     target: "acp::stall",
                     "hard turn timeout exceeded (silence {silence:?}) — {}",
                     summary.one_line()
@@ -496,7 +521,7 @@ const AUTONOMOUS_RESULT_ORIGINS: &[&str] = &[
 /// behaviour after the switch from `Stdio::inherit`, and the tail is what makes
 /// the same output available to a session that failed hours ago on a machine
 /// nobody was watching.
-fn drain_stderr(stderr: ChildStderr, tail: std::sync::Arc<StderrTail>) {
+fn drain_stderr(stderr: ChildStderr, tail: std::sync::Arc<StderrTail>, logging: LoggingMode) {
     tokio::spawn(async move {
         let mut reader = FramedRead::new(stderr, LinesCodec::new_with_max_length(MAX_LINE_SIZE));
         while let Some(next) = reader.next().await {
@@ -505,15 +530,19 @@ fn drain_stderr(stderr: ChildStderr, tail: std::sync::Arc<StderrTail>) {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    tracing::info!(target: "acp::stderr", "{line}");
-                    tail.push(&line);
+                    acp_log!(logging, info, target: "acp::stderr", "{line}");
+                    if logging == LoggingMode::Ordinary {
+                        tail.push(&line);
+                    } else {
+                        tail.push("private ACP stderr (payload withheld)");
+                    }
                 }
                 // A line past the cap or invalid UTF-8 is the adapter
                 // misbehaving on a channel we only observe. Note it and keep
                 // reading: abandoning the drain would block the child once the
                 // pipe filled, turning a cosmetic fault into a hang.
                 Err(error) => {
-                    tracing::debug!(target: "acp::stderr", "unreadable stderr line: {error}");
+                    acp_log!(logging, debug, target: "acp::stderr", "unreadable stderr line: {error}");
                 }
             }
         }
@@ -727,6 +756,7 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    logging: LoggingMode,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
     /// Write end of the agent's stdin pipe, shared with the router's
@@ -1184,6 +1214,7 @@ impl UnresolvedSteers {
 /// registers the request as unresolved, so the caller is never left with a
 /// silently closed channel for bytes that did go out.
 struct PendingSteer {
+    logging: LoggingMode,
     request_id: u64,
     wire: SteerWire,
     native_run_id: Option<String>,
@@ -1229,7 +1260,7 @@ impl PendingSteer {
 impl Drop for PendingSteer {
     fn drop(&mut self) {
         if self.sink.is_some() {
-            tracing::warn!(
+            acp_log!(self.logging, warn,
                 request_id = self.request_id,
                 attempt_id = ?self.attempt_id,
                 "prompt loop dropped with a steer request awaiting its acknowledgement"
@@ -1509,8 +1540,12 @@ impl AcpClient {
         // wedge the harness during respawn or shutdown if a child is stuck.
         match tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await {
             Ok(Ok(_)) => {}
-            Ok(Err(e)) => tracing::debug!("child wait error after kill: {e}"),
-            Err(_) => tracing::warn!("child did not exit within 5s after SIGKILL — abandoning"),
+            Ok(Err(e)) => acp_log!(self.logging, debug, "child wait error after kill: {e}"),
+            Err(_) => acp_log!(
+                self.logging,
+                warn,
+                "child did not exit within 5s after SIGKILL — abandoning"
+            ),
         }
     }
 
@@ -1611,6 +1646,31 @@ impl AcpClient {
         post_fence_env: &[(String, String)],
         cwd: Option<&std::path::Path>,
     ) -> Result<Self, AcpError> {
+        Self::spawn_with_env_fence_and_overrides_and_logging(
+            command,
+            args,
+            extra_env,
+            has_generated_codex_config,
+            fence,
+            post_fence_env,
+            cwd,
+            LoggingMode::Ordinary,
+        )
+        .await
+    }
+
+    /// Spawn with an explicit lifetime logging policy, installed before reading any output.
+    #[allow(clippy::too_many_arguments)] // Existing launch contract plus a lifetime logging policy.
+    pub async fn spawn_with_env_fence_and_overrides_and_logging(
+        command: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        has_generated_codex_config: bool,
+        fence: &EnvFence,
+        post_fence_env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
+        logging: LoggingMode,
+    ) -> Result<Self, AcpError> {
         let cmd = Self::build_agent_command(
             command,
             args,
@@ -1620,7 +1680,7 @@ impl AcpClient {
             post_fence_env,
             cwd,
         )?;
-        Self::from_command(cmd, command)
+        Self::from_command(cmd, command, logging)
     }
 
     /// Spawn `command args…` inside a host-prepared execution boundary, with
@@ -1635,8 +1695,18 @@ impl AcpClient {
         args: &[String],
         launch: &BoundedLaunch,
     ) -> Result<Self, AcpError> {
+        Self::spawn_bounded_with_logging(command, args, launch, LoggingMode::Ordinary).await
+    }
+
+    /// Spawn with an explicit lifetime logging policy, installed before reading any output.
+    pub async fn spawn_bounded_with_logging(
+        command: &str,
+        args: &[String],
+        launch: &BoundedLaunch,
+        logging: LoggingMode,
+    ) -> Result<Self, AcpError> {
         let cmd = Self::build_bounded_command(command, args, launch);
-        Self::from_command(cmd, command)
+        Self::from_command(cmd, command, logging)
     }
 
     /// Spawn the agent from a prepared launch **without** its boundary,
@@ -1651,8 +1721,19 @@ impl AcpClient {
         args: &[String],
         launch: &BoundedLaunch,
     ) -> Result<Self, AcpError> {
+        Self::spawn_with_full_access_with_logging(command, args, launch, LoggingMode::Ordinary)
+            .await
+    }
+
+    /// Spawn with an explicit lifetime logging policy, installed before reading any output.
+    pub async fn spawn_with_full_access_with_logging(
+        command: &str,
+        args: &[String],
+        launch: &BoundedLaunch,
+        logging: LoggingMode,
+    ) -> Result<Self, AcpError> {
         let cmd = Self::launch_command(command.to_owned(), args.to_vec(), launch);
-        Self::from_command(cmd, command)
+        Self::from_command(cmd, command, logging)
     }
 
     /// Assemble a bounded child `Command` without spawning it.
@@ -1689,7 +1770,11 @@ impl AcpClient {
     }
 
     /// Spawn an assembled command and wire up its stdio.
-    fn from_command(mut cmd: tokio::process::Command, command: &str) -> Result<Self, AcpError> {
+    fn from_command(
+        mut cmd: tokio::process::Command,
+        command: &str,
+        logging: LoggingMode,
+    ) -> Result<Self, AcpError> {
         let standard_adapter =
             match crate::config::normalize_agent_command_identity(command).as_str() {
                 "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
@@ -1714,17 +1799,18 @@ impl AcpClient {
         // channel would trade a working session for a better error message.
         let stderr_tail = std::sync::Arc::new(StderrTail::default());
         match child.stderr.take() {
-            Some(stderr) => drain_stderr(stderr, std::sync::Arc::clone(&stderr_tail)),
-            None => tracing::warn!(
+            Some(stderr) => drain_stderr(stderr, std::sync::Arc::clone(&stderr_tail), logging),
+            None => acp_log!(logging, warn,
                 target: "acp::stderr",
                 "agent stderr was not captured; its diagnostics are unavailable"
             ),
         }
 
         let stdin = std::sync::Arc::new(tokio::sync::Mutex::new(stdin));
-        let (router, inbox) = Router::start(stdout, std::sync::Arc::clone(&stdin));
+        let (router, inbox) = Router::start(stdout, std::sync::Arc::clone(&stdin), logging);
 
         Ok(Self {
+            logging,
             child,
             stdin,
             inbox,
@@ -1965,7 +2051,7 @@ impl AcpClient {
         self.agent_name = normalized_agent_name(&result);
         self.agent_version = reported_agent_version(&result);
         self.protocol_version = result["protocolVersion"].as_u64().unwrap_or(1) as u32;
-        tracing::debug!(target: "acp::init", "initialize response: {result}");
+        acp_log!(self.logging, debug, target: "acp::init", "initialize response: {result}");
         Ok(result)
     }
 
@@ -2036,7 +2122,7 @@ impl AcpClient {
         // (ledger 272(d)); the pool's later call is then a no-op. A resume or
         // load is never seeded — that conversation may already have spent.
         self.notify_session_spawned(&session_id);
-        tracing::info!(target: "acp::session", "session created");
+        acp_log!(self.logging, info, target: "acp::session", "session created");
         Ok(SessionNewResponse {
             session_id,
             raw: result,
@@ -2067,7 +2153,7 @@ impl AcpClient {
         self.apply_disallowed_tools_meta(&mut params);
         self.apply_claude_options_meta(&mut params);
         let result = self.send_request("session/resume", params).await?;
-        tracing::info!(target: "acp::session", "session resumed");
+        acp_log!(self.logging, info, target: "acp::session", "session resumed");
         Ok(SessionNewResponse {
             session_id: session_id.to_owned(),
             raw: result,
@@ -2096,7 +2182,7 @@ impl AcpClient {
         self.apply_disallowed_tools_meta(&mut params);
         self.apply_claude_options_meta(&mut params);
         let result = self.send_request("session/load", params).await?;
-        tracing::info!(target: "acp::session", "session loaded");
+        acp_log!(self.logging, info, target: "acp::session", "session loaded");
         Ok(SessionNewResponse {
             session_id: session_id.to_owned(),
             raw: result,
@@ -2277,7 +2363,7 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        acp_log!(self.logging, debug, target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
         if let Err(e) = self.write_ndjson(&msg).await {
             self.last_prompt_id = None;
             self.current_hard_deadline = None;
@@ -2415,7 +2501,7 @@ impl AcpClient {
     /// signed transcript items.
     fn log_raw_sdk_frame(&self, msg: &serde_json::Value) {
         let message = &msg["params"]["message"];
-        tracing::info!(
+        acp_log!(self.logging, info,
             target: "acp::sdk_frame",
             kind = message.get("type").and_then(|v| v.as_str()).unwrap_or("?"),
             subtype = message.get("subtype").and_then(|v| v.as_str()).unwrap_or(""),
@@ -2685,7 +2771,7 @@ impl AcpClient {
                     })
                     .is_err()
                 {
-                    tracing::warn!(
+                    acp_log!(self.logging, warn,
                         request_id,
                         attempt_id = %entry.attempt_id,
                         ?resolution,
@@ -2693,7 +2779,7 @@ impl AcpClient {
                     );
                 }
             }
-            None => tracing::warn!(
+            None => acp_log!(self.logging, warn,
                 request_id,
                 attempt_id = %entry.attempt_id,
                 ?resolution,
@@ -2732,21 +2818,24 @@ impl AcpClient {
         // cancel notification has time to propagate and the agent can respond.
         let stored_deadline = self.current_hard_deadline.take();
         let min_cleanup_deadline = self.turn_clock.now() + std::time::Duration::from_secs(30);
-        let hard_deadline = match stored_deadline {
-            Some(d) if d > min_cleanup_deadline => d,
-            Some(_) => {
-                tracing::debug!(
-                    "original hard deadline expired or near-expired — using 30s cleanup grace"
-                );
-                min_cleanup_deadline
-            }
-            None => {
-                tracing::warn!(
+        let hard_deadline =
+            match stored_deadline {
+                Some(d) if d > min_cleanup_deadline => d,
+                Some(_) => {
+                    acp_log!(
+                        self.logging,
+                        debug,
+                        "original hard deadline expired or near-expired — using 30s cleanup grace"
+                    );
+                    min_cleanup_deadline
+                }
+                None => {
+                    acp_log!(self.logging, warn,
                     "cancel_with_cleanup called without current_hard_deadline — using 30s fallback"
                 );
-                min_cleanup_deadline
-            }
-        };
+                    min_cleanup_deadline
+                }
+            };
 
         self.cancel_with_cleanup_until(session_id, hard_deadline)
             .await
@@ -2807,7 +2896,7 @@ impl AcpClient {
         // `NotDelivered{PromptEndedBeforeWrite}` — and, for the legacy pool,
         // as the neutral release it already applies to a closed ack.
         if self.steer_rx.take().is_some() {
-            tracing::info!(
+            acp_log!(self.logging, info,
                 target: "acp::cancel",
                 "dropped the turn's steer source before cancel: queued inputs stay unwritten"
             );
@@ -2829,7 +2918,7 @@ impl AcpClient {
             if !self.permission_responded {
                 let response = permission_response_cancelled(&perm_id);
                 self.write_ndjson(&response).await?;
-                tracing::debug!(
+                acp_log!(self.logging, debug,
                     target: "acp::cancel",
                     "responded cancelled to pending permission id={perm_id}"
                 );
@@ -2840,7 +2929,7 @@ impl AcpClient {
 
         // Step 2: send session/cancel notification (no id)
         self.session_cancel(session_id).await?;
-        tracing::info!(target: "acp::cancel", "sent session/cancel for {session_id}");
+        acp_log!(self.logging, info, target: "acp::cancel", "sent session/cancel for {session_id}");
         // Use a fixed 30s idle timeout during cleanup — the cancel notification
         // needs time to propagate and the agent may go silent while winding down.
         // The separate hard_deadline bounds agents that keep producing output
@@ -2910,9 +2999,9 @@ impl AcpClient {
         });
 
         if let Some(payload) = acp_request_log_payload(method, &msg) {
-            tracing::debug!(target: "acp::wire", "→ {payload}");
+            acp_log!(self.logging, debug, target: "acp::wire", "→ {payload}");
         } else {
-            tracing::debug!(target: "acp::wire", id, method, "→ ACP request (session details redacted)");
+            acp_log!(self.logging, debug, target: "acp::wire", id, method, "→ ACP request (session details redacted)");
         }
 
         // Wrap write + read in a single timeout so a hung agent can't block forever.
@@ -2972,7 +3061,7 @@ impl AcpClient {
                 Err(_) | Ok(None) => break,
                 Ok(Some(Inbound::Frame { .. })) => {
                     // Consumed one buffered frame; loop to drain more.
-                    tracing::debug!(target: "acp::wire", "drained stale buffered line");
+                    acp_log!(self.logging, debug, target: "acp::wire", "drained stale buffered line");
                 }
                 Ok(Some(Inbound::Error(_))) => break,
             }
@@ -2995,7 +3084,7 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ (notification) {}", &serde_json::to_string(&msg).unwrap_or_default());
+        acp_log!(self.logging, debug, target: "acp::wire", "→ (notification) {}", &serde_json::to_string(&msg).unwrap_or_default());
         self.write_ndjson(&msg).await?;
         Ok(())
     }
@@ -3100,6 +3189,7 @@ impl AcpClient {
                     last_activity_at,
                     &wire,
                     clock.now(),
+                    self.logging,
                 );
                 return self
                     .leave_prompt_loop(
@@ -3146,6 +3236,7 @@ impl AcpClient {
                         last_activity_at,
                         &wire,
                         clock.now(),
+                        self.logging,
                     );
                     return self
                         .leave_prompt_loop(
@@ -3238,7 +3329,7 @@ impl AcpClient {
                                             if new_deadline > hard_deadline {
                                                 hard_deadline = new_deadline;
                                                 self.current_hard_deadline = Some(new_deadline);
-                                                tracing::info!(
+                                                acp_log!(self.logging, info,
                                                     "steer injected: renewed hard deadline ({max_duration:?} from now)"
                                                 );
                                             }
@@ -3250,13 +3341,13 @@ impl AcpClient {
                                             // the hard deadline would extend
                                             // the clock on a settled turn, so
                                             // leave it alone.
-                                            tracing::info!(
+                                            acp_log!(self.logging, info,
                                                 "steer accepted as {STEER_OUTCOME_STARTED_NEW_TURN}: \
                                                  awaited turn had ended — hard deadline not renewed"
                                             );
                                         }
                                         other => {
-                                            tracing::warn!(
+                                            acp_log!(self.logging, warn,
                                                 request_id = pending.request_id,
                                                 resolution = ?other,
                                                 "steer request was not delivered as injected"
@@ -3296,7 +3387,11 @@ impl AcpClient {
                                     let activity_now = clock.now();
                                     idle_deadline = activity_now + idle_timeout;
                                     last_activity_at = activity_now;
-                                    tracing::debug!("idle clock reset: tool call started");
+                                    acp_log!(
+                                        self.logging,
+                                        debug,
+                                        "idle clock reset: tool call started"
+                                    );
                                 }
                             }
                             "_goose/unstable/session/update" => {
@@ -3338,7 +3433,7 @@ impl AcpClient {
                                             .await;
                                     }
                                 }
-                                tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
+                                acp_log!(self.logging, debug, target: "acp::wire", "ignoring unknown method: {other}");
                             }
                         }
                     }
@@ -3405,7 +3500,7 @@ impl AcpClient {
         clock: &std::sync::Arc<dyn TurnClock>,
     ) {
         let deadline = clock.now() + STEER_ACK_DRAIN;
-        tracing::info!(
+        acp_log!(self.logging, info,
             request_id = pending.request_id,
             attempt_id = ?pending.attempt_id,
             "prompt ended with a steer awaiting its acknowledgement — draining up to {STEER_ACK_DRAIN:?}"
@@ -3447,7 +3542,9 @@ impl AcpClient {
                             pending.native_run_id.clone(),
                             pending.request_id,
                         );
-                        tracing::info!(
+                        acp_log!(
+                            self.logging,
+                            info,
                             request_id = pending.request_id,
                             ?resolution,
                             "steer acknowledged inside the post-prompt drain"
@@ -3456,7 +3553,7 @@ impl AcpClient {
                         return;
                     }
                     if !self.route_late_steer_ack(&msg) {
-                        tracing::debug!(
+                        acp_log!(self.logging, debug,
                             target: "acp::wire",
                             "ignoring stray response id {id} during steer drain"
                         );
@@ -3476,7 +3573,11 @@ impl AcpClient {
                     RAW_SDK_FRAME_METHOD => self.handle_raw_sdk_frame(&msg),
                     "session/request_permission" => {
                         if let Err(e) = self.handle_permission_request(&msg).await {
-                            tracing::warn!("permission reply failed during steer drain: {e}");
+                            acp_log!(
+                                self.logging,
+                                warn,
+                                "permission reply failed during steer drain: {e}"
+                            );
                             pending.abandon(UnknownReason::PromptEndedBeforeAck);
                             return;
                         }
@@ -3489,12 +3590,16 @@ impl AcpClient {
                                 "error": {"code": -32601, "message": format!("Method not found: {other}")}
                             });
                             if let Err(e) = self.write_ndjson(&err_resp).await {
-                                tracing::warn!("reply failed during steer drain: {e}");
+                                acp_log!(
+                                    self.logging,
+                                    warn,
+                                    "reply failed during steer drain: {e}"
+                                );
                                 pending.abandon(UnknownReason::PromptEndedBeforeAck);
                                 return;
                             }
                         }
-                        tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
+                        acp_log!(self.logging, debug, target: "acp::wire", "ignoring unknown method: {other}");
                     }
                 }
             }
@@ -3525,7 +3630,7 @@ impl AcpClient {
         match update_type {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
-                    tracing::info!(target: "acp::stream", "{text}");
+                    acp_log!(self.logging, info, target: "acp::stream", "{text}");
                 }
                 false
             }
@@ -3538,7 +3643,7 @@ impl AcpClient {
                     .get("kind")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                tracing::info!(target: "acp::tool", "tool_call: {title} ({kind})");
+                acp_log!(self.logging, info, target: "acp::tool", "tool_call: {title} ({kind})");
                 true
             }
             "tool_call_update" => {
@@ -3547,16 +3652,16 @@ impl AcpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("?");
                 let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-                tracing::info!(target: "acp::tool", "tool_call_update: {tool_id} → {status}");
+                acp_log!(self.logging, info, target: "acp::tool", "tool_call_update: {tool_id} → {status}");
                 false
             }
             "plan" => {
-                tracing::info!(target: "acp::plan", "plan update received");
+                acp_log!(self.logging, info, target: "acp::plan", "plan update received");
                 false
             }
             "agent_thought_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
-                    tracing::debug!(target: "acp::thought", "{text}");
+                    acp_log!(self.logging, debug, target: "acp::thought", "{text}");
                 }
                 false
             }
@@ -3567,7 +3672,7 @@ impl AcpClient {
                     .as_array()
                     .map(|cmds| cmds.iter().filter_map(|c| c["name"].as_str()).collect())
                     .unwrap_or_default();
-                tracing::info!(
+                acp_log!(self.logging, info,
                     target: "acp::update",
                     "available_commands_update: {} commands [{}]",
                     names.len(),
@@ -3592,14 +3697,14 @@ impl AcpClient {
                 if let Some(goose_meta) = meta {
                     match goose_meta.get("activeRunId") {
                         Some(serde_json::Value::String(run_id)) => {
-                            tracing::debug!(
+                            acp_log!(self.logging, debug,
                                 target: "acp::update",
                                 "session_info_update: activeRunId={run_id}"
                             );
                             self.active_run_id = Some(run_id.clone());
                         }
                         Some(serde_json::Value::Null) => {
-                            tracing::debug!(
+                            acp_log!(self.logging, debug,
                                 target: "acp::update",
                                 "session_info_update: activeRunId cleared"
                             );
@@ -3617,7 +3722,7 @@ impl AcpClient {
             }
             "keepalive" => false,
             other => {
-                tracing::debug!(target: "acp::update", "session/update: {other}");
+                acp_log!(self.logging, debug, target: "acp::update", "session/update: {other}");
                 false
             }
         }
@@ -3658,7 +3763,7 @@ impl AcpClient {
         let params = match msg.get("params") {
             Some(p) => p,
             None => {
-                tracing::debug!(
+                acp_log!(self.logging, debug,
                     target: "acp::usage",
                     "_goose/unstable/session/update: missing params"
                 );
@@ -3668,7 +3773,7 @@ impl AcpClient {
         match serde_json::from_value::<GooseSessionUpdateNotification>(params.clone()) {
             Ok(notif) => {
                 if let GooseSessionUpdateVariant::UsageUpdate(payload) = &notif.update {
-                    tracing::debug!(
+                    acp_log!(self.logging, debug,
                         target: "acp::usage",
                         session_id = %notif.session_id,
                         input = ?payload.accumulated_input_tokens,
@@ -3684,7 +3789,7 @@ impl AcpClient {
                 }
             }
             Err(e) => {
-                tracing::debug!(
+                acp_log!(self.logging, debug,
                     target: "acp::usage",
                     "_goose/unstable/session/update: deserialization error: {e}"
                 );
@@ -3714,7 +3819,7 @@ impl AcpClient {
         self.permission_responded = false;
 
         // One policy for every path, prompted or not: see `permission_reply`.
-        let response = permission_reply(msg)?;
+        let response = permission_reply(msg, self.logging)?;
 
         // Write the response first, then mark as responded.
         //
@@ -3748,7 +3853,7 @@ impl AcpClient {
                 Ok(usage) => self
                     .standard_usage
                     .record_prompt_usage(session_id, usage, adapter),
-                Err(_) if result.get("usage").is_some() => tracing::debug!(
+                Err(_) if result.get("usage").is_some() => acp_log!(self.logging, debug,
                     target: "acp::usage",
                     "session/prompt response contained malformed standard usage"
                 ),
@@ -9425,3 +9530,7 @@ sleep 5
         println!("LIVE PASS marker={marker}");
     }
 }
+
+#[cfg(test)]
+#[path = "acp_private_logging_tests.rs"]
+mod private_logging_tests;

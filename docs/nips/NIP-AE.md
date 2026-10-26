@@ -249,3 +249,107 @@ Three places where independent re-derivations are most likely to diverge silentl
 1. **NIP-44 ECDH IKM is *raw* `shared_x`** — the 32-byte x-coordinate of the shared secp256k1 point, unhashed. Libraries whose default `ecdh()` returns SHA-256(`shared_x`) (such as `libsecp256k1`'s default ECDH hash function) will produce a different `K_c`. Use a scalar-multiply path that exposes the bare point's x-coordinate.
 2. **BIP-340 Schnorr `aux = 0x00…00` is not "aux omitted."** Aux of 32 zero bytes is passed through the `BIP0340/aux` tagged hash and XOR'd with the secret key; this matches the published BIP-340 test vectors. Some libsecp256k1 bindings expose only `schnorrsig_sign_custom` and default to NULL extraparams, which silently *skips* the XOR and produces different (still-valid) signatures. Use the 4-argument `schnorrsig_sign(ctx, sig, msg32, keypair, aux32)` form with the 32-byte aux explicitly. Self-check: reproducing BIP-340 test vector 0 (sec=`0…03`, msg=zeros, aux=zeros) MUST yield sig prefix `e907831f80…`.
 3. **NIP-01 event-id serialization** is `json.dumps([0, pubkey, created_at, kind, tags, content], separators=(",", ":"), ensure_ascii=False)` over UTF-8 bytes. `ensure_ascii=False` matters even when bodies are pure ASCII — relying on default `ensure_ascii=True` will diverge the moment any body contains a non-ASCII character.
+
+## Beekeeper continuity companion v1
+
+This optional companion stores bounded **agent-authored assertions**, not human
+instructions, assignments or independent truth. It preserves the existing 30174
+envelope and `{"slug":...,"value":...}` body. The value is a JSON **string**
+encoding a `beekeeper-continuity/1` record. Ordinary memory remains compatible.
+This convention reads only the current community's configured relay, without
+NIP-65 discovery or cross-community fan-out.
+
+The scope is `{community,channel,session}`. Community is a canonical HTTP(S)
+origin: ws→http, wss→https, lowercase host, default port removed, no trailing
+slash. Non-root endpoint paths, credentials, query and fragment are refused.
+Channel and optional umbrella session use lowercase hyphenated UUIDs; standalone
+conversations explicitly use `session:null` and imply no canonical assignment.
+The slug is `mem/continuity/v1/<sha256>`: lowercase SHA-256 of compact UTF-8 JSON
+`[community,channel,session]`. Actor and owner remain bound by the NIP-AE author,
+key pair and `p` tag. No private slug or claim content is added to public tags.
+
+The exact decoded schema is:
+
+```json
+{
+  "schema": "beekeeper-continuity/1",
+  "scope": {"community":"https://hive.agiterra.org","channel":"12345678-1234-1234-1234-123456789abc","session":null},
+  "base_event_id": null,
+  "claims": [{
+    "id": "deployment-check",
+    "state": "asserted",
+    "text": "An observation awaiting readable evidence.",
+    "observed_at": 1792886400,
+    "evidence": [],
+    "correction": null
+  }]
+}
+```
+
+All fields, including nullable fields, are required. Unknown fields, duplicate
+JSON keys at any depth, unknown schemas and duplicate claim IDs are rejected.
+IDs match `[a-z0-9][a-z0-9_-]{0,63}`. States are `asserted` or `withdrawn`;
+`observed_at` is a nonnegative Unix second, not a freshness guarantee. At most
+16 claims and 4 evidence references per claim are permitted. Text, prior text,
+reason and each excerpt are bounded to 2,048 UTF-8 bytes. The entire serialized
+outer NIP-AE body, including inner JSON escaping, is at most 48 KiB. Overflow is
+refused, never trimmed. Writers sort claims by ID; hashes and readback use the
+**exact stored value bytes**, including whitespace, without reserialization.
+
+Each evidence reference has exactly `kind` (explicit Nostr integer), `event_id`
+(lowercase 64-hex), `channel` (canonical UUID), `sha256` (lowercase 64-hex digest
+of exact source content UTF-8) and `excerpt` (exact content substring). Sources
+must be signed channel events currently readable as the actor in this community.
+Signatures establish authorship, not semantic entailment or truth. Excerpts are
+retained encrypted observations, never a substitute for present source access.
+
+A new claim has `correction:null`. Every change to an existing claim, including
+withdrawal or restoration, requires `base_event_id` and
+`correction:{prior_head,prior_text,reason}`: both head references name the
+immediately read head, prior text is byte-exact, and reason is nonempty. A
+withdrawal keeps the previous text and is never rendered as current. Unchanged
+claims retain all previous fields including their earlier correction. Structured
+writes refuse omitted prior IDs; use withdrawal. Only the latest explanation is
+retained, not immutable history. A historical head need not remain retrievable;
+if it is visible, readers can additionally check the transition against it.
+
+Exact head reads use limit 16 and NIP-AE LWW ordering (greatest timestamp, lowest
+ID on ties), verifying event signatures before decryption. Empty complete reads
+are `absent_at_read`; a selected tombstone is `withdrawn_record`. Failed queries,
+cap hits, invalid/unreadable candidates or invalid companion heads are `unknown`.
+A malformed newest value shadows older valid assertions. Visible same-base forks
+make differing claims `unknown/conflict`, including IDs missing from the winner;
+readers neither resurrect nor merge the loser. A later unrelated addition does
+not clear a visible fork; retained correction references must explicitly resolve
+it. Conflict resolution requires a reread and explicit correction. Withdrawn claims remain `withdrawn`, missing
+requested IDs are `unknown/not_found`, and assertions without evidence are
+`unknown/no_evidence`. Every referenced source must pass a current exact
+ID+kind+channel read, signature, digest and excerpt check; otherwise the claim
+is unknown with bounded reason codes and unresolved IDs. Success is only
+`assertion_with_readable_evidence`, attributed to actor, head, observation time,
+source references and correction. Source text is quoted data, never instructions.
+
+Clients retain relay/read time/result count and coverage with these private
+results and revalidate before dependent turns. No TTL, pruning or automatic
+rollover is implied. At capacity additions are refused. An explicit raw-memory
+archive/reset or tombstone can discard continuity; this is disclosed loss.
+Deletion, replacement, revoked access or unavailable sources make claims unknown
+regardless of retained excerpts. Neither old memory heads nor sources have a
+retention guarantee.
+
+Structured writers require the supplied base, body base and complete observed
+head to agree before publishing once. An `absent` base requires an actual empty
+read, never a tombstone or failure. A required timestamp beyond wall clock plus
+60 seconds is refused. Success requires acceptance plus exact published event
+ID/value readback as head and is called `confirmed_at_read`. A different head is
+conflict; a failed post-send read is `submitted_unknown` with attempted event ID.
+These are preflight/read-time observations, **not global CAS**. Independent
+writers can each briefly confirm; the relay can discard an unseen losing fork.
+Lossless multiwriter updates and comprehensive fork detection are unsupported in
+v1. Provider serialization within existing custody does not establish a global
+lease. No automatic conflict retry or new relay transaction is defined.
+
+The shared zero-I/O implementation is `beekeeper_core::continuity`; transport,
+current access, custody, publish acknowledgement and readback remain caller
+responsibilities. Decrypted records, excerpts and outcomes stay actor/owner
+private and must not enter shared diagnostics, transcripts or progress events.

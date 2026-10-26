@@ -93,6 +93,10 @@ mod git_probe;
 pub mod host_command;
 // A finished host step wakes the seat that triggered it (ledger 236(g), 240).
 mod checkpoint_on_stop;
+mod continuity_archive;
+pub mod continuity_bootstrap;
+pub mod continuity_collect;
+pub mod continuity_delivery;
 pub mod credential_source;
 pub mod host_result_wake;
 mod lease;
@@ -704,6 +708,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
             }
             Some(event) = provider.next_session_event() => {
+                let event = provider.resolve_continuity_event(event).await;
                 if let Err(error) = provider.handle_session_event(event) {
                     tracing::error!(target: "csp", "failed to record session event: {error}");
                 }
@@ -7833,6 +7838,18 @@ impl Provider {
     /// session id: a resume-created directory is named by a freshly minted
     /// UUID, so a cleanup keyed on the session id would silently leak it.
     fn discard_context_packages(&mut self, session_id: &str) {
+        if self
+            .state
+            .session(session_id)
+            .is_some_and(|r| r.closed || r.is_retired())
+        {
+            let _ = context_store::remove_continuity_archive(&self.config.state_dir, session_id);
+        }
+        // Continuity receipts use the stable execution UUID even when the
+        // history MCP uses a separate per-generation package UUID.
+        if uuid::Uuid::parse_str(session_id).is_ok() {
+            let _ = context_store::remove_context_packages(&self.config.state_dir, session_id);
+        }
         let Some(state) = self.context_refresh.remove(session_id) else {
             return;
         };
@@ -9299,6 +9316,33 @@ impl Provider {
     /// [`SessionEvent::WorktreeObserved`].
     pub(crate) fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
         match event {
+            SessionEvent::ContinuityAdmissionRequested { decision, .. } => {
+                let _ = decision.send(Some(Err(continuity_bootstrap::Refusal::Unavailable)));
+            }
+            SessionEvent::ContinuityAdmissionSettled => {}
+            SessionEvent::ContinuityReceipt { receipt } => {
+                // Never resurrect a package after stop or generation replacement.
+                if self
+                    .state
+                    .session(&receipt.target.session_id)
+                    .is_some_and(|r| {
+                        !r.closed && !r.is_retired() && self.target_for(r) == receipt.target
+                    })
+                {
+                    context_store::write_continuity_receipt(&self.config.state_dir, &receipt)
+                        .map_err(|_| anyhow::anyhow!("CONTINUITY_PRIVATE_RECEIPT_UNAVAILABLE"))?;
+                }
+            }
+            SessionEvent::ContinuityRefused {
+                session_id,
+                command_id,
+                reason,
+            } => {
+                if let Some((channel, target)) = self.locate(&session_id) {
+                    let receipt = LifecycleReceipt::turn_refused(&command_id, &target, reason.code(), "required private continuity could not be delivered; no prompt was submitted");
+                    self.refuse_with_staged_answer(channel, &command_id, &receipt, None)?;
+                }
+            }
             SessionEvent::WakeTurnAdmissionRequested {
                 session_id,
                 command_id,
@@ -12132,6 +12176,8 @@ mod tests {
     #[path = "turn_checkpoint_tests.rs"]
     mod turn_checkpoint_tests;
     // SV-29 rewind through the real provider.
+    #[path = "continuity_tests.rs"]
+    mod continuity_tests;
     #[path = "rewind_tests.rs"]
     mod rewind_tests;
     #[path = "verification_input_tests.rs"]

@@ -145,9 +145,9 @@ const USAGE_UPDATE_VARIANTS: [&str; 4] = [
 ];
 
 /// Turns a session's ACP notification stream into projected transcript items.
-#[derive(Debug)]
 pub struct TranscriptTranslator {
     include_thoughts: bool,
+    continuity: ContinuityRedaction,
     text: String,
     /// Whether `text` flushes at paragraph boundaries.
     paragraph_flush: bool,
@@ -173,6 +173,142 @@ pub struct TranscriptTranslator {
     /// that carries its run totals. See
     /// [`hold_spawn_result`](Self::hold_spawn_result).
     spawn_result: Option<(String, Value)>,
+}
+
+// Buffered stream fragments can be private even before they form a full
+// registered match. Diagnostics must never format those buffers or tool memos.
+impl std::fmt::Debug for TranscriptTranslator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranscriptTranslator")
+            .field("include_thoughts", &self.include_thoughts)
+            .field("tool_calls", &self.tool_calls)
+            .field("continuity", &self.continuity)
+            .finish_non_exhaustive()
+    }
+}
+
+// Fixed mask follows the core credential sanitizer: no plaintext, length or
+// dictionary-testable digest reaches the recoverable redaction vault.
+const CONTINUITY_MASK: &str = "••••••••";
+const CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE: &str = "CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE";
+const MAX_CONTINUITY_PATTERNS: usize = 768;
+const MAX_CONTINUITY_PATTERN_BYTES: usize = 256 * 1024;
+
+#[derive(Default)]
+struct ContinuityRedaction {
+    patterns: Vec<String>,
+}
+
+impl std::fmt::Debug for ContinuityRedaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContinuityRedaction")
+            .field("registered", &self.patterns.len())
+            .finish()
+    }
+}
+
+impl ContinuityRedaction {
+    fn register(&mut self, fragments: &[String]) -> Result<(), &'static str> {
+        // Stage the entire addition: rejection cannot drop earlier protections
+        // or leave a partially registered prompt looking ready for delivery.
+        let mut patterns = self.patterns.clone();
+        for fragment in fragments {
+            if fragment.is_empty() {
+                continue;
+            }
+            if fragment.len() > 8192 {
+                return Err(CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE);
+            }
+            let mut variant = fragment.clone();
+            // Decoded ACP strings, JSON embedded in a string, and a second
+            // JSON/debug wrapper. This is exact echo handling, not an encoder
+            // or paraphrase information-flow guarantee.
+            for _ in 0..3 {
+                if !patterns.contains(&variant) {
+                    patterns.push(variant.clone());
+                }
+                if patterns.len() > MAX_CONTINUITY_PATTERNS
+                    || patterns.iter().map(String::len).sum::<usize>()
+                        > MAX_CONTINUITY_PATTERN_BYTES
+                {
+                    return Err(CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE);
+                }
+                let encoded = serde_json::to_string(&variant)
+                    .map_err(|_| CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE)?;
+                variant = encoded[1..encoded.len() - 1].to_owned();
+            }
+        }
+        self.patterns = patterns;
+        Ok(())
+    }
+
+    fn text(&self, text: &str, boundaries: bool) -> String {
+        let mut spans = Vec::new();
+        for pattern in &self.patterns {
+            // Include overlapping matches (match_indices skips self-overlap).
+            let mut offset = 0;
+            while let Some(at) = text[offset..].find(pattern) {
+                let start = offset + at;
+                spans.push((start, start + pattern.len()));
+                offset = start + text[start..].chars().next().map_or(0, char::len_utf8);
+            }
+            if boundaries {
+                // A size/paragraph/tool-stream cut may bisect an echo. Mask
+                // ambiguous boundary pieces too; this can hide benign suffixes
+                // or prefixes while a private execution is active.
+                for (end, _) in pattern.char_indices().skip(1) {
+                    if text.ends_with(&pattern[..end]) {
+                        spans.push((text.len() - end, text.len()));
+                    }
+                    if text.starts_with(&pattern[end..]) {
+                        spans.push((0, pattern.len() - end));
+                    }
+                }
+            }
+        }
+        spans.sort_unstable();
+        let mut output = String::new();
+        let mut cursor = 0;
+        let mut index = 0;
+        while index < spans.len() {
+            let (start, mut end) = spans[index];
+            index += 1;
+            while index < spans.len() && spans[index].0 <= end {
+                end = end.max(spans[index].1);
+                index += 1;
+            }
+            output.push_str(&text[cursor..start]);
+            output.push_str(CONTINUITY_MASK);
+            cursor = end;
+        }
+        output.push_str(&text[cursor..]);
+        output
+    }
+
+    fn value(&self, value: &mut Value) {
+        match value {
+            Value::String(text) => *text = self.text(text, false),
+            Value::Array(values) => values.iter_mut().for_each(|v| self.value(v)),
+            Value::Object(object) => {
+                // Keys can carry excerpts too. Mask before the core recorder
+                // sees them; collisions deliberately discard private detail.
+                *object = std::mem::take(object)
+                    .into_iter()
+                    .map(|(key, mut value)| {
+                        self.value(&mut value);
+                        (self.text(&key, false), value)
+                    })
+                    .collect();
+            }
+            Value::Number(_) | Value::Bool(_) | Value::Null => {
+                let encoded = value.to_string();
+                let masked = self.text(&encoded, false);
+                if masked != encoded {
+                    *value = Value::String(masked);
+                }
+            }
+        }
+    }
 }
 
 /// A call held back until its arguments stream in.
@@ -772,6 +908,7 @@ impl TranscriptTranslator {
     pub fn new(include_thoughts: bool) -> Self {
         Self {
             include_thoughts,
+            continuity: ContinuityRedaction::default(),
             text: String::new(),
             paragraph_flush: false,
             paragraphs: ParagraphScanner::default(),
@@ -785,6 +922,29 @@ impl TranscriptTranslator {
             stream_checks: Vec::new(),
             spawn_result: None,
         }
+    }
+
+    /// Register the full private bootstrap and every independently echoed
+    /// private fragment before submitting any prompt to this translator's adapter.
+    /// Registration is additive, atomic and retained across turns. Callers must
+    /// restore it before replay/restore output on a replacement translator, or
+    /// refuse delivery; a new translator has no knowledge of prior registrations.
+    /// Errors are fixed public refusal codes and contain no private text.
+    #[allow(dead_code)] // The provider lane wires the common prompt boundary.
+    pub(crate) fn register_continuity_fragments(
+        &mut self,
+        fragments: &[String],
+    ) -> Result<(), &'static str> {
+        self.continuity.register(fragments)
+    }
+
+    fn protect_items(&self, mut items: Vec<Value>) -> Vec<Value> {
+        if !self.continuity.patterns.is_empty() {
+            for item in &mut items {
+                self.continuity.value(item);
+            }
+        }
+        items
     }
 
     /// Publish the agent's prose a paragraph at a time as well as at the size,
@@ -848,6 +1008,26 @@ impl TranscriptTranslator {
 
     /// Translate one `params.update` object.
     pub fn on_update(&mut self, update: &Value) -> Vec<Value> {
+        if self.continuity.patterns.is_empty() {
+            return self.on_update_inner(update);
+        }
+        let mut safe = update.clone();
+        self.continuity.value(&mut safe);
+        // Streamed terminal bytes are bounded inside ToolMemo before rendering.
+        // Protect cut fragments before that bound can hash/truncate them.
+        for path in [
+            "/_meta/terminal_output/data",
+            "/_meta/terminal_output_delta/data",
+        ] {
+            if let Some(Value::String(data)) = safe.pointer_mut(path) {
+                *data = self.continuity.text(data, true);
+            }
+        }
+        let items = self.on_update_inner(&safe);
+        self.protect_items(items)
+    }
+
+    fn on_update_inner(&mut self, update: &Value) -> Vec<Value> {
         let Some((held_id, _)) = &self.spawn_result else {
             return self.translate_update(update);
         };
@@ -1103,7 +1283,14 @@ impl TranscriptTranslator {
     /// provider to verify against the agent's own record. Each names a
     /// `tool_result` item already returned, marked `outputComplete: false`.
     pub(crate) fn take_stream_checks(&mut self) -> Vec<StreamCheck> {
-        std::mem::take(&mut self.stream_checks)
+        let checks = std::mem::take(&mut self.stream_checks);
+        // Native reconciliation replaces content after translation. A private
+        // stream must not be replaced by unfiltered native-rollout plaintext.
+        if self.continuity.patterns.is_empty() {
+            checks
+        } else {
+            Vec::new()
+        }
     }
 
     /// Close a turn: flush anything buffered and publish its final usage
@@ -1134,14 +1321,14 @@ impl TranscriptTranslator {
         }
         self.tools.clear();
         self.anonymous = ToolMemo::default();
-        items
+        self.protect_items(items)
     }
 
     /// [`close_turn`](Self::close_turn) followed by the terminal item.
     pub fn end_turn(&mut self, result: Value) -> Vec<Value> {
         let mut items = self.close_turn();
         items.push(result);
-        items
+        self.protect_items(items)
     }
 
     /// Emit the agent's own buffered prose and held calls without closing the
@@ -1156,7 +1343,7 @@ impl TranscriptTranslator {
         items.extend(self.release_held_in(None));
         items.extend(self.flush_text());
         items.extend(self.flush_thoughts());
-        items
+        self.protect_items(items)
     }
 
     /// Publish the agent's prose up to `at`, a paragraph boundary, keeping
@@ -1172,7 +1359,9 @@ impl TranscriptTranslator {
         let mut items = self.release_held_in(None);
         items.extend(self.flush_thoughts());
         let rest = self.text.split_off(at);
-        let text = std::mem::replace(&mut self.text, rest);
+        let text = self
+            .continuity
+            .text(&std::mem::replace(&mut self.text, rest), true);
         if !text.trim().is_empty() {
             items.push(json!({ "kind": "assistant_text", "text": text }));
         }
@@ -1194,7 +1383,7 @@ impl TranscriptTranslator {
             self.text.clear();
             return Vec::new();
         }
-        let text = std::mem::take(&mut self.text);
+        let text = self.continuity.text(&std::mem::take(&mut self.text), true);
         vec![json!({ "kind": "assistant_text", "text": text })]
     }
 
@@ -1203,7 +1392,9 @@ impl TranscriptTranslator {
             self.thoughts.clear();
             return Vec::new();
         }
-        let text = std::mem::take(&mut self.thoughts);
+        let text = self
+            .continuity
+            .text(&std::mem::take(&mut self.thoughts), true);
         vec![json!({ "kind": "reasoning", "text": text })]
     }
 
@@ -1314,7 +1505,9 @@ impl TranscriptTranslator {
         let buffers = &mut self.subagents[index].1;
         let mut items = Vec::new();
         if text {
-            let taken = std::mem::take(&mut buffers.text);
+            let taken = self
+                .continuity
+                .text(&std::mem::take(&mut buffers.text), true);
             if !taken.trim().is_empty() {
                 items.push(
                     json!({ "kind": "assistant_text", "text": taken, "parentToolId": parent }),
@@ -1322,7 +1515,9 @@ impl TranscriptTranslator {
             }
         }
         if thoughts {
-            let taken = std::mem::take(&mut buffers.thoughts);
+            let taken = self
+                .continuity
+                .text(&std::mem::take(&mut buffers.thoughts), true);
             if !taken.trim().is_empty() {
                 items.push(json!({ "kind": "reasoning", "text": taken, "parentToolId": parent }));
             }
@@ -3164,3 +3359,7 @@ mod tests {
 #[cfg(test)]
 #[path = "transcript_terminal_tests.rs"]
 mod terminal_tests;
+
+#[cfg(test)]
+#[path = "tests/continuity_privacy_tests.rs"]
+mod continuity_privacy_tests;

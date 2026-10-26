@@ -740,6 +740,7 @@ pub async fn cmd_rm(
 pub async fn dispatch(cmd: crate::MemCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::MemCmd;
     match cmd {
+        MemCmd::Continuity(cmd) => super::mem_continuity::dispatch(cmd, client).await,
         MemCmd::Ls { owner, agent, json } => {
             cmd_ls(client, owner.as_deref(), agent.as_deref(), json).await
         }

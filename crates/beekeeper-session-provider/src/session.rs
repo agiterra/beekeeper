@@ -770,6 +770,36 @@ pub enum TurnDropReason {
 /// single ordered inbox with a single shutdown rule.
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
+    /// Private dequeue request; no shared payload is emitted.
+    ContinuityAdmissionRequested {
+        /// Command-bound custody and current-input request.
+        request: Box<crate::continuity_delivery::Request>,
+        /// Private preparation result, never a public receipt.
+        decision: watch::Sender<
+            Option<
+                Result<
+                    crate::continuity_bootstrap::PreparedBootstrap,
+                    crate::continuity_bootstrap::Refusal,
+                >,
+            >,
+        >,
+    },
+    /// Named refusal before any adapter prompt or transcript opening.
+    ContinuityRefused {
+        /// Execution.
+        session_id: String,
+        /// Command.
+        command_id: String,
+        /// Bounded reason, no private text.
+        reason: crate::continuity_bootstrap::Refusal,
+    },
+    /// Private receipt observation; never published.
+    ContinuityReceipt {
+        /// Non-plaintext receipt kept only in the private context store.
+        receipt: crate::continuity_bootstrap::Receipt,
+    },
+    /// Internal no-op after the async authority read has settled.
+    ContinuityAdmissionSettled,
     /// A queued team-wake pointer reached its execution boundary. The actor
     /// waits for the provider's relevance answer before sending any prompt
     /// to the adapter: a queued wake is already billable, and the fact it
@@ -1350,6 +1380,11 @@ pub(crate) struct StartedSession {
 }
 
 impl StartedSession {
+    /// Native conversation opened by this attempt, only for private archive binding.
+    pub(crate) fn native_id(&self) -> &str {
+        &self.startup.acp_session_id
+    }
+
     /// Whether the actor is still running. An adapter that died before it was
     /// attached must not be attached and advertised as live.
     pub(crate) fn is_live(&self) -> bool {
@@ -1390,15 +1425,29 @@ impl SessionManager {
         request: CreateRequest,
         events: mpsc::Sender<SessionEvent>,
     ) -> Result<StartedSession, CreateFailure> {
-        Self::start_inner(request, events, None).await
+        Self::start_inner(request, events, None, false, Vec::new()).await
     }
 
-    /// Observe only this attempt's actual spawned group and bounded absence.
-    /// A cancelled spawn without a captured group stays unproved; no PID is
-    /// reconstructed from logs, process trees or the previous generation.
-    pub(crate) async fn start_observed(
+    /// Start after an authenticated explicit reconstruction action. Never used
+    /// to reinterpret an unsuccessful native restore as reconstruction consent.
+    #[cfg(test)]
+    pub(crate) async fn start_observed_reconstructed(
         request: CreateRequest,
         events: mpsc::Sender<SessionEvent>,
+        reconstruct: bool,
+    ) -> (
+        Result<StartedSession, CreateFailure>,
+        crate::process_witness::ExecutionProcessWitness,
+    ) {
+        Self::start_observed_private(request, events, reconstruct, Vec::new()).await
+    }
+
+    /// Reinstall a proven native conversation's private output boundary before open.
+    pub(crate) async fn start_observed_private(
+        request: CreateRequest,
+        events: mpsc::Sender<SessionEvent>,
+        reconstruct: bool,
+        private_fragments: Vec<String>,
     ) -> (
         Result<StartedSession, CreateFailure>,
         crate::process_witness::ExecutionProcessWitness,
@@ -1411,6 +1460,8 @@ impl SessionManager {
             request,
             events,
             Some(observation.clone()),
+            reconstruct,
+            private_fragments,
         ))
         .await;
         let (attempted, group_id) = match observation.lock() {
@@ -1445,19 +1496,46 @@ impl SessionManager {
     }
 
     async fn start_inner(
-        request: CreateRequest,
+        mut request: CreateRequest,
         events: mpsc::Sender<SessionEvent>,
         observation: Option<Arc<Mutex<StartupObservation>>>,
+        reconstruct: bool,
+        private_fragments: Vec<String>,
     ) -> Result<StartedSession, CreateFailure> {
+        let private_output = reconstruct || !private_fragments.is_empty();
+        // A restored private boundary proves prior continuity-bearing history.
+        // Only explicit reconstruction may replace that history with session/new.
+        if !reconstruct && !private_fragments.is_empty() {
+            request.strict_native = true;
+        }
+        let mut private_fragments = private_fragments;
+        if reconstruct {
+            private_fragments.extend(crate::continuity_archive::startup_fragments(&request)?);
+        }
+        let mut translator = TranscriptTranslator::new(request.include_thoughts)
+            .with_paragraph_flush(request.transcript_paragraph_flush);
+        if !private_fragments.is_empty() {
+            translator
+                .register_continuity_fragments(&private_fragments)
+                .map_err(|_| CreateFailure {
+                    code: "CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE",
+                    message: "native private output boundary unavailable".into(),
+                })?;
+        }
         let observer = ObserverHandle::in_process();
         let started = tokio::time::timeout(
             STARTUP_TIMEOUT,
-            start_agent(&request, &observer, observation.as_ref()),
+            start_agent(&request, &observer, observation.as_ref(), private_output),
         )
         .await;
         let (mut client, startup) = match started {
             Ok(Ok(started)) => started,
-            Ok(Err(failure)) => return Err(failure),
+            Ok(Err(mut failure)) => {
+                if private_output {
+                    failure.message = "private continuity adapter open failed".into();
+                }
+                return Err(failure);
+            }
             Err(_) => {
                 return Err(CreateFailure {
                     code: PROVIDER_UNAVAILABLE,
@@ -1489,8 +1567,8 @@ impl SessionManager {
             idle_shutdown: request.idle_shutdown,
             events,
             observer,
-            translator: TranscriptTranslator::new(request.include_thoughts)
-                .with_paragraph_flush(request.transcript_paragraph_flush),
+            translator,
+            private_output,
             native_output: match &request.execution {
                 crate::execution_scope::ExecutionPlan::Prepared(prepared) => prepared
                     .codex_home
@@ -1498,6 +1576,14 @@ impl SessionManager {
                     .map(crate::native_output::NativeOutputSource::codex),
                 crate::execution_scope::ExecutionPlan::Legacy { .. } => None,
             },
+            continuity: reconstruct
+                .then(|| {
+                    crate::continuity_delivery::Execution::from_launch(
+                        &request,
+                        &startup.continuity,
+                    )
+                })
+                .flatten(),
             first_turn_preamble: startup.pending_briefing.clone(),
             agent_version: startup.agent_version.clone(),
             media: request.media.clone(),
@@ -2073,6 +2159,7 @@ async fn start_agent(
     request: &CreateRequest,
     observer: &ObserverHandle,
     observation: Option<&Arc<Mutex<StartupObservation>>>,
+    private_output: bool,
 ) -> Result<(AcpClient, SessionStartup), CreateFailure> {
     // Before the child exists, not after: a skill the agent cannot read on its
     // first turn is a skill it does not have.
@@ -2141,29 +2228,36 @@ async fn start_agent(
             observed.attempted = true;
         }
     }
+    let logging = if private_output {
+        beekeeper_acp::acp::LoggingMode::Private
+    } else {
+        beekeeper_acp::acp::LoggingMode::Ordinary
+    };
     let mut client = match &request.execution {
         // Granted full access by the person: the same prepared environment
         // and working directory, without the boundary around the process.
         crate::execution_scope::ExecutionPlan::Prepared(prepared) if prepared.full_access => {
-            AcpClient::spawn_with_full_access(
+            AcpClient::spawn_with_full_access_with_logging(
                 &request.agent_command,
                 &request.agent_args,
                 &prepared.launch,
+                logging,
             )
             .await
         }
         crate::execution_scope::ExecutionPlan::Prepared(prepared) => {
-            AcpClient::spawn_bounded(
+            AcpClient::spawn_bounded_with_logging(
                 &request.agent_command,
                 &request.agent_args,
                 &prepared.launch,
+                logging,
             )
             .await
         }
         // The same working directory the prepared launch gives its child:
         // the session's checkout, not wherever this process was started.
         crate::execution_scope::ExecutionPlan::Legacy { .. } => {
-            AcpClient::spawn_with_env_fence_and_overrides(
+            AcpClient::spawn_with_env_fence_and_overrides_and_logging(
                 &request.agent_command,
                 &request.agent_args,
                 &request.agent_env,
@@ -2171,6 +2265,7 @@ async fn start_agent(
                 &crate::agent_fence::FENCE,
                 &request.post_fence_env,
                 Some(&request.cwd),
+                logging,
             )
             .await
         }
@@ -2257,15 +2352,19 @@ async fn start_agent(
         client.shutdown().await;
         return Err(failure);
     }
-    tracing::info!(
-        target: "csp::session",
-        session_id = %request.target.session_id,
-        continuity = ?continuity,
-        bootstrap_transport = ?bootstrap_transport,
-        agent = %client.agent_name(),
-        agent_version = client.agent_version().unwrap_or("unreported"),
-        "ACP session opened"
-    );
+    if private_output {
+        tracing::info!(target: "csp::session", "private ACP session opened");
+    } else {
+        tracing::info!(
+            target: "csp::session",
+            session_id = %request.target.session_id,
+            continuity = ?continuity,
+            bootstrap_transport = ?bootstrap_transport,
+            agent = %client.agent_name(),
+            agent_version = client.agent_version().unwrap_or("unreported"),
+            "ACP session opened"
+        );
+    }
 
     // What the adapter says it is running outranks what the create asked for:
     // an unofferable model is silently not applied, and publishing the request
@@ -2936,6 +3035,8 @@ struct SessionActor {
     /// stream-assembled command output is verified against it before it is
     /// published (see [`crate::native_output`]).
     native_output: Option<crate::native_output::NativeOutputSource>,
+    private_output: bool,
+    continuity: Option<crate::continuity_delivery::Execution>,
     first_turn_preamble: Option<String>,
     /// Reads a turn's attachments back from the relay. See
     /// [`crate::attachments`].
@@ -3535,6 +3636,52 @@ impl SessionActor {
                 return None;
             }
         }
+        let bootstrap = if let Some(execution) = self.continuity.as_ref() {
+            let prepared = execution
+                .prepare(
+                    &self.events,
+                    shutdown,
+                    &command_id,
+                    &text,
+                    operator_pubkey.as_deref(),
+                    self.first_turn_preamble.as_deref(),
+                )
+                .await;
+            match prepared.and_then(|prepared| {
+                prepared.check_binding(&execution.target, &command_id)?;
+                self.translator
+                    .register_continuity_fragments(prepared.private_fragments())
+                    .map_err(|_| {
+                        crate::continuity_bootstrap::Refusal::PrivateDeliveryUnavailable
+                    })?;
+                Ok(prepared)
+            }) {
+                Ok(prepared) => Some(prepared),
+                Err(reason) => {
+                    let _ = self
+                        .events
+                        .send(SessionEvent::ContinuityRefused {
+                            session_id: self.session_id.clone(),
+                            command_id,
+                            reason,
+                        })
+                        .await;
+                    return None;
+                }
+            }
+        } else {
+            None
+        };
+        if bootstrap.is_some() {
+            self.first_turn_preamble = None;
+        }
+        let framing = framing.map(|mut frame| {
+            if bootstrap.is_some() {
+                frame.work_brief = None;
+                frame.situation_card = None;
+            }
+            frame
+        });
         let turn_id = Uuid::new_v4().to_string();
         let started = Instant::now();
         self.client.set_observer_context(context_for(
@@ -3613,6 +3760,10 @@ impl SessionActor {
             }
             None => addressed,
         };
+        let agent_text = match bootstrap.as_ref() {
+            Some(prepared) => format!("{}{}", prepared.payload(), agent_text),
+            None => agent_text,
+        };
         // An attachment that could not be read leaves its markdown link in the
         // prose with nothing behind it. Computed before the blocks consume
         // `attachment_blocks`, and appended after them, so the note names the
@@ -3639,14 +3790,33 @@ impl SessionActor {
         self.client.install_steer_input(steer_rx);
         let mut pending: PendingSteers = FuturesUnordered::new();
         let mut tickets: HashMap<String, SteerTicket> = HashMap::new();
+        if let (Some(execution), Some(prepared)) = (self.continuity.as_mut(), bootstrap.as_ref()) {
+            execution.last_receipt = Some(prepared.clone());
+        }
         // The prompt future holds `&mut self.client` for the whole turn; it is
         // boxed so the interrupt path can drop it and get the client back.
-        let mut prompt = Box::pin(self.client.session_prompt_content_with_idle_timeout(
-            &self.acp_session_id,
-            &blocks,
-            self.idle_timeout,
-            self.max_turn_duration,
-        ));
+        let mut prompt = Box::pin(async {
+            if let Some(prepared) = bootstrap.as_ref() {
+                prepared
+                    .submitted()
+                    .map_err(|reason| AcpError::Protocol(reason.code().into()))?;
+                // The phase is already durable; queue admission is only an
+                // advisory snapshot, never evidence of adapter confirmation.
+                if let Ok(receipt) = prepared.receipt() {
+                    let _ = self
+                        .events
+                        .try_send(SessionEvent::ContinuityReceipt { receipt });
+                }
+            }
+            self.client
+                .session_prompt_content_with_idle_timeout(
+                    &self.acp_session_id,
+                    &blocks,
+                    self.idle_timeout,
+                    self.max_turn_duration,
+                )
+                .await
+        });
         let interruption = loop {
             tokio::select! {
                 biased;
@@ -3824,6 +3994,24 @@ impl SessionActor {
             }
         };
         drop(prompt);
+        if let Some(prepared) = bootstrap {
+            if matches!(
+                &interruption,
+                PromptInterruption::Completed(Ok(StopReason::EndTurn))
+            ) && prepared.confirmed().is_ok()
+            {
+                // The phase is already durable; queue admission is only an
+                // advisory snapshot, never evidence of adapter confirmation.
+                if let Ok(receipt) = prepared.receipt() {
+                    let _ = self
+                        .events
+                        .try_send(SessionEvent::ContinuityReceipt { receipt });
+                }
+            }
+            if let Some(execution) = self.continuity.as_mut() {
+                execution.last_receipt = Some(prepared);
+            }
+        }
 
         // The prompt arm is polled first, so the agent's closing chunks can
         // still be sitting in the broadcast buffer when it resolves.
@@ -3881,7 +4069,11 @@ impl SessionActor {
                     // the operator the work ended while it may continue.
                     Err(AcpError::AgentError { message, .. }) => (
                         TurnOutcome::Failed {
-                            message: bounded_adapter_text(&message),
+                            message: if self.private_output {
+                                "private continuity cancellation was not confirmed".into()
+                            } else {
+                                bounded_adapter_text(&message)
+                            },
                             agent_gone: false,
                             cause: Some(TurnFailureCause::CancelNotConfirmed {
                                 shutdown: requested_shutdown,
@@ -3896,7 +4088,7 @@ impl SessionActor {
                         tracing::warn!(
                             target: "csp::session",
                             session_id = %self.session_id,
-                            "cancel drain did not complete: {error}"
+                            "cancel drain did not complete: {}", if self.private_output { "private adapter error".to_owned() } else { error.to_string() }
                         );
                         (TurnOutcome::Cancelled, None)
                     }
@@ -3972,6 +4164,20 @@ impl SessionActor {
         let tail = self.translator.close_turn();
         emit_items(&self.events, &self.session_id, &turn_id, tail).await;
 
+        let outcome = if self.private_output {
+            match outcome {
+                TurnOutcome::Failed {
+                    agent_gone, cause, ..
+                } => TurnOutcome::Failed {
+                    message: "private continuity adapter turn failed".into(),
+                    agent_gone,
+                    cause,
+                },
+                other => other,
+            }
+        } else {
+            outcome
+        };
         let usage = self.client.take_turn_usage().map(Box::new);
         let _ = self
             .events
@@ -4075,11 +4281,15 @@ impl SessionActor {
                 (TurnOutcome::Completed { stop_reason }, None)
             }
             Err(error) => {
-                let note = format!(
+                let note = if self.private_output {
+                    "private continuity adapter cancellation was not confirmed".to_owned()
+                } else {
+                    format!(
                     "{adapter} answered but never resolved this prompt, and did not respond to \
                      being cancelled ({error}). Beekeeper closed the turn after {quiet:?}; the \
                      answer above is complete."
-                );
+                )
+                };
                 (
                     TurnOutcome::Failed {
                         message: note,
@@ -4099,7 +4309,11 @@ impl SessionActor {
         error: AcpError,
         turn_id: &str,
     ) -> (TurnOutcome, Option<String>) {
-        let message = error.to_string();
+        let message = if self.private_output {
+            "private continuity adapter request failed".to_owned()
+        } else {
+            error.to_string()
+        };
         let cause = error
             .credential_failure_reason()
             .map(TurnFailureCause::Credential);

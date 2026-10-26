@@ -29,7 +29,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `
 | `bee pr` | `open`, `update`, `get`, `list`, `status` |
 | `bee media` | `get` |
 | `bee upload` | `file` |
-| `bee mem` | `ls`, `get`, `hash`, `set`, `patch`, `rm` |
+| `bee mem` | `continuity`, `ls`, `get`, `hash`, `set`, `patch`, `rm` |
 | `bee pack` | `validate`, `inspect`, `compose`, `migrate`, `clone-template` |
 | `bee packs` | `set-source`, `init`, `get-source`, `status` |
 | `bee git` | `setup`, `status`, `check` |

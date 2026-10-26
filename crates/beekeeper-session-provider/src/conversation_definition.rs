@@ -13,7 +13,7 @@ fn pinned_definition_matches(
 }
 
 impl Provider {
-    pub(super) async fn conversation_definition_head(
+    pub(crate) async fn conversation_definition_head(
         &self,
         actor_hex: &str,
     ) -> Result<

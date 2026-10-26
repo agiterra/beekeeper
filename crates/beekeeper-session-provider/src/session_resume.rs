@@ -439,6 +439,22 @@ impl Provider {
                     .await;
             }
         };
+        let mut continuity_archive = match crate::continuity_archive::restore(
+            &self.config.state_dir,
+            &record,
+            &self.config.instance_id,
+            &self.config.relay_url,
+            &post_fence_env,
+        ) {
+            Ok(archive) => archive,
+            Err(failure) => {
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
+            }
+        };
         let request = CreateRequest {
             execution,
             media: self.media.clone(),
@@ -448,9 +464,9 @@ impl Provider {
             title: record.title.clone(),
             model: record.model.clone(),
             resume_cursor: resume_cursor.clone(),
-            // Imported native continuity cannot silently become a fresh conversation.
+            // Failed native continuity requires an explicit reconstruction action.
             // Ordinary existing resume keeps its preexisting disclosed fallback.
-            strict_native: false,
+            strict_native: continuity_archive.is_some() && rewind.is_none(),
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
@@ -468,6 +484,26 @@ impl Provider {
         };
         self.stage_reopening(&record.session_id, &target)?;
         let events = self.sessions.event_sender();
+        if rewind.is_some() && record.actor.is_some() {
+            continuity_archive = match crate::continuity_archive::stage_reconstruction(
+                &self.config.state_dir,
+                &request,
+                continuity_archive,
+            ) {
+                Ok(archive) => archive,
+                Err(failure) => {
+                    let receipt =
+                        LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                    return self
+                        .answer_resume_failure(&plan, rewind, receipt, relay)
+                        .await;
+                }
+            };
+        }
+        let private_fragments = continuity_archive
+            .as_ref()
+            .map(|a| a.fragments.clone())
+            .unwrap_or_default();
         #[cfg(test)]
         let (started, failed_witness) =
             if rewind.is_some() && std::mem::take(&mut self.rewind_fail_next_open) {
@@ -485,7 +521,12 @@ impl Provider {
                     },
                 )
             } else {
-                let startup_future = SessionManager::start_observed(request, events);
+                let startup_future = SessionManager::start_observed_private(
+                    request,
+                    events,
+                    rewind.is_some(),
+                    private_fragments,
+                );
                 self.await_with_lease_maintenance(
                     startup_future,
                     relay.map(HarnessRelay::event_publisher),
@@ -494,7 +535,12 @@ impl Provider {
             };
         #[cfg(not(test))]
         let (started, failed_witness) = {
-            let startup_future = SessionManager::start_observed(request, events);
+            let startup_future = SessionManager::start_observed_private(
+                request,
+                events,
+                rewind.is_some(),
+                private_fragments,
+            );
             self.await_with_lease_maintenance(
                 startup_future,
                 relay.map(HarnessRelay::event_publisher),
@@ -532,6 +578,25 @@ impl Provider {
                 self.state.consume_command(&plan.command_id, now_secs())?;
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
+            }
+        }
+        if let Some(mut archive) = continuity_archive {
+            archive.binding.target = target.clone();
+            archive.binding.cursor_hash =
+                beekeeper_core::continuity::value_hash(started.native_id().as_bytes());
+            if crate::context_store::write_continuity_archive(&self.config.state_dir, &archive)
+                .is_err()
+            {
+                self.retire_unattached_context(Some(started), context_package_id.as_deref())
+                    .await;
+                let receipt = LifecycleReceipt::failed(
+                    &plan.command_id,
+                    "CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE",
+                    "private native output boundary could not be retained",
+                );
                 return self
                     .answer_resume_failure(&plan, rewind, receipt, relay)
                     .await;

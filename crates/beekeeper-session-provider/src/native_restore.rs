@@ -356,6 +356,16 @@ impl Provider {
             }
         };
 
+        let continuity_archive = crate::continuity_archive::restore(
+            &self.config.state_dir,
+            &record,
+            &self.config.instance_id,
+            &self.config.relay_url,
+            &post_fence_env,
+        )
+        .map_err(RestoreObstacle::Prerequisite)?;
+        let private_fragments = continuity_archive.map(|a| a.fragments).unwrap_or_default();
+
         // SV-33: a restored execution drives its preview with a fresh grant.
         let mut post_fence_env = post_fence_env;
         crate::preview_grant::push_preview_env(
@@ -399,6 +409,7 @@ impl Provider {
             record,
             target,
             seat_command_id,
+            private_fragments,
             descriptor,
             resume_cursor,
             seat_identity,
@@ -640,6 +651,7 @@ impl Provider {
 /// A restore's inputs, decided on the loop by [`Provider::prepare_restore`]
 /// and owned, so [`run_restore_job`] can run anywhere.
 pub(crate) struct RestoreJob {
+    private_fragments: Vec<String>,
     ownership_admission: Option<crate::host_ownership::HostAdmission>,
     record: SessionRecord,
     target: CodingSessionTarget,
@@ -730,6 +742,7 @@ enum RestoreOutcome {
 /// state, so it may run off the run loop (SV-76).
 pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     let RestoreJob {
+        private_fragments,
         ownership_admission,
         record,
         target,
@@ -878,7 +891,8 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         include_thoughts: config.include_thoughts,
         transcript_paragraph_flush: config.transcript_paragraph_flush,
     };
-    let (started, mut startup_witness) = SessionManager::start_observed(request, events).await;
+    let (started, mut startup_witness) =
+        SessionManager::start_observed_private(request, events, false, private_fragments).await;
     if let Err(failure) = crate::agent_retirement::observe(
         &config,
         retirement_check.0.as_ref(),

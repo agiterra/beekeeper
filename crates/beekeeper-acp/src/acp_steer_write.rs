@@ -53,7 +53,7 @@ impl AcpClient {
             (None, false) => None,
         };
         let Some((wire, method, params, native_run_id)) = selected else {
-            tracing::warn!(
+            acp_log!(self.logging, warn,
                 attempt_id = ?attempt_id,
                 "steer: no active_run_id and agent did not advertise \
                  {ACP_STEER_METHOD} — nothing written"
@@ -76,6 +76,7 @@ impl AcpClient {
             "params": params,
         });
         let mut pending = PendingSteer {
+            logging: self.logging,
             request_id: id,
             wire,
             native_run_id,
@@ -93,7 +94,7 @@ impl AcpClient {
             });
             return None;
         }
-        tracing::debug!(
+        acp_log!(self.logging, debug,
             target: "acp::wire",
             "→ {}",
             serde_json::to_string(&msg).unwrap_or_default()
@@ -101,7 +102,9 @@ impl AcpClient {
         match self.write_ndjson(&msg).await {
             Ok(()) => Some(pending),
             Err(e) => {
-                tracing::warn!(
+                acp_log!(
+                    self.logging,
+                    warn,
                     request_id = id,
                     "steer write failed ({method}): {e} — delivery unknown"
                 );

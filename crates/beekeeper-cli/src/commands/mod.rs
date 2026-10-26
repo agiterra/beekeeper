@@ -22,6 +22,7 @@ pub mod git_verdict_scope;
 pub mod host;
 pub mod issues;
 pub mod mem;
+pub mod mem_continuity;
 pub mod messages;
 pub mod moderation;
 pub mod notes;
