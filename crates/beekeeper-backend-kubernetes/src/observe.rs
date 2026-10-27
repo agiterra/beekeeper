@@ -66,6 +66,17 @@ pub fn secret_is_ours(secret: &Secret, identity: &AgentIdentity) -> bool {
         && annotation_matches(secret.metadata.annotations.as_ref(), identity)
 }
 
+/// Is this workspace claim ours and this identity's? A deploy mounts an
+/// existing claim only when this holds — the same fence as for Secrets, so a
+/// look-alike claim planted under the derived name is refused, not mounted.
+pub fn claim_is_ours(
+    claim: &k8s_openapi::api::core::v1::PersistentVolumeClaim,
+    identity: &AgentIdentity,
+) -> bool {
+    has_marker(claim.metadata.labels.as_ref())
+        && annotation_matches(claim.metadata.annotations.as_ref(), identity)
+}
+
 /// Decode a pod's startup state from its status.
 ///
 /// "Started" means `state.running` on our container — not pod phase. A pod can

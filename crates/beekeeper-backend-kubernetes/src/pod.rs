@@ -12,9 +12,10 @@ use crate::naming::{
     AgentIdentity, ANNOTATION_CREATE_INTENT, ANNOTATION_IMAGE, ANNOTATION_PUBKEY_FULL,
 };
 use k8s_openapi::api::core::v1::{
-    Capabilities, Container, EmptyDirVolumeSource, EnvFromSource, Pod, PodSecurityContext, PodSpec,
+    Capabilities, Container, EmptyDirVolumeSource, EnvFromSource, PersistentVolumeClaim,
+    PersistentVolumeClaimSpec, PersistentVolumeClaimVolumeSource, Pod, PodSecurityContext, PodSpec,
     ResourceRequirements, SeccompProfile, Secret, SecretEnvSource, SecurityContext, Volume,
-    VolumeMount,
+    VolumeMount, VolumeResourceRequirements,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -55,6 +56,70 @@ pub fn build_secret(
         string_data: Some(env),
         immutable: Some(true),
         ..Default::default()
+    }
+}
+
+/// Build the workspace claim for this identity, if the config claims one.
+///
+/// Marked and annotated exactly like the Secret: the name is derived from the
+/// pubkey, and the full-pubkey annotation is what [`crate::observe::claim_is_ours`]
+/// checks before a deploy mounts an existing claim. `ReadWriteOnce`: one agent
+/// pod per identity is the deploy invariant, and the claim must not become a
+/// way for a second pod to share the workspace.
+pub fn build_workspace_claim(
+    identity: &AgentIdentity,
+    cfg: &ProviderConfig,
+) -> Option<PersistentVolumeClaim> {
+    let claim = cfg.workspace_claim.as_ref()?;
+    Some(PersistentVolumeClaim {
+        metadata: ObjectMeta {
+            name: Some(identity.workspace_claim_name()),
+            namespace: Some(cfg.namespace.clone()),
+            labels: Some(identity.labels()),
+            annotations: Some(
+                [(
+                    ANNOTATION_PUBKEY_FULL.to_string(),
+                    identity.pubkey_hex().to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..Default::default()
+        },
+        spec: Some(PersistentVolumeClaimSpec {
+            access_modes: Some(vec!["ReadWriteOnce".to_string()]),
+            storage_class_name: Some(claim.storage_class.clone()),
+            resources: Some(VolumeResourceRequirements {
+                requests: Some(
+                    [("storage".to_string(), Quantity(claim.size.clone()))]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+/// The workspace volume: this identity's claim when one is configured, else
+/// the v1 `emptyDir`.
+fn workspace_volume(identity: &AgentIdentity, cfg: &ProviderConfig) -> Volume {
+    match cfg.workspace_claim {
+        Some(_) => Volume {
+            name: WORKSPACE_VOLUME.to_string(),
+            persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                claim_name: identity.workspace_claim_name(),
+                read_only: Some(false),
+            }),
+            ..Default::default()
+        },
+        None => Volume {
+            name: WORKSPACE_VOLUME.to_string(),
+            empty_dir: Some(EmptyDirVolumeSource::default()),
+            ..Default::default()
+        },
     }
 }
 
@@ -171,11 +236,7 @@ pub fn build_pod(
                 }),
                 ..Default::default()
             }),
-            volumes: Some(vec![Volume {
-                name: WORKSPACE_VOLUME.to_string(),
-                empty_dir: Some(EmptyDirVolumeSource::default()),
-                ..Default::default()
-            }]),
+            volumes: Some(vec![workspace_volume(identity, cfg)]),
             ..Default::default()
         }),
         ..Default::default()
@@ -194,6 +255,7 @@ pub fn intent_template(
         cfg.service_account.as_deref(),
         env_keys,
     )
+    .with_workspace_claim(cfg.workspace_claim.as_ref())
 }
 
 #[cfg(test)]
@@ -316,6 +378,90 @@ mod tests {
         let mount = &spec.containers[0].volume_mounts.as_ref().unwrap()[0];
         assert_eq!(mount.name, volume.name);
         assert_eq!(mount.mount_path, WORKSPACE_PATH);
+    }
+
+    fn claimed_config() -> ProviderConfig {
+        config::parse(&serde_json::json!({
+            "namespace": "buzz-agents-test",
+            "image": format!("registry.example.com/beekeeper-sprig@sha256:{}", "a".repeat(64)),
+            "workspace_storage_class": "local-path",
+        }))
+        .unwrap()
+    }
+
+    /// With a storage class the workspace is this identity's claim, mounted at
+    /// the same path — and still no hostPath, which is why a claim (not a host
+    /// directory) is how the workspace survives its pod.
+    #[test]
+    fn a_claimed_workspace_mounts_this_identitys_claim_at_home() {
+        let id = identity();
+        let cfg = claimed_config();
+        let pod = build_pod(&id, &cfg, "g", &Fingerprint::from_annotation("f"));
+        let spec = spec(&pod);
+        let volume = &spec.volumes.as_ref().unwrap()[0];
+        assert!(volume.empty_dir.is_none());
+        assert!(volume.host_path.is_none());
+        let source = volume.persistent_volume_claim.as_ref().unwrap();
+        assert_eq!(source.claim_name, id.workspace_claim_name());
+        assert_eq!(source.read_only, Some(false));
+        let mount = &spec.containers[0].volume_mounts.as_ref().unwrap()[0];
+        assert_eq!(mount.name, volume.name);
+        assert_eq!(mount.mount_path, WORKSPACE_PATH);
+    }
+
+    /// The claim name comes from the decoded pubkey and nothing else: two
+    /// identities can never be handed the same claim, so one lane cannot
+    /// mount another lane's workspace.
+    #[test]
+    fn the_claim_is_bound_to_the_agent_pubkey() {
+        let (a, b) = (identity(), identity());
+        let cfg = claimed_config();
+        let claim_a = build_workspace_claim(&a, &cfg).unwrap();
+        let claim_b = build_workspace_claim(&b, &cfg).unwrap();
+        assert_eq!(
+            claim_a.metadata.name.as_deref(),
+            Some(a.workspace_claim_name().as_str())
+        );
+        assert_ne!(claim_a.metadata.name, claim_b.metadata.name);
+        assert_eq!(
+            claim_a.metadata.annotations.as_ref().unwrap()[ANNOTATION_PUBKEY_FULL],
+            a.pubkey_hex()
+        );
+        assert_eq!(claim_a.metadata.labels.as_ref().unwrap(), &a.labels());
+        assert!(crate::observe::claim_is_ours(&claim_a, &a));
+        assert!(!crate::observe::claim_is_ours(&claim_a, &b));
+        let pod_b = build_pod(&b, &cfg, "g", &Fingerprint::from_annotation("f"));
+        let mounted = spec(&pod_b).volumes.as_ref().unwrap()[0]
+            .persistent_volume_claim
+            .as_ref()
+            .unwrap()
+            .claim_name
+            .clone();
+        assert_eq!(mounted, b.workspace_claim_name());
+        assert_ne!(mounted, a.workspace_claim_name());
+    }
+
+    #[test]
+    fn the_claim_carries_class_size_and_single_writer_access() {
+        let cfg = claimed_config();
+        let claim = build_workspace_claim(&identity(), &cfg).unwrap();
+        let spec = claim.spec.unwrap();
+        assert_eq!(spec.storage_class_name.as_deref(), Some("local-path"));
+        assert_eq!(spec.access_modes, Some(vec!["ReadWriteOnce".to_string()]));
+        assert_eq!(
+            spec.resources.unwrap().requests.unwrap()["storage"],
+            Quantity(config::DEFAULT_WORKSPACE_SIZE.into())
+        );
+        assert_eq!(
+            claim.metadata.namespace.as_deref(),
+            Some("buzz-agents-test")
+        );
+    }
+
+    /// No storage class, no claim: the default stays the v1 `emptyDir`.
+    #[test]
+    fn no_claim_is_built_without_a_storage_class() {
+        assert!(build_workspace_claim(&identity(), &provider_config()).is_none());
     }
 
     #[test]

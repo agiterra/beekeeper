@@ -83,6 +83,21 @@ pub struct IntentTemplate {
     pub workspace_mount_path: String,
     pub run_as_user: i64,
     pub run_as_group: i64,
+    /// The workspace claim's class and size, when the workspace is claimed.
+    /// Omitted from the serialization when absent, so an `emptyDir` pod's
+    /// digest is byte-for-byte the digest it had before the field existed:
+    /// adding the knob must not re-fingerprint, and so replace, every
+    /// running pod.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_claim: Option<WorkspaceClaimIntent>,
+}
+
+/// The scheduling-relevant half of a workspace claim. The claim *name* is
+/// identity-derived and so constant per agent; it carries no intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorkspaceClaimIntent {
+    pub storage_class: String,
+    pub size: String,
 }
 
 /// Current template schema version.
@@ -130,7 +145,18 @@ impl IntentTemplate {
             workspace_mount_path: crate::config::WORKSPACE_PATH.to_string(),
             run_as_user: crate::config::RUN_AS_UID,
             run_as_group: crate::config::RUN_AS_GID,
+            workspace_claim: None,
         }
+    }
+
+    /// Record a claimed workspace. Switching between `emptyDir` and a claim,
+    /// or changing the claim's class or size, is a pod-shape change.
+    pub fn with_workspace_claim(mut self, claim: Option<&crate::config::WorkspaceClaim>) -> Self {
+        self.workspace_claim = claim.map(|c| WorkspaceClaimIntent {
+            storage_class: c.storage_class.clone(),
+            size: c.size.clone(),
+        });
+        self
     }
 }
 
@@ -305,5 +331,45 @@ mod tests {
     fn unrecognized_annotation_reads_as_divergence() {
         let recorded = Fingerprint::from_annotation("not-a-digest");
         assert_ne!(recorded, template().fingerprint());
+    }
+
+    fn claim(class: &str, size: &str) -> crate::config::WorkspaceClaim {
+        crate::config::WorkspaceClaim {
+            storage_class: class.into(),
+            size: size.into(),
+        }
+    }
+
+    /// An `emptyDir` template must serialize exactly as it did before the
+    /// workspace field existed: no key at all, not `null`. A `null` would
+    /// re-fingerprint every running pod and the divergence row would replace
+    /// all of them on their next deploy.
+    #[test]
+    fn an_emptydir_template_serializes_without_a_workspace_key() {
+        let json = serde_json::to_string(&template().with_workspace_claim(None)).unwrap();
+        assert!(!json.contains("workspace_claim"), "{json}");
+        assert_eq!(
+            template().with_workspace_claim(None).fingerprint(),
+            template().fingerprint()
+        );
+    }
+
+    /// Claiming the workspace, and changing the claim's class or size, are
+    /// pod-shape changes the classifier must see.
+    #[test]
+    fn the_workspace_claim_is_part_of_the_intent() {
+        let empty = template().fingerprint();
+        let local = template()
+            .with_workspace_claim(Some(&claim("local-path", "20Gi")))
+            .fingerprint();
+        let other_class = template()
+            .with_workspace_claim(Some(&claim("gp3", "20Gi")))
+            .fingerprint();
+        let bigger = template()
+            .with_workspace_claim(Some(&claim("local-path", "40Gi")))
+            .fingerprint();
+        assert_ne!(empty, local);
+        assert_ne!(local, other_class);
+        assert_ne!(local, bigger);
     }
 }

@@ -1,7 +1,7 @@
 //! `provider_config` parsing and the `info` config schema
 //! (spec §`provider_config` v1 fields, `docs/remote-agents.md:1384-1389`).
 //!
-//! Nine fields, all optional except `image` (required, with no default and
+//! Eleven fields, all optional except `image` (required, with no default and
 //! no schema prefill — §Image).
 //! No credential field exists, by I2: cluster auth comes from ambient
 //! kubeconfig resolution and nothing else (`:196-198`).
@@ -52,6 +52,19 @@ pub const TERMINATION_GRACE_SECONDS: i64 = 60;
 /// the combination rather than shipping against an undefended convention.
 pub const RESTART_POLICY: &str = "Never";
 
+/// Default size of a claimed workspace when only the storage class is set.
+pub const DEFAULT_WORKSPACE_SIZE: &str = "20Gi";
+
+/// A persistent workspace: the opt-in replacement for the `emptyDir`
+/// (§Pod shape, Workspace). The claim outlives the pod, so a pod that dies
+/// with its node (a Spot stop) leaves its checkout behind for the next pod
+/// of the same identity, or for an operator to copy out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceClaim {
+    pub storage_class: String,
+    pub size: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderConfig {
     /// kubeconfig context; `None` uses the current context.
@@ -62,6 +75,8 @@ pub struct ProviderConfig {
     /// `None` when `inactivity_seconds` was 0 — refused in v1, see [`parse`].
     pub inactivity_seconds: Option<u64>,
     pub service_account: Option<String>,
+    /// `None` keeps the v1 `emptyDir` workspace.
+    pub workspace_claim: Option<WorkspaceClaim>,
 }
 
 /// Read an optional non-empty string field. Rejects non-string scalars rather
@@ -156,6 +171,36 @@ pub fn parse(cfg: &serde_json::Value) -> Result<ProviderConfig, String> {
         Some(n) => Some(n),
     };
 
+    // The size alone selects nothing: there is no cluster-independent default
+    // storage class, and silently falling back to `emptyDir` would ship the
+    // exact data loss the field exists to prevent.
+    let workspace_claim = match (
+        optional_string(cfg, "workspace_storage_class")?,
+        optional_string(cfg, "workspace_size")?,
+    ) {
+        (None, None) => None,
+        (None, Some(_)) => {
+            return Err(
+                "provider_config.workspace_size is set but workspace_storage_class \
+                 is not: name the storage class that provisions the workspace claim"
+                    .to_string(),
+            )
+        }
+        (Some(storage_class), size) => {
+            if !valid_storage_class(&storage_class) {
+                return Err(format!(
+                    "provider_config.workspace_storage_class {storage_class:?} is not \
+                     a valid Kubernetes object name (lowercase alphanumerics, '-' \
+                     and '.', ≤253 characters)"
+                ));
+            }
+            Some(WorkspaceClaim {
+                storage_class,
+                size: size.unwrap_or_else(|| DEFAULT_WORKSPACE_SIZE.to_string()),
+            })
+        }
+    };
+
     Ok(ProviderConfig {
         context: optional_string(cfg, "context")?,
         namespace,
@@ -163,7 +208,19 @@ pub fn parse(cfg: &serde_json::Value) -> Result<ProviderConfig, String> {
         resources,
         inactivity_seconds,
         service_account: optional_string(cfg, "service_account")?,
+        workspace_claim,
     })
+}
+
+/// A StorageClass name: RFC 1123 subdomain, ≤253 chars.
+fn valid_storage_class(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 253
+        && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name.ends_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
 }
 
 /// A fresh `buzz-agents-<rand6>` namespace default.
@@ -226,6 +283,17 @@ pub fn config_schema() -> serde_json::Value {
                 "type": "string",
                 "title": "Service account",
                 "description": "Scheduling/RBAC identity only. No API token is mounted."
+            },
+            "workspace_storage_class": {
+                "type": "string",
+                "title": "Workspace storage class",
+                "description": "Leave empty for a scratch workspace that is deleted with the pod. Set a StorageClass (e.g. local-path) to keep the workspace on a PersistentVolumeClaim that survives the pod; the claim is never deleted by the provider."
+            },
+            "workspace_size": {
+                "type": "string",
+                "title": "Workspace size",
+                "description": "Requested size of the workspace claim. Used only with a workspace storage class.",
+                "default": DEFAULT_WORKSPACE_SIZE
             }
         },
         "required": ["namespace", "image"]
@@ -439,7 +507,7 @@ mod tests {
     /// Nine fields exactly (§`provider_config` v1 fields). The cap is 20; the
     /// count is pinned so a field added without a spec change is caught here.
     #[test]
-    fn schema_declares_exactly_the_nine_v1_fields() {
+    fn schema_declares_exactly_the_eleven_fields() {
         let schema = config_schema();
         let props = schema["properties"].as_object().unwrap();
         let mut keys: Vec<&str> = props.keys().map(String::as_str).collect();
@@ -455,12 +523,71 @@ mod tests {
                 "memory_limit",
                 "memory_request",
                 "namespace",
-                "service_account"
+                "service_account",
+                "workspace_size",
+                "workspace_storage_class"
             ]
         );
         assert_eq!(
             schema["required"],
             serde_json::json!(["namespace", "image"])
+        );
+    }
+
+    fn with(extra: serde_json::Value) -> Result<ProviderConfig, String> {
+        let mut cfg = serde_json::json!({"namespace": "ns", "image": digest_ref()});
+        cfg.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        parse(&cfg)
+    }
+
+    #[test]
+    fn the_workspace_is_an_emptydir_unless_a_storage_class_is_named() {
+        assert_eq!(with(serde_json::json!({})).unwrap().workspace_claim, None);
+        assert_eq!(
+            with(serde_json::json!({"workspace_storage_class": "  "}))
+                .unwrap()
+                .workspace_claim,
+            None
+        );
+    }
+
+    #[test]
+    fn a_storage_class_claims_the_workspace_with_the_default_size() {
+        let claim = with(serde_json::json!({"workspace_storage_class": "local-path"}))
+            .unwrap()
+            .workspace_claim
+            .unwrap();
+        assert_eq!(claim.storage_class, "local-path");
+        assert_eq!(claim.size, DEFAULT_WORKSPACE_SIZE);
+        let sized = with(serde_json::json!({
+            "workspace_storage_class": "local-path", "workspace_size": "50Gi"
+        }))
+        .unwrap()
+        .workspace_claim
+        .unwrap();
+        assert_eq!(sized.size, "50Gi");
+    }
+
+    /// A size with no class must not silently become an `emptyDir`: the
+    /// caller asked for a workspace that survives the pod.
+    #[test]
+    fn a_size_without_a_storage_class_is_refused() {
+        let err = with(serde_json::json!({"workspace_size": "50Gi"})).unwrap_err();
+        assert!(err.contains("workspace_storage_class"), "{err}");
+    }
+
+    #[test]
+    fn an_invalid_storage_class_name_is_refused() {
+        for bad in ["Local-Path", "-x", "x_y", "a/b"] {
+            assert!(
+                with(serde_json::json!({"workspace_storage_class": bad})).is_err(),
+                "accepted {bad:?}"
+            );
+        }
+        assert!(
+            with(serde_json::json!({"workspace_storage_class": "ebs.csi.aws.com-gp3"})).is_ok()
         );
     }
 

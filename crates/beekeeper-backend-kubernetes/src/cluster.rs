@@ -18,7 +18,7 @@
 use crate::classify::Fence;
 use crate::reconcile::{CreateOutcome, DeleteOutcome, Substrate};
 use chrono::{DateTime, Utc};
-use k8s_openapi::api::core::v1::{Namespace, Pod, Secret};
+use k8s_openapi::api::core::v1::{Namespace, PersistentVolumeClaim, Pod, Secret};
 use kube::api::{Api, DeleteParams, GetParams, ListParams, PostParams, Preconditions};
 use kube::core::ErrorResponse;
 use kube::{Client, Resource};
@@ -73,6 +73,10 @@ impl Cluster {
     }
 
     fn secrets(&self) -> Api<Secret> {
+        Api::namespaced(self.client.clone(), &self.namespace)
+    }
+
+    fn claims(&self) -> Api<PersistentVolumeClaim> {
         Api::namespaced(self.client.clone(), &self.namespace)
     }
 
@@ -245,6 +249,23 @@ impl Substrate for Cluster {
             Ok(pod) => Ok(Some(pod)),
             Err(e) if reason_is(&e, REASON_NOT_FOUND) => Ok(None),
             Err(e) => Err(format!("could not read pod {name}: {e}")),
+        }
+    }
+
+    async fn get_claim(&self, name: &str) -> Result<Option<PersistentVolumeClaim>, String> {
+        match self.claims().get_with(name, &GetParams::default()).await {
+            Ok(claim) => Ok(Some(claim)),
+            Err(e) if reason_is(&e, REASON_NOT_FOUND) => Ok(None),
+            Err(e) => Err(format!("could not read workspace claim {name}: {e}")),
+        }
+    }
+
+    async fn create_claim(&self, claim: &PersistentVolumeClaim) -> Result<CreateOutcome, String> {
+        let name = claim.metadata.name.clone().unwrap_or_default();
+        match self.claims().create(&PostParams::default(), claim).await {
+            Ok(_) => Ok(CreateOutcome::Created),
+            Err(e) if reason_is(&e, REASON_ALREADY_EXISTS) => Ok(CreateOutcome::AlreadyExists),
+            Err(e) => Err(format!("could not create workspace claim {name}: {e}")),
         }
     }
 

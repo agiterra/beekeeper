@@ -86,6 +86,15 @@ impl AgentIdentity {
         format!("buzz-agent-{}-{}", &self.pubkey_hex[..12], generation)
     }
 
+    /// Deterministic workspace claim name. Derived from the pubkey like the pod
+    /// name, so a deploy can only ever mount the claim of the identity it
+    /// decoded — no caller-supplied name reaches the volume source. The
+    /// `-workspace` suffix cannot collide with a Secret: those end in an
+    /// 8-hex generation.
+    pub fn workspace_claim_name(&self) -> String {
+        format!("buzz-agent-{}-workspace", &self.pubkey_hex[..12])
+    }
+
     /// Label selector matching this identity's objects *and* our management
     /// marker. Selecting on the marker as well as the identity means an
     /// unmarked look-alike never even enters the candidate list.

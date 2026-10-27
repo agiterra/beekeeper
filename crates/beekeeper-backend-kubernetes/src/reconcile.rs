@@ -23,7 +23,7 @@ use crate::gc;
 use crate::naming::AgentIdentity;
 use crate::observe::{self, StartupObservation};
 use chrono::{DateTime, Utc};
-use k8s_openapi::api::core::v1::{Pod, Secret};
+use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod, Secret};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -87,6 +87,14 @@ pub trait Substrate {
 
     /// Read one pod by name, most-recent. `None` is a confirmed absence.
     async fn get_pod(&self, name: &str) -> Result<Option<Pod>, String>;
+
+    /// Read one workspace claim by name, most-recent. `None` is a confirmed
+    /// absence.
+    async fn get_claim(&self, name: &str) -> Result<Option<PersistentVolumeClaim>, String>;
+
+    /// Create a workspace claim. `AlreadyExists` is a lost race against a
+    /// concurrent deploy of the same identity, not an error.
+    async fn create_claim(&self, claim: &PersistentVolumeClaim) -> Result<CreateOutcome, String>;
 
     async fn sleep(&self, duration: Duration);
 
@@ -350,6 +358,47 @@ async fn adopt_winner(
 
 /// Run the deploy state machine to a terminal outcome: the started pod's name,
 /// or an in-band error carrying the latest condition.
+/// Make sure this identity's workspace claim exists before any pod names it.
+///
+/// An existing claim is reused — that is the point of claiming the workspace:
+/// the next pod of the same identity gets the previous pod's checkout back.
+/// It is reused only after the same ownership fence GC applies, so a claim
+/// someone else planted under the derived name stops the deploy instead of
+/// being mounted. The provider never deletes a claim: the workspace outlives
+/// every pod, and removing it is the operator's decision.
+async fn ensure_workspace_claim(
+    substrate: &impl Substrate,
+    identity: &AgentIdentity,
+    cfg: &ProviderConfig,
+) -> Result<(), String> {
+    let Some(claim) = crate::pod::build_workspace_claim(identity, cfg) else {
+        return Ok(());
+    };
+    let name = identity.workspace_claim_name();
+    let existing = match substrate.get_claim(&name).await? {
+        Some(existing) => existing,
+        None => match substrate.create_claim(&claim).await? {
+            CreateOutcome::Created => return Ok(()),
+            // A concurrent deploy created it between the read and the create:
+            // verify theirs like any other existing claim.
+            CreateOutcome::AlreadyExists => substrate.get_claim(&name).await?.ok_or_else(|| {
+                format!("workspace claim {name} was created concurrently and then vanished")
+            })?,
+        },
+    };
+    if observe::claim_is_ours(&existing, identity) {
+        Ok(())
+    } else {
+        Err(format!(
+            "workspace claim {name} exists in namespace {} but was not created by this \
+             provider for this agent (management marker or full-pubkey annotation \
+             missing or different). Refusing to mount it. Delete or rename it, then \
+             deploy again.",
+            cfg.namespace
+        ))
+    }
+}
+
 pub async fn deploy(
     substrate: &impl Substrate,
     identity: &AgentIdentity,
@@ -358,6 +407,7 @@ pub async fn deploy(
 ) -> Result<String, String> {
     substrate.ensure_namespace(&cfg.namespace).await?;
     preflight_gc(substrate, identity).await;
+    ensure_workspace_claim(substrate, identity, cfg).await?;
 
     let desired = crate::pod::intent_template(cfg, env.keys().cloned()).fingerprint();
 
@@ -540,6 +590,9 @@ mod tests {
         on_poll: RefCell<Vec<PollHook>>,
         /// `ensure_namespace` fails with this, if set.
         namespace_error: Option<String>,
+        claims: RefCell<BTreeMap<String, PersistentVolumeClaim>>,
+        /// Installed when a claim create loses the race, like `winner`.
+        claim_winner: RefCell<Option<PersistentVolumeClaim>>,
     }
 
     impl Fake {
@@ -652,6 +705,24 @@ mod tests {
             Ok(self.pods.borrow().get(name).cloned())
         }
 
+        async fn get_claim(&self, name: &str) -> Result<Option<PersistentVolumeClaim>, String> {
+            Ok(self.claims.borrow().get(name).cloned())
+        }
+
+        async fn create_claim(
+            &self,
+            claim: &PersistentVolumeClaim,
+        ) -> Result<CreateOutcome, String> {
+            let name = claim.metadata.name.clone().unwrap();
+            self.log(format!("create_claim {name}"));
+            if let Some(winner) = self.claim_winner.borrow_mut().take() {
+                self.claims.borrow_mut().insert(name, winner);
+                return Ok(CreateOutcome::AlreadyExists);
+            }
+            self.claims.borrow_mut().insert(name, claim.clone());
+            Ok(CreateOutcome::Created)
+        }
+
         async fn sleep(&self, duration: Duration) {
             *self.elapsed.borrow_mut() += duration;
             let hooks = self.on_poll.borrow();
@@ -684,6 +755,7 @@ mod tests {
             resources: Resources::default(),
             inactivity_seconds: Some(7200),
             service_account: None,
+            workspace_claim: None,
         }
     }
 
@@ -804,6 +876,154 @@ mod tests {
             secret_at < pod_at,
             "pod created before its Secret: {calls:?}"
         );
+    }
+
+    // ---- the claimed workspace ----------------------------------------------
+
+    fn claimed_config() -> ProviderConfig {
+        ProviderConfig {
+            workspace_claim: Some(crate::config::WorkspaceClaim {
+                storage_class: "local-path".into(),
+                size: "20Gi".into(),
+            }),
+            ..config()
+        }
+    }
+
+    /// Script the pod named for `id` to start on the next poll after it
+    /// appears without a status (i.e. once this call has created it).
+    fn start_created_pod(fake: &Fake, id: &AgentIdentity) {
+        let name = id.pod_name();
+        fake.on_poll
+            .borrow_mut()
+            .push(Box::new(move |pods: &mut BTreeMap<String, Pod>| {
+                if let Some(pod) = pods.get_mut(&name) {
+                    if pod.status.is_none() {
+                        pod.status = Some(PodStatus {
+                            phase: Some("Running".into()),
+                            container_statuses: Some(vec![ContainerStatus {
+                                name: crate::observe::CONTAINER_NAME.into(),
+                                state: Some(running()),
+                                ..Default::default()
+                            }]),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }));
+    }
+
+    /// First claimed deploy: the claim exists before the pod that names it.
+    #[test]
+    fn a_claimed_deploy_creates_the_claim_before_the_pod() {
+        let id = identity();
+        let cfg = claimed_config();
+        let fake = Fake::default();
+        start_created_pod(&fake, &id);
+
+        assert_eq!(run(&fake, &id, &cfg).unwrap(), id.pod_name());
+        let calls = fake.mutations();
+        let claim_at = calls
+            .iter()
+            .position(|c| c == &format!("create_claim {}", id.workspace_claim_name()))
+            .unwrap_or_else(|| panic!("no claim created: {calls:?}"));
+        let pod_at = calls
+            .iter()
+            .position(|c| c.starts_with("create_pod"))
+            .unwrap();
+        assert!(claim_at < pod_at, "pod created before its claim: {calls:?}");
+    }
+
+    /// The Spot-stop row: the pod died with its node and is replaced, and the
+    /// replacement mounts the SAME claim — never a fresh one, never deleted.
+    #[test]
+    fn a_replaced_pod_reuses_its_claim_and_the_claim_is_never_deleted() {
+        let id = identity();
+        let cfg = claimed_config();
+        let fake = Fake::default().with_pod(our_pod(&id, &cfg, Some(terminated())));
+        let claim = crate::pod::build_workspace_claim(&id, &cfg).unwrap();
+        fake.claims
+            .borrow_mut()
+            .insert(id.workspace_claim_name(), claim);
+        start_created_pod(&fake, &id);
+
+        assert_eq!(run(&fake, &id, &cfg).unwrap(), id.pod_name());
+        let calls = fake.mutations();
+        assert!(
+            calls.iter().any(|c| c.starts_with("delete_pod")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.iter().any(|c| c.starts_with("create_pod")),
+            "{calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c.starts_with("create_claim")),
+            "an existing claim was re-created: {calls:?}"
+        );
+        assert_eq!(fake.claims.borrow().len(), 1, "the claim was dropped");
+        let pod = fake.pods.borrow()[&id.pod_name()].clone();
+        let mounted = pod.spec.unwrap().volumes.unwrap()[0]
+            .persistent_volume_claim
+            .clone()
+            .unwrap()
+            .claim_name;
+        assert_eq!(mounted, id.workspace_claim_name());
+    }
+
+    /// A claim under the derived name that this provider did not write for
+    /// this identity is refused before any Secret or pod exists.
+    #[test]
+    fn a_foreign_claim_under_the_derived_name_stops_the_deploy() {
+        let id = identity();
+        let other = identity();
+        let cfg = claimed_config();
+        let mut planted = crate::pod::build_workspace_claim(&other, &cfg).unwrap();
+        planted.metadata.name = Some(id.workspace_claim_name());
+        let fake = Fake::default();
+        fake.claims
+            .borrow_mut()
+            .insert(id.workspace_claim_name(), planted);
+
+        let err = run(&fake, &id, &cfg).unwrap_err();
+        assert!(err.contains("Refusing to mount it"), "got: {err}");
+        let calls = fake.mutations();
+        assert!(
+            !calls
+                .iter()
+                .any(|c| c.starts_with("create_secret") || c.starts_with("create_pod")),
+            "wrote after refusing the claim: {calls:?}"
+        );
+    }
+
+    /// An unmarked look-alike fails closed the same way.
+    #[test]
+    fn an_unmarked_claim_is_refused() {
+        let id = identity();
+        let cfg = claimed_config();
+        let mut unmarked = crate::pod::build_workspace_claim(&id, &cfg).unwrap();
+        unmarked.metadata.labels = Some(BTreeMap::new());
+        let fake = Fake::default();
+        fake.claims
+            .borrow_mut()
+            .insert(id.workspace_claim_name(), unmarked);
+        // Asserted on the reason: a deploy that mounted it and then timed out
+        // would also be an error, and would pass a bare `is_err`.
+        let err = run(&fake, &id, &cfg).unwrap_err();
+        assert!(err.contains("Refusing to mount it"), "got: {err}");
+        assert!(!fake.mutations().iter().any(|c| c.starts_with("create_pod")));
+    }
+
+    /// Losing the create race to a concurrent deploy of the same identity
+    /// verifies the winner's claim and proceeds.
+    #[test]
+    fn a_lost_claim_race_verifies_the_winner_and_proceeds() {
+        let id = identity();
+        let cfg = claimed_config();
+        let fake = Fake::default();
+        *fake.claim_winner.borrow_mut() = crate::pod::build_workspace_claim(&id, &cfg);
+        start_created_pod(&fake, &id);
+        assert_eq!(run(&fake, &id, &cfg).unwrap(), id.pod_name());
     }
 
     /// The strict no-op row: a started pod returns its id having mutated
@@ -1563,6 +1783,15 @@ mod tests {
             }
             async fn get_pod(&self, n: &str) -> Result<Option<Pod>, String> {
                 self.0.get_pod(n).await
+            }
+            async fn get_claim(&self, n: &str) -> Result<Option<PersistentVolumeClaim>, String> {
+                self.0.get_claim(n).await
+            }
+            async fn create_claim(
+                &self,
+                c: &PersistentVolumeClaim,
+            ) -> Result<CreateOutcome, String> {
+                self.0.create_claim(c).await
             }
             async fn sleep(&self, d: Duration) {
                 self.0.sleep(d).await

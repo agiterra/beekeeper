@@ -1286,9 +1286,27 @@ regardless of `HOME`.
 - **Resources**: requests 1 cpu / 2Gi, limits 2 cpu / 4Gi, all four
   configurable (`cargo build` in an agent workspace makes 500m/1Gi requests
   unrealistic).
-- **Workspace**: `emptyDir`. Checkouts and scratch die with the pod; agent
-  memory is relay-persisted (NIP-AE) and unaffected. PVC support is a
-  deferred knob. [DECISION A — how remote pods get the nest workspace
+- **Workspace**: `emptyDir` by default. Checkouts and scratch die with the
+  pod; agent memory is relay-persisted (NIP-AE) and unaffected.
+  **Claimed workspace (opt-in).** `workspace_storage_class` (with optional
+  `workspace_size`, default `20Gi`) replaces the `emptyDir` with a
+  `ReadWriteOnce` PersistentVolumeClaim named
+  `buzz-agent-<pubkey[..12]>-workspace`. The name is identity-derived like the
+  pod name, so a deploy can only mount the claim of the identity it decoded.
+  The claim carries the management marker and the full-pubkey annotation, and
+  an existing claim is mounted only after the same ownership check GC applies
+  to Secrets; a claim that fails it stops the deploy before any Secret is
+  written. The claim outlives every pod: when a pod dies with its node (a Spot
+  stop) and is replaced, the replacement mounts the same claim and gets the
+  checkout back. The provider never deletes a claim, and GC never selects one;
+  removing it is the operator's decision (or the namespace's deletion). Class
+  and size are part of the create-intent template; an `emptyDir` template
+  serializes without the field, so its fingerprint is unchanged. Trade-off: a
+  node-local class (k3s `local-path`) pins the claim, and so every later pod
+  of that identity, to the node it was first scheduled on; if that node is
+  gone for good, the pod stays Pending until the claim is removed. A size with
+  no class is refused, never silently downgraded to `emptyDir`. Still never
+  `hostPath`. [DECISION A — how remote pods get the nest workspace
   (AGENTS.md etc.) that local agents get from the desktop's `ensure_nest`;
   current recommendation is a desktop-stated protocol field, not
   image-side scaffolding — §Open Decisions.]
@@ -1444,9 +1462,11 @@ removable with `kubectl delete`.
 ### `provider_config` v1 fields
 
 `context`, `namespace`, `image`, `cpu_request`, `memory_request`,
-`cpu_limit`, `memory_limit`, `inactivity_seconds`, `service_account` —
-9 of the 20-field validation cap. Node selectors, tolerations, and PVCs are
-deliberately baked out of v1 to preserve budget.
+`cpu_limit`, `memory_limit`, `inactivity_seconds`, `service_account`,
+`workspace_storage_class`, `workspace_size` — 11 of the 20-field validation
+cap. Node selectors and tolerations are deliberately baked out of v1 to
+preserve budget; the workspace claim (§Pod shape, Workspace) is opt-in and
+absent means `emptyDir`.
 
 ### Distribution
 
