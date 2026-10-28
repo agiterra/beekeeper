@@ -228,21 +228,23 @@ fn split_refusal(bind_failed: bool) -> Refusal {
     let record = governed_record(Uuid::new_v4(), dir.path(), &"ab".repeat(32));
     let session_id = record.session_id.clone();
     provider.state.insert_session(record).unwrap();
+    // A channel opened and verified, then a snapshot the split cannot be
+    // written to: a directory where `state.json` is renamed into place fails
+    // for every user, root included (CI runs as root; a read-only mode does not).
+    let snapshot = state.join("state.json");
     let opened = if bind_failed {
         Err(crate::private_output::BindFailure::MembershipUnverified)
     } else {
-        // A channel opened and verified, then a state directory the split
-        // cannot be written to.
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        std::fs::rename(&snapshot, snapshot.with_extension("saved")).unwrap();
+        std::fs::create_dir(&snapshot).unwrap();
         Ok(Uuid::new_v4())
     };
     let refusal = provider
         .record_private_output(&session_id, 1, "22".repeat(32), opened)
         .unwrap_err();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if !bind_failed {
+        std::fs::remove_dir(&snapshot).unwrap();
+        std::fs::rename(snapshot.with_extension("saved"), &snapshot).unwrap();
     }
     // Nothing was split, so nothing may be sent as if it were.
     assert!(provider.state.private_output(&session_id, 1).is_none());
