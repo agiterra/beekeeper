@@ -561,6 +561,33 @@ impl ActionSink for RelayActionSink {
             .await
         })
     }
+
+    fn owner_writes_project(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        project: &str,
+        owner_pubkey: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<bool, ActionSinkError>> + Send + '_>> {
+        let project = project.to_owned();
+        let owner_pubkey = owner_pubkey.to_vec();
+        Box::pin(async move {
+            let state = self
+                .state
+                .upgrade()
+                .ok_or_else(|| ActionSinkError::Database("relay is shutting down".into()))?;
+            // The lookups log their own storage errors.
+            crate::handlers::project_action_grant::owner_writes_project(
+                &state,
+                community_id,
+                channel_id,
+                &project,
+                &owner_pubkey,
+            )
+            .await
+            .map_err(|()| ActionSinkError::Database("project access lookup failed".into()))
+        })
+    }
 }
 
 #[cfg(test)]

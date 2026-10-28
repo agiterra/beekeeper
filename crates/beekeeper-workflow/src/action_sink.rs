@@ -7,6 +7,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use beekeeper_core::{ci_result::CiResult, host_step::HostStepRequested, tenant::CommunityId};
+use uuid::Uuid;
 
 /// What the relay publishes as a kind:46010 when a run suspends on approval.
 ///
@@ -144,4 +145,19 @@ pub trait ActionSink: Send + Sync {
         community_id: CommunityId,
         request: &HostStepRequested,
     ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
+
+    /// Whether `owner_pubkey` may still write the project `project` — the
+    /// same rule the relay applied when the definition was saved, read again
+    /// now. `channel_id` is the workflow's channel, where a project-action
+    /// delegation lives.
+    ///
+    /// `Ok(false)` is a decided refusal. `Err` means storage could not
+    /// answer; the engine treats it as retryable, never as a refusal.
+    fn owner_writes_project(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        project: &str,
+        owner_pubkey: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<bool, ActionSinkError>> + Send + '_>>;
 }
