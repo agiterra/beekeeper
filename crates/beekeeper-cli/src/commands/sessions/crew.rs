@@ -1348,7 +1348,7 @@ pub fn plan_readdress(
     if current.target.generation == source.target.generation && current.liveness != Liveness::Live {
         return Err(CliError::Usage(format!(
             "execution '{}' is still on generation {} and reads {} — resume it \
-             (desktop, or a 44221 session.resume) and re-address then; re-sending \
+             (bee sessions resume --channel <channel-uuid> --to <exact-cs-target>) and re-address then; re-sending \
              into a generation with no live actor only earns another {refused_code}",
             source.target.session_id,
             current.target.generation,

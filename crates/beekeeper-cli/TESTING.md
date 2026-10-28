@@ -108,6 +108,68 @@ cargo clippy -p beekeeper-cli -- -D warnings
 
 ---
 
+## Operator resume (R1)
+
+Focused checks (no relay, Postgres, Redis, or adapter required):
+
+```bash
+cargo test -p beekeeper-cli resume_ --lib
+cargo fmt -p beekeeper-cli -- --check
+cargo clippy -p beekeeper-cli --all-targets -- -D warnings
+cargo build -p beekeeper-cli --bin bee
+```
+
+`bee sessions resume --channel <uuid> --to '<exact-cs-target>'`
+requires the complete target key from `bee sessions list`, including the
+observed generation. Session IDs and role slugs are refused. The CLI finds
+the provider from that channel's existing session records and publishes the
+SDK's kind 44221 `session.resume`, with no cursor or runtime thread ID.
+The provider applies its existing authorization and live/stopped/stale checks;
+the CLI never silently substitutes a newer generation.
+
+After confirmed relay storage, the command waits for a matching provider-signed receipt (default 120s;
+`--timeout-secs 1..300`). `accepted` is **relay storage only**. `outcome` is
+`resumed`, `resumed_without_context`, `refused`, `conflicted`, or `unconfirmed`;
+`session` is the confirmed next target, or null. `receiptEventId` identifies
+the complete signed receipt copied into `receipt`, including context warnings.
+Exit 0 means provider-confirmed resume, 1 refusal/conflict, 5 unconfirmed.
+After a timeout, inspect receipts for `commandId` before acting: no second
+resume is sent automatically.
+
+If submission responses are lost, stderr retains the standard JSON error
+`delivery_unknown`, `retryable:false`, exit 2. Its `message` includes a `result:`
+JSON object with `commandId`, exact `target`, signed `event_id`,
+`outcome: "delivery_unknown"`, and `accepted: null`. Neither acceptance nor
+refusal is established. Reconcile using those IDs before acting; do not mint a
+new resume command. Transport retries reuse identical signed event bytes.
+The focused `resume_lost_responses_retain_reconciliation_identity` test exercises
+this path through the real command against a loopback server dropping bodies.
+
+`resumed` does not by itself prove native restoration (rehydration can also
+produce it). `resumed_without_context` does not mean a runtime forgot its
+own conversation. Preserve its error message and inspect the new generation's
+transcript for `session_runtime_context`. Resume neither replays failed turns
+nor adopts/retrieves an orphan runtime run. Chat automatic restore and
+`bee ci continue` retain their strict native-restore contract.
+
+Live acceptance belongs to the bridge owner, using a fresh isolated participant:
+
+1. Complete a normal turn; record actor, session ID and exact generation target.
+2. Stop only the fixture host, observe disconnection, then restart that host.
+3. Run this worktree's built `target/debug/bee sessions resume --channel ...
+   --to '...'`; require a provider receipt for the same session and generation N+1.
+4. Check actor identity and runtime-context disclosure, then send a **new** turn
+   and require its successful response. The failed old message must produce
+   no new run; count any still-running old T3 run separately.
+5. Verify provider refusals for live, stopped and stale targets without
+   changing provider/adapter capabilities. Credential expiry remains a refusal.
+
+This sequence is pending until run against the designated fixture; unit checks
+are not evidence of host recovery. Do not run it against a working thread or
+production services.
+
+---
+
 ## 6. Live Testing — Command by Command
 
 Run each command, verify exit code 0 and check output. Most commands

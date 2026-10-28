@@ -3465,6 +3465,14 @@ pub enum SessionsCmd {
         after_help = "Examples:\n  bee sessions rewind --channel <uuid> --to <session-id> --checkpoint <44231-event-id> --files keep\n  bee sessions rewind --channel <uuid> --to <role-slug> --session-ref <uuid> --checkpoint <44231-event-id> --files restore --timeout-secs 120\n\nOutput: {event_id, accepted, message, commandId, target, checkpoint, filesRequested, waited, outcome, restarted, files, session, summary, receipt, rewind}. rewind is the receipt's signed rewind{} object (checkpoint, cutGeneration, cutAfterSeq, previousGeneration, files, preRewindCheckpoint, head), or null.\n\n`bee sessions checkpoints --channel <uuid>` lists the checkpoints a rewind can name.\n\nRecipe:\n  bee sessions rewind --channel <uuid> --to <session-id> --checkpoint <44231-event-id> --files keep"
     )]
     Rewind(SessionsRewindArgs),
+
+    /// Resume an exact disconnected execution as its next generation.
+    /// Waits for the provider receipt; relay acceptance alone is unconfirmed.
+    /// Does not replay turns or recover an orphaned runtime run.
+    #[command(
+        after_help = "Recipe:\n  bee sessions resume --channel <uuid> --to <exact-cs-target>\n\nUse the complete target from `bee sessions list`, including its generation. Inspect the signed receipt for context warnings; resume does not replay a prior turn."
+    )]
+    Resume(SessionsResumeArgs),
     /// Ask an umbrella's host to seat a new agent on a role (kind 44221
     /// `session.hire`).
     ///
@@ -3845,6 +3853,20 @@ pub struct TeamTransactionWriteArgs {
     /// Agents repository checkout the adopted plan's criteria are read from
     #[arg(long = "agents-repo")]
     pub agents_repo: Option<String>,
+}
+
+/// Arguments for operator resume, kept separate to bound clap's builder frame.
+#[derive(clap::Args)]
+pub struct SessionsResumeArgs {
+    /// Channel UUID containing the execution
+    #[arg(long)]
+    pub channel: String,
+    /// Exact cs-target key, including the previous generation (not a role or session id)
+    #[arg(long)]
+    pub to: String,
+    /// Maximum seconds to wait for a provider-signed receipt (1..=300)
+    #[arg(long = "timeout-secs")]
+    pub timeout_secs: Option<u64>,
 }
 
 /// `bee sessions rewind`'s arguments (SV-29), a struct of their own so the
@@ -7268,6 +7290,7 @@ mod tests {
                 "policy",
                 "registry",
                 "report",
+                "resume",
                 "revoke",
                 "revoke-seat",
                 "rewind",
@@ -7489,7 +7512,7 @@ mod tests {
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
             // C3b lane C: `rewind` (SV-29).
-            ("sessions", 46),
+            ("sessions", 47),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

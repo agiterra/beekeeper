@@ -87,6 +87,10 @@ pub mod display_name;
 pub mod model;
 #[cfg(test)]
 mod model_tests;
+// Explicit operator resume leaves automatic/CI native restore strict.
+pub mod resume;
+#[cfg(test)]
+mod resume_tests;
 // `session.stop` from a terminal: an unattended controller's deadline stop.
 pub mod stop;
 #[cfg(test)]
@@ -2985,6 +2989,7 @@ pub async fn dispatch(
             )
             .await
         }
+        SessionsCmd::Resume(args) => resume::cmd_resume(client, &args).await,
         SessionsCmd::Rewind(crate::SessionsRewindArgs {
             channel,
             to,
