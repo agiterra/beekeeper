@@ -126,6 +126,13 @@ pub fn build_managed_agent_summary(
     };
 
     let (persona_out_of_date, persona_orphaned) = persona_drift_state(record, personas);
+    let persona_source_state = super::role_source::source_state(
+        record,
+        record
+            .persona_id
+            .as_deref()
+            .and_then(|id| personas.iter().find(|persona| persona.id == id)),
+    );
 
     let (effective_model, effective_provider, effective_prompt, model_source) =
         effective_summary::summary_effective_fields(record, personas, global_config);
@@ -200,6 +207,7 @@ pub fn build_managed_agent_summary(
         provider: effective_provider,
         persona_out_of_date,
         persona_orphaned,
+        persona_source_state,
         needs_restart,
         restart_diff,
         env_vars: record.env_vars.clone(),

@@ -276,6 +276,7 @@ async fn a_lost_mailbox_forgets_the_half_paired_call_rather_than_resolving_it() 
     provider
         .handle_session_event(session::SessionEvent::Exited {
             session_id: session_id.clone(),
+            instance: registered_instance(&provider, &session_id),
             reason: session::ExitReason::Requested,
         })
         .expect("exit");
@@ -578,6 +579,7 @@ async fn exit_closes_a_published_start() {
     provider
         .handle_session_event(session::SessionEvent::Exited {
             session_id: session_id.clone(),
+            instance: registered_instance(&provider, &session_id),
             reason: session::ExitReason::Requested,
         })
         .expect("exit");

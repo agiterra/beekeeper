@@ -142,6 +142,7 @@ async fn a_start_closed_by_its_result_leaves_nothing_for_the_boot() {
     provider
         .handle_session_event(session::SessionEvent::Exited {
             session_id: session_id.clone(),
+            instance: registered_instance(&provider, &session_id),
             reason: session::ExitReason::Requested,
         })
         .expect("exit");

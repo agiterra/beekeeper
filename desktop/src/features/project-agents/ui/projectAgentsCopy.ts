@@ -42,7 +42,7 @@ export const SECTION_UNVERIFIED_HINT =
   "Published as this project's agents, but its members could not be read to confirm the publisher may associate agents. Not counted as project agents.";
 export const SECTION_AVAILABLE = "Available to associate";
 export const SECTION_AVAILABLE_HINT =
-  "On this computer and published as this project's agents from another of your computers. Not project agents here until associated.";
+  "Role agents on this computer with no project association here. Associate one to let this project hire it.";
 export const SECTION_PREVIOUS = "Previously here";
 export const SECTION_PREVIOUS_HINT =
   "Every session they appeared in is closed. Their work stays attributed to them.";

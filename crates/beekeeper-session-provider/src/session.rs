@@ -395,6 +395,9 @@ pub struct SessionStartup {
     /// Briefing text no `session/new` system prompt could carry — the actor
     /// prepends it to the first user turn. See [`OpenedSession`].
     pub pending_briefing: Option<String>,
+    /// The briefing `session/new` delivered and how; `None` after a native
+    /// reattachment. Bound, by digest, into a continuity block.
+    pub(crate) runtime_briefing: Option<crate::continuity_delivery::RuntimeBriefing>,
     /// Whether *this* execution's runtime advertised native mid-turn steering
     /// (`_meta.steering.supported`) at `initialize`.
     ///
@@ -966,6 +969,11 @@ pub enum SessionEvent {
     Exited {
         /// Which session.
         session_id: String,
+        /// Which actor: a session id outlives its actors (a rewind, restart or
+        /// in-place reopen attaches a new one under the same id), so this is
+        /// what tells a successor's registry entry from the actor that
+        /// reported (ledger 387(a)).
+        instance: ActorInstance,
         /// Why.
         reason: ExitReason,
     },
@@ -1030,10 +1038,30 @@ pub enum SessionEvent {
     },
 }
 
+/// One actor's identity, unique within this process.
+///
+/// A session id names a conversation across its generations and in-place
+/// reopens, so it cannot say which actor a report came from. An `Exited` that
+/// a predecessor queued while it was being joined is folded after its
+/// successor attached under the same id; matching this token is what keeps
+/// that report from ending the successor (ledger 387(a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActorInstance(u64);
+
+impl ActorInstance {
+    /// A token no other actor in this process has carried.
+    pub(crate) fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 /// Handle to one live session actor.
 #[derive(Debug)]
 pub struct SessionHandle {
     session_id: String,
+    /// The actor this handle addresses; see [`ActorInstance`].
+    instance: ActorInstance,
     tx: mpsc::Sender<SessionCommand>,
     shutdown: watch::Sender<bool>,
     /// Late-refusal bookkeeping shared with the actor. See [`FenceState`].
@@ -1085,6 +1113,34 @@ pub enum ActorQuiescence {
 /// cooperate.
 pub const CHILD_REAP_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Test-only: sessions whose predecessor quiescence is withheld, so a test
+/// can drive the `Unproven` answer without a process it cannot kill.
+#[cfg(test)]
+pub(crate) mod quiescence_seam {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    fn withheld_set() -> &'static Mutex<HashSet<String>> {
+        static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+        SET.get_or_init(Mutex::default)
+    }
+
+    /// Make every group watch for `session_id` answer "not shown gone".
+    pub(crate) fn withhold(session_id: &str) {
+        let mut set = withheld_set().lock().unwrap_or_else(|p| p.into_inner());
+        set.insert(session_id.to_owned());
+    }
+
+    pub(super) fn withheld(session_id: &str) -> bool {
+        let set = withheld_set().lock().unwrap_or_else(|p| p.into_inner());
+        set.contains(session_id)
+    }
+}
+
+#[cfg(all(test, unix))]
+#[path = "session_group_watch_tests.rs"]
+mod group_watch_tests;
+
 /// Kill an agent child's process group and watch until it is gone.
 ///
 /// Returns true only when nothing of that group is left. `kill_on_drop` is
@@ -1096,11 +1152,21 @@ pub const CHILD_REAP_BOUND: std::time::Duration = std::time::Duration::from_secs
 /// Pid reuse is the one thing this cannot rule out: the window between the
 /// group kill and the last poll is milliseconds, and the alternative —
 /// trusting a drop — rules out nothing at all.
+///
+/// `EPERM` from the kill is not an answer either way. Darwin returns it for a
+/// group whose members have all exited but are not yet reaped, as well as for
+/// a live member this process may not signal (C4's Codex rewind, ledger
+/// 387(b)). Only `ESRCH` proves the group gone, so the watch runs on to the
+/// same bound and an `EPERM` that persists stays unproven, under its own code.
 async fn kill_process_group_and_watch(
     child_pid: Option<u32>,
     session_id: &str,
     bound: std::time::Duration,
 ) -> bool {
+    #[cfg(test)]
+    if quiescence_seam::withheld(session_id) {
+        return false;
+    }
     let Some(pid) = child_pid else {
         // Nothing was ever spawned under this handle, so there is nothing to
         // outlive it. (The registry's own stub handles are the only ones.)
@@ -1112,10 +1178,13 @@ async fn kill_process_group_and_watch(
         use nix::unistd::Pid;
 
         let group = Pid::from_raw(i32::try_from(pid).unwrap_or(i32::MAX));
+        let mut unsignalable = false;
         match killpg(group, Signal::SIGKILL) {
             Ok(()) => {}
             // Already gone: nothing to wait for.
             Err(nix::errno::Errno::ESRCH) => return true,
+            // Unreaped or not ours to signal: watch for absence below.
+            Err(nix::errno::Errno::EPERM) => unsignalable = true,
             Err(error) => {
                 tracing::error!(
                     target: "csp::session",
@@ -1128,10 +1197,36 @@ async fn kill_process_group_and_watch(
                 return false;
             }
         }
-        let deadline = tokio::time::Instant::now() + bound;
+        let started = tokio::time::Instant::now();
+        let deadline = started + bound;
         loop {
             match killpg(group, None) {
-                Err(nix::errno::Errno::ESRCH) => return true,
+                Err(nix::errno::Errno::ESRCH) => {
+                    if unsignalable {
+                        tracing::info!(
+                            target: "csp::session",
+                            %session_id,
+                            pid,
+                            waited_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                            code = "child_group_absent_after_eperm",
+                            "a predecessor's process group refused the kill with EPERM and was \
+                             then observed absent"
+                        );
+                    }
+                    return true;
+                }
+                Err(nix::errno::Errno::EPERM) if tokio::time::Instant::now() >= deadline => {
+                    tracing::error!(
+                        target: "csp::session",
+                        %session_id,
+                        pid,
+                        bound_secs = bound.as_secs(),
+                        code = "child_group_unsignalable",
+                        "a predecessor's process group is still present (live but not ours to \
+                         signal, or exited and unreaped) after the bound; the seat stays fenced"
+                    );
+                    return false;
+                }
                 _ => {
                     if tokio::time::Instant::now() >= deadline {
                         tracing::error!(
@@ -1203,6 +1298,11 @@ impl SessionHandle {
     /// The producer-minted session id this handle addresses.
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// The actor this handle addresses, as its `Exited` report names it.
+    pub fn instance(&self) -> ActorInstance {
+        self.instance
     }
 
     /// Deliver work without blocking. A full mailbox is reported, never awaited:
@@ -1558,10 +1658,12 @@ impl SessionManager {
         let (late_tx, late_rx) = mpsc::unbounded_channel();
         client.set_late_steer_sink(late_tx);
         let child_pid = client.child_pid();
+        let instance = ActorInstance::next();
         let actor = SessionActor {
             client,
             acp_session_id: startup.acp_session_id.clone(),
             session_id: session_id.clone(),
+            instance,
             idle_timeout: request.idle_timeout,
             max_turn_duration: request.max_turn_duration,
             idle_shutdown: request.idle_shutdown,
@@ -1581,6 +1683,7 @@ impl SessionManager {
                     crate::continuity_delivery::Execution::from_launch(
                         &request,
                         &startup.continuity,
+                        startup.runtime_briefing.clone(),
                     )
                 })
                 .flatten(),
@@ -1599,6 +1702,7 @@ impl SessionManager {
             startup,
             handle: SessionHandle {
                 session_id,
+                instance,
                 tx,
                 shutdown,
                 fenced,
@@ -1645,6 +1749,7 @@ impl SessionManager {
             session_id.to_owned(),
             SessionHandle {
                 session_id: session_id.to_owned(),
+                instance: ActorInstance::next(),
                 tx,
                 shutdown,
                 fenced: Arc::default(),
@@ -2337,6 +2442,7 @@ async fn start_agent(
         continuity,
         bootstrap_transport,
         pending_briefing,
+        runtime_briefing,
     } = opened;
     // Codex inside the host boundary: its own command sandbox cannot start
     // there, so the session must run in the mode that leaves enforcement to
@@ -2408,6 +2514,7 @@ async fn start_agent(
             continuity,
             bootstrap_transport,
             pending_briefing,
+            runtime_briefing,
             // Recorded from the `initialize` result of this exact process, via
             // the ACP client that performed the handshake.
             steering_supported,
@@ -2461,6 +2568,9 @@ struct OpenedSession {
     /// on `session/new`, or when this open reattached an ACP conversation that
     /// already received it.
     pending_briefing: Option<String>,
+    /// The exact briefing a `session/new` delivered, on whichever transport,
+    /// or `None` for a native reattachment that received none.
+    runtime_briefing: Option<crate::continuity_delivery::RuntimeBriefing>,
 }
 
 /// The `session/new` system-prompt transport for this open, if the adapter has
@@ -2801,6 +2911,14 @@ async fn open_agent_session(
     // system-prompt slot, and the conversation they restore already contains
     // the briefing from the open that created it.
     let pending_briefing = system_prompt.is_none().then(|| briefing.clone());
+    let runtime_briefing = Some(crate::continuity_delivery::RuntimeBriefing {
+        text: briefing.clone(),
+        transport: if system_prompt.is_some() {
+            BootstrapTransport::SystemPrompt
+        } else {
+            BootstrapTransport::FirstTurn
+        },
+    });
     // Native history is reattached only to the execution scope that wrote it
     // (`crate::execution_scope::ExecutionBinding`). A cursor from another
     // project, seat or rights scope — or from before binding existed — is
@@ -2830,6 +2948,7 @@ async fn open_agent_session(
             },
             bootstrap_transport,
             pending_briefing,
+            runtime_briefing,
         });
     }
     let Some(cursor) = cursor else {
@@ -2857,6 +2976,7 @@ async fn open_agent_session(
             continuity,
             bootstrap_transport,
             pending_briefing,
+            runtime_briefing: runtime_briefing.clone(),
         });
     };
 
@@ -2873,6 +2993,7 @@ async fn open_agent_session(
                     continuity: SessionContinuity::Resumed,
                     bootstrap_transport: None,
                     pending_briefing: None,
+                    runtime_briefing: None,
                 });
             }
             Err(_) => {
@@ -2894,6 +3015,7 @@ async fn open_agent_session(
                     continuity: SessionContinuity::Loaded,
                     bootstrap_transport: None,
                     pending_briefing: None,
+                    runtime_briefing: None,
                 });
             }
             Err(_) => {
@@ -2937,6 +3059,7 @@ async fn open_agent_session(
             continuity: SessionContinuity::Rehydrated,
             bootstrap_transport,
             pending_briefing,
+            runtime_briefing: runtime_briefing.clone(),
         });
     }
     Ok(OpenedSession {
@@ -2946,6 +3069,7 @@ async fn open_agent_session(
         },
         bootstrap_transport,
         pending_briefing,
+        runtime_briefing: runtime_briefing.clone(),
     })
 }
 
@@ -3022,6 +3146,8 @@ struct SessionActor {
     client: AcpClient,
     acp_session_id: String,
     session_id: String,
+    /// Carried on this actor's `Exited`; see [`ActorInstance`].
+    instance: ActorInstance,
     idle_timeout: Duration,
     /// Adapter build, named in any turn this provider has to close on the
     /// adapter's behalf.
@@ -3547,6 +3673,7 @@ impl SessionActor {
             .events
             .send(SessionEvent::Exited {
                 session_id: self.session_id.clone(),
+                instance: self.instance,
                 reason: reason.clone(),
             })
             .await;
@@ -3644,7 +3771,6 @@ impl SessionActor {
                     &command_id,
                     &text,
                     operator_pubkey.as_deref(),
-                    self.first_turn_preamble.as_deref(),
                 )
                 .await;
             match prepared.and_then(|prepared| {
@@ -3672,9 +3798,6 @@ impl SessionActor {
         } else {
             None
         };
-        if bootstrap.is_some() {
-            self.first_turn_preamble = None;
-        }
         let framing = framing.map(|mut frame| {
             if bootstrap.is_some() {
                 frame.work_brief = None;
@@ -3754,15 +3877,18 @@ impl SessionActor {
             Some(framing) => framing.render(&text),
             None => text.clone(),
         };
-        let agent_text = match self.first_turn_preamble.take() {
-            Some(preamble) => {
+        // Composed once per transport. A first-turn briefing leads, then the
+        // private continuity block (which ends with its own user-message
+        // marker), then the signed words; neither bound counts the other.
+        let agent_text = match (self.first_turn_preamble.take(), bootstrap.as_ref()) {
+            (Some(preamble), Some(prepared)) => {
+                format!("{preamble}\n\n{}{addressed}", prepared.payload())
+            }
+            (Some(preamble), None) => {
                 format!("{preamble}\n\n--- CURRENT USER MESSAGE (answer this) ---\n{addressed}")
             }
-            None => addressed,
-        };
-        let agent_text = match bootstrap.as_ref() {
-            Some(prepared) => format!("{}{}", prepared.payload(), agent_text),
-            None => agent_text,
+            (None, Some(prepared)) => format!("{}{addressed}", prepared.payload()),
+            (None, None) => addressed,
         };
         // An attachment that could not be read leaves its markdown link in the
         // prose with nothing behind it. Computed before the blocks consume
@@ -3779,6 +3905,13 @@ impl SessionActor {
         };
         if let Some(note) = undelivered {
             blocks.push(beekeeper_acp::acp::PromptBlock::Text(note));
+        }
+        if let Some(prepared) = bootstrap.as_ref() {
+            // Measured on the blocks the adapter is handed, after interleaving
+            // (which trims around attachment references) and the note.
+            // Fails only with a poisoned or advanced receipt, which
+            // `submitted` below then refuses before any send.
+            let _ = prepared.record_prompt_bytes(crate::attachments::prompt_text_bytes(&blocks));
         }
         // The steer admission queue, installed before the prompt borrows the
         // client: the read loop takes inputs from it one at a time and the
@@ -8178,6 +8311,7 @@ pwd -P > '{}'
         let (shutdown, _shutdown_rx) = watch::channel(false);
         let handle = SessionHandle {
             session_id: "s1".into(),
+            instance: ActorInstance::next(),
             tx,
             shutdown,
             fenced: Arc::default(),
@@ -8203,6 +8337,7 @@ pwd -P > '{}'
         let (shutdown, shutdown_rx) = watch::channel(false);
         let handle = SessionHandle {
             session_id: "s1".into(),
+            instance: ActorInstance::next(),
             tx,
             shutdown,
             fenced: Arc::default(),
@@ -8231,6 +8366,7 @@ pwd -P > '{}'
         drop(rx);
         let handle = SessionHandle {
             session_id: "s1".into(),
+            instance: ActorInstance::next(),
             tx,
             shutdown,
             fenced: Arc::default(),
@@ -8254,6 +8390,7 @@ pwd -P > '{}'
             "live".into(),
             SessionHandle {
                 session_id: "live".into(),
+                instance: ActorInstance::next(),
                 tx: live_tx,
                 shutdown: live_shutdown,
                 fenced: Arc::default(),
@@ -8268,6 +8405,7 @@ pwd -P > '{}'
             "dead".into(),
             SessionHandle {
                 session_id: "dead".into(),
+                instance: ActorInstance::next(),
                 tx: dead_tx,
                 shutdown: dead_shutdown,
                 fenced: Arc::default(),

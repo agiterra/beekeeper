@@ -111,6 +111,7 @@ impl std::fmt::Debug for PrivateConfigurationSnapshot {
         formatter.write_str("PrivateConfigurationSnapshot(<redacted>)")
     }
 }
+mod read_cache;
 pub mod receipts;
 mod support;
 use support::*;

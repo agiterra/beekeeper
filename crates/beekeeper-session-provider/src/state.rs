@@ -633,6 +633,11 @@ struct Snapshot {
     /// Turn-checkpoint chains by session id (NIP-CSCK `outsideTurn`).
     #[serde(default)]
     checkpoint_chains: BTreeMap<String, CheckpointChain>,
+    /// Sessions whose automatic output is split because an execution received
+    /// private continuity ([`crate::private_output`]). Never removed while the
+    /// session exists: native restore and later generations inherit it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    private_outputs: BTreeMap<String, crate::private_output::PrivateOutput>,
 }
 
 impl Default for Snapshot {
@@ -646,6 +651,7 @@ impl Default for Snapshot {
             turn_budget_used: BTreeMap::new(),
             umbrella_founders: BTreeMap::new(),
             checkpoint_chains: BTreeMap::new(),
+            private_outputs: BTreeMap::new(),
         }
     }
 }
@@ -1368,6 +1374,36 @@ impl StateStore {
         while chain.recorded.len() > CHECKPOINT_CHAIN_KEEP {
             chain.recorded.pop_first();
         }
+        self.persist_or_restore(previous)
+    }
+
+    /// Where `session_id`'s automatic output for `generation` goes, when it
+    /// is split.
+    pub fn private_output(
+        &self,
+        session_id: &str,
+        generation: u64,
+    ) -> Option<&crate::private_output::PrivateOutput> {
+        self.snapshot
+            .private_outputs
+            .get(session_id)
+            .filter(|p| p.covers(generation))
+    }
+
+    /// Persist a split before the first private prompt can be sent. An earlier
+    /// `from_generation` is kept: the split is never narrowed.
+    pub fn bind_private_output(
+        &mut self,
+        session_id: &str,
+        mut output: crate::private_output::PrivateOutput,
+    ) -> io::Result<()> {
+        let previous = self.snapshot.clone();
+        if let Some(existing) = self.snapshot.private_outputs.get(session_id) {
+            output.from_generation = output.from_generation.min(existing.from_generation);
+        }
+        self.snapshot
+            .private_outputs
+            .insert(session_id.to_owned(), output);
         self.persist_or_restore(previous)
     }
 

@@ -242,3 +242,35 @@ fn prospective_patch_rejects_reserved_credentials_and_empty_allowlist() {
         prospective_record(&provider_record(false), &patch, &[]).expect_err("empty allowlist");
     assert!(error.contains("requires at least one pubkey"));
 }
+
+/// The C4 fixture (ledger 401): Provider & settings pinned `codex-acp` on a
+/// Claude agent and left `runtime: "claude"`, so the hire host, which routes by
+/// the record's runtime, asked for `claude-primary`. A deliberate pick of a
+/// known runtime's command moves the runtime with it; a custom command does
+/// not invent one; an explicit runtime in the same patch still wins.
+#[test]
+fn a_deliberate_known_runtime_pin_moves_the_record_runtime_with_it() {
+    let mut source = provider_record(false);
+    source.backend = crate::managed_agents::BackendKind::Local;
+    source.runtime = Some("claude".into());
+    source.agent_command = "claude-agent-acp".into();
+    let pin = |body: serde_json::Value| -> ManagedAgentRecord {
+        let patch: UpdateManagedAgentRequest = serde_json::from_value(body).expect("patch");
+        prospective_record(&source, &patch, &[]).expect("edit").0
+    };
+    let codex = pin(serde_json::json!({
+        "pubkey":"agent", "agentCommand":"codex-acp", "harnessOverride":true
+    }));
+    assert_eq!(codex.agent_command_override.as_deref(), Some("codex-acp"));
+    assert_eq!(codex.runtime.as_deref(), Some("codex"));
+
+    let custom = pin(serde_json::json!({
+        "pubkey":"agent", "agentCommand":"/opt/isolated/custom-adapter", "harnessOverride":true
+    }));
+    assert_eq!(custom.runtime.as_deref(), Some("claude"));
+
+    let explicit = pin(serde_json::json!({
+        "pubkey":"agent", "agentCommand":"codex-acp", "harnessOverride":true, "runtime":"goose"
+    }));
+    assert_eq!(explicit.runtime.as_deref(), Some("goose"));
+}

@@ -39,6 +39,7 @@ export function PersonaAdvancedFields({
   disabled,
   envVars,
   afterRespondTo,
+  hideBehavior = false,
   inheritedEnvVars = {},
   model,
   modelTuningRuntimeId = "",
@@ -58,6 +59,8 @@ export function PersonaAdvancedFields({
   envVars: EnvVarsValue;
   /** Optional create-only field rendered after instruction permissions. */
   afterRespondTo?: React.ReactNode;
+  /** A role's behaviour is per agent (Provider & settings), not on the shared role. */
+  hideBehavior?: boolean;
   /** Env vars to display as inherited defaults in tuning-field placeholders.
    *  For templates, pass `globalConfig.env_vars` (the fallback layer). */
   inheritedEnvVars?: EnvVarsValue;
@@ -137,73 +140,83 @@ export function PersonaAdvancedFields({
 
   return (
     <div className="space-y-5 pt-2">
-      <CreateAgentRespondToField
-        allowlist={agentAccessOwnerOnly ? [] : behaviorDraft.respondToAllowlist}
-        disabled={disabled || agentAccessOwnerOnly}
-        disabledReason={
-          agentAccessOwnerOnly ? OWNER_ONLY_ACCESS_DISABLED_REASON : undefined
-        }
-        mode={respondToMode}
-        onAllowlistChange={(allowlist) =>
-          onBehaviorDraftChange({
-            ...behaviorDraft,
-            respondToAllowlist: allowlist,
-          })
-        }
-        onModeChange={(mode) =>
-          onBehaviorDraftChange({ ...behaviorDraft, respondTo: mode })
-        }
-        variant="persona"
-      />
+      {hideBehavior ? null : (
+        <>
+          <CreateAgentRespondToField
+            allowlist={
+              agentAccessOwnerOnly ? [] : behaviorDraft.respondToAllowlist
+            }
+            disabled={disabled || agentAccessOwnerOnly}
+            disabledReason={
+              agentAccessOwnerOnly
+                ? OWNER_ONLY_ACCESS_DISABLED_REASON
+                : undefined
+            }
+            mode={respondToMode}
+            onAllowlistChange={(allowlist) =>
+              onBehaviorDraftChange({
+                ...behaviorDraft,
+                respondToAllowlist: allowlist,
+              })
+            }
+            onModeChange={(mode) =>
+              onBehaviorDraftChange({ ...behaviorDraft, respondTo: mode })
+            }
+            variant="persona"
+          />
+        </>
+      )}
 
       {afterRespondTo}
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <label
-            className="text-sm font-medium text-foreground"
-            htmlFor="persona-parallelism"
-          >
-            Parallelism
-            <span className={PERSONA_LABEL_OPTIONAL_CLASS}>Optional</span>
-          </label>
-          <div
-            className={cn(
-              "flex min-h-11 items-center px-3",
-              PERSONA_FIELD_SHELL_CLASS,
-            )}
-          >
-            <Input
+      {hideBehavior ? null : (
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label
+              className="text-sm font-medium text-foreground"
+              htmlFor="persona-parallelism"
+            >
+              Parallelism
+              <span className={PERSONA_LABEL_OPTIONAL_CLASS}>Optional</span>
+            </label>
+            <div
               className={cn(
-                "h-8 px-0 py-0 leading-6 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
-                PERSONA_FIELD_CONTROL_CLASS,
+                "flex min-h-11 items-center px-3",
+                PERSONA_FIELD_SHELL_CLASS,
               )}
-              disabled={disabled}
-              id="persona-parallelism"
-              inputMode="numeric"
-              max={32}
-              min={1}
-              onChange={(event) =>
-                onBehaviorDraftChange({
-                  ...behaviorDraft,
-                  parallelism: event.target.value,
-                })
-              }
-              placeholder={AGENT_PARALLELISM_PLACEHOLDER}
-              type="number"
-              value={behaviorDraft.parallelism}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {AGENT_PARALLELISM_HELP}
-          </p>
-          {personaParallelismHint !== null ? (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {personaParallelismHint}
+            >
+              <Input
+                className={cn(
+                  "h-8 px-0 py-0 leading-6 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+                  PERSONA_FIELD_CONTROL_CLASS,
+                )}
+                disabled={disabled}
+                id="persona-parallelism"
+                inputMode="numeric"
+                max={32}
+                min={1}
+                onChange={(event) =>
+                  onBehaviorDraftChange({
+                    ...behaviorDraft,
+                    parallelism: event.target.value,
+                  })
+                }
+                placeholder={AGENT_PARALLELISM_PLACEHOLDER}
+                type="number"
+                value={behaviorDraft.parallelism}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {AGENT_PARALLELISM_HELP}
             </p>
-          ) : null}
+            {personaParallelismHint !== null ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {personaParallelismHint}
+              </p>
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="space-y-1.5">
         <label

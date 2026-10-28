@@ -606,6 +606,10 @@ pub struct ManagedAgentSummary {
     /// An orphaned agent also cannot be (re)started (`OrphanedInstance` via
     /// `require_resolved`) — the UI should surface that it's stuck, not stale.
     pub persona_orphaned: bool,
+    /// Where this agent's definition pin stands: `missing`, `current` or
+    /// `diverged` (ledger 401). `None` when it links no definition or the
+    /// definition is gone.
+    pub persona_source_state: Option<super::role_source::SourceState>,
     /// `true` when the running spawn config no longer matches what a spawn
     /// would use today (lit exactly when `restart_diff` is non-empty).
     /// Always `false` for stopped, orphaned, or `runtime_pid`-adopted agents.

@@ -910,9 +910,21 @@ test("each project's Agents tab lists only its own agents, with borrowed and pre
       rows.map((row) => row.getAttribute("data-agent-pubkey")),
     ),
   ).toEqual([AARDVARK.pubkey, MOORING.pubkey, RIGGER.pubkey, WARDEN.pubkey]);
-  for (const agent of [...TANK_AGENTS, QUILL, BOB, IMPOSTOR]) {
+  // Tank Loop's agents, Quill (another computer's) and the impostor's claim
+  // never appear here.
+  for (const agent of [...TANK_AGENTS, QUILL, IMPOSTOR]) {
     await expect(agentRow(page, agent)).toHaveCount(0);
   }
+  // Bob belongs to no project and holds no seat here: Harbor offers him for
+  // association (ledger 391/404), apart from its members and not borrowed.
+  // Hire eligibility follows association; see "Who leads in a Tank Loop
+  // session offers only Tank Loop agents" below.
+  const harborAvailable = page.getByTestId("project-agents-available");
+  await expect(agentRow(harborAvailable, BOB)).toHaveAttribute(
+    "data-agent-state",
+    "not-associated",
+  );
+  await expect(agentRow(harborMembers, BOB)).toHaveCount(0);
   await expect(page.getByTestId("project-agents-borrowed")).toHaveCount(0);
   await waitForAnimations(page);
   await page.getByTestId("project-agents").screenshot({
@@ -978,6 +990,48 @@ test("associating Bob with Tank Loop asks first and moves him from borrowed to p
   ).toContainText("Pump calibration");
   await waitForAnimations(page);
   await members.screenshot({ path: `${SHOTS}/05-bob-now-a-project-agent.png` });
+});
+
+test("an agent with no project offered in Harbor becomes a Harbor member only when its founder associates it", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await boot(page);
+  await openTankAgentsWithHistory(page);
+  await openProjectTab(page, HARBOR, "agents");
+
+  // Offered, not a member, and nothing written before the person confirms.
+  const available = page.getByTestId("project-agents-available");
+  const bob = agentRow(available, BOB);
+  await expect(bob).toHaveAttribute("data-agent-state", "not-associated", {
+    timeout: 15_000,
+  });
+  const members = page.getByTestId("project-agents-members");
+  await expect(agentRow(members, BOB)).toHaveCount(0);
+  const associate = bob.getByTestId("project-agent-associate-button");
+  await expect(associate).toHaveText(`Associate with ${HARBOR.name}`);
+  await associate.click();
+  await expect(
+    bob.getByTestId("project-agent-associate-confirm"),
+  ).toBeVisible();
+  expect(
+    await recordedCalls(page, "associate_managed_agent_with_project"),
+  ).toHaveLength(0);
+
+  await bob.getByTestId("project-agent-associate-yes").click();
+  const bobMember = agentRow(members, BOB);
+  await expect(bobMember).toBeVisible({ timeout: 15_000 });
+  await expect(bobMember).toHaveAttribute("data-agent-section", "project");
+  await expect(bobMember.getByTestId("project-agent-badge")).toHaveText(
+    "Project agent",
+  );
+  await expect(agentRow(available, BOB)).toHaveCount(0);
+  const calls = await recordedCalls(
+    page,
+    "associate_managed_agent_with_project",
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toEqual({ pubkey: BOB.pubkey, projectRef: HARBOR.ref });
 });
 
 test("Who leads in a Tank Loop session offers only Tank Loop agents and counts the rest; Solo is unaffected", async ({

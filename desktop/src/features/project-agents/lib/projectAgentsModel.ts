@@ -20,7 +20,8 @@
  *
  * A digest this computer *carries* for a local record (published by the same
  * owner from another computer) is not membership here either: the agent is
- * offered for explicit association, never counted.
+ * offered for explicit association, never counted. Local role agents without
+ * a project are also offered, including packs installed from a folder.
  *
  * A setup journal is not membership. An agent the journal installed for this
  * project whose record lacks the association is listed under Project agents
@@ -413,10 +414,19 @@ export function buildProjectAgents(
     digest !== null &&
     normalizeProjectCoordinate(agent.projectRef) === null &&
     (agent.carriedProjectDigest ?? "").trim().toLowerCase() === digest;
+  const unassociatedRole = (
+    agent: ProjectAgentsLocalAgentInput | null,
+  ): boolean =>
+    agent !== null &&
+    normalizeProjectCoordinate(agent.projectRef) === null &&
+    !(agent.carriedProjectDigest ?? "").trim() &&
+    Boolean(agent.homeRole?.trim()) &&
+    agent.homeRole?.trim() !== PROJECT_SETUP_ROLE;
   for (const [pubkey, agent] of local) {
     if (
       normalizeProjectCoordinate(agent.projectRef) === project ||
-      carries(agent)
+      carries(agent) ||
+      unassociatedRole(agent)
     ) {
       candidates.add(pubkey);
     }
@@ -450,7 +460,7 @@ export function buildProjectAgents(
     else if (claim !== null) section = "unverified";
     else if (hasOpen) section = "borrowed";
     else if (hasEvidence) section = "previous";
-    else if (carried) section = "available";
+    else if (carried || unassociatedRole(record)) section = "available";
     // An installation whose record belongs to another project, or is gone,
     // with no evidence here: nothing to list.
     else continue;
@@ -468,6 +478,7 @@ export function buildProjectAgents(
           ? "not-associated"
           : "available";
     } else if (carried) state = "carried";
+    else if (section === "available") state = "not-associated";
     else if (section === "borrowed") state = "not-running";
     else state = "historical";
 

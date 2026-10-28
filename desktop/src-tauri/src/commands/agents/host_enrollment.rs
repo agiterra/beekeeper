@@ -157,6 +157,61 @@ pub(super) fn fresh_reserved(app: &AppHandle, actor: &str, relay: &str) -> Resul
     }
     Ok(true)
 }
+/// Where a newly enrolled identity's workspace is allocated: under this
+/// instance's nest root (`BEEKEEPER_NEST_ROOT`, else `~/.beekeeper` or
+/// `~/.beekeeper-dev`). It was `$HOME/.beekeeper/workspaces` for every
+/// instance, so an isolated or Dev instance wrote into the production nest
+/// (ledger 393(b)). Only new allocations come here: an enrollment's recorded
+/// `cwd` (`create.json`) is reused as it stands, so nothing existing moves.
+fn fresh_workspace(nest: Option<PathBuf>, actor: &str) -> Result<PathBuf, String> {
+    Ok(nest
+        .ok_or("work root unavailable")?
+        .join("workspaces")
+        .join(actor))
+}
+
+/// What a configuration reconcile owes a pair before it may apply anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReconcileEnrollment {
+    /// Nothing pending: the ordinary modern-ownership check decides.
+    Ready,
+    /// A fresh identity whose stopped Create is still owed: complete it,
+    /// stopped, before applying (ledger 393(a)).
+    CompleteStopped,
+    /// A fresh Create reserved to start the agent is owed: Start owns it, and
+    /// a reconcile never starts anything.
+    StartOwed,
+}
+
+/// Decide [`ReconcileEnrollment`] from the pair's fresh reservation (its
+/// `activate`, when one is pending) — never from the absence of ownership
+/// alone, which also describes retained legacy records.
+pub(super) fn reconcile_enrollment(pending_activation: Option<bool>) -> ReconcileEnrollment {
+    match pending_activation {
+        None => ReconcileEnrollment::Ready,
+        Some(false) => ReconcileEnrollment::CompleteStopped,
+        Some(true) => ReconcileEnrollment::StartOwed,
+    }
+}
+
+/// The `activate` of this pair's fresh reservation when its Create is still
+/// owed, else `None` (no reservation, or already enrolled as reserved).
+pub(super) fn pending_fresh_activation(
+    app: &AppHandle,
+    actor: &str,
+    relay: &str,
+) -> Result<Option<bool>, String> {
+    let ctx = context()?;
+    let held = ownership::for_pair(&ctx.home, ctx.instance, actor, relay)?;
+    if !fresh_pending(app, actor, relay, held.as_ref())? {
+        return Ok(None);
+    }
+    let reservation: FreshReservation = serde_json::from_slice(&private_bytes(
+        &pair_directory(actor, relay)?.join("fresh-reservation.json"),
+    )?)
+    .map_err(|_| "fresh reservation malformed")?;
+    Ok(Some(reservation.activate))
+}
 fn original_fresh_create_pending(activate: bool, held: Option<&ownership::Transfer>) -> bool {
     held.is_none()
         || held.is_some_and(|h| {
@@ -232,15 +287,47 @@ struct Enrollment {
     #[serde(default)]
     replay_floor_unix: Option<u64>,
 }
+/// The record an enrollment carries: the desired one for the same actor, else
+/// the stored one.
+pub(super) fn enrollment_record(
+    stored: &ManagedAgentRecord,
+    desired: Option<&ManagedAgentRecord>,
+) -> Result<ManagedAgentRecord, String> {
+    match desired {
+        Some(desired) if desired.pubkey != stored.pubkey => {
+            Err("enrollment settings name another agent".into())
+        }
+        Some(desired) => Ok(desired.clone()),
+        None => Ok(stored.clone()),
+    }
+}
+
 pub(crate) async fn enroll_new_host_agent(
+    app: &AppHandle,
+    state: &AppState,
+    actor: &str,
+    relay: &str,
+    activate: bool,
+) -> Result<(), String> {
+    enroll_new_host_agent_as(app, state, actor, relay, activate, None).await
+}
+
+/// Enroll with `desired` when a settings change completes a pending create:
+/// the host must be asked for the configuration being saved, not the stale
+/// stored one, or a runtime switch to the only commissioned runtime is refused
+/// as "not commissioned" before it can apply (ledger 401). The stored record
+/// still fences the operation.
+pub(crate) async fn enroll_new_host_agent_as(
     app: &AppHandle,
     _state: &AppState,
     actor: &str,
     relay: &str,
     activate: bool,
+    desired: Option<&ManagedAgentRecord>,
 ) -> Result<(), String> {
     let _guard = client_guard(app, actor, relay).await?;
-    let record = record_for_pair(app, actor, relay)?;
+    let stored = record_for_pair(app, actor, relay)?;
+    let record = enrollment_record(&stored, desired)?;
     if record.backend != BackendKind::Local {
         return Err("remote enrollment uses its provider boundary".into());
     }
@@ -288,11 +375,7 @@ pub(crate) async fn enroll_new_host_agent(
     } else {
         let config = bootstrap(app, relay).await?;
         let runtime = runtime_selection::select(&config.runtimes, &private)?;
-        let cwd = context()?
-            .native_home
-            .ok_or("work root unavailable")?
-            .join(".beekeeper/workspaces")
-            .join(actor);
+        let cwd = fresh_workspace(crate::managed_agents::nest_dir(), actor)?;
         atomic_write::create_dir_all_restricted(&cwd)?;
         let held = Enrollment {
             operation: reservation.operation,
@@ -351,7 +434,7 @@ pub(crate) async fn enroll_new_host_agent(
         wait_secs: 60,
         ..Default::default()
     };
-    if record_for_pair(app, actor, relay)? != record {
+    if record_for_pair(app, actor, relay)? != stored {
         return Err("fresh source changed before enrollment; original operation retained".into());
     }
     let outcome =
@@ -546,36 +629,85 @@ pub(super) async fn start_existing(
     {
         return Err("pending Start scope/revision changed; original operation retained".into());
     }
-    let outcome = beekeeper_agent_management::start_remote(
+    let outcome = match beekeeper_agent_management::start_remote(
         &request,
         &Transport::owner(app, relay)?,
         &context()?,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(outcome) => outcome,
+        Err(error) if refusal_closes_start(&error) => {
+            // A refusal proves nothing was started. Replaying the refused
+            // operation would refuse forever, even after its cause is fixed
+            // (ledger 403); the next Start opens a new one.
+            std::fs::remove_file(&path).map_err(|_| {
+                format!(
+                    "{error}. Nothing was started, but this Start's record could not be cleared"
+                )
+            })?;
+            return Err(format!(
+                "{error}. Nothing was started; this Start is closed, so the next Start opens a new operation."
+            ));
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     save(&directory.join("start-outcome.json"), &outcome)?;
-    let observation = beekeeper_agent_management::status(
-        &beekeeper_agent_management::LifecycleRequest {
-            agent_pubkey: record.pubkey.clone(),
-            channels: vec![request.channel],
-            ..Default::default()
-        },
-        &Transport::owner(app, relay)?,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
     if outcome["already_adopted"] == true && outcome["runtime_available"] == true {
         return Ok(());
     }
-    if !observed_live_target(
-        &observation,
-        &outcome["target"],
-        request.channel,
-        &request.provider_authority,
-    ) {
-        return Err("Start admission is retained but runtime availability is unconfirmed; retry the original operation".into());
+    // The provider publishes its lease just after admission; one immediate
+    // look reported a live Start as unconfirmed (ledger 403).
+    await_live_target(START_OBSERVATIONS, START_OBSERVATION_GAP, || async {
+        let observation = beekeeper_agent_management::status(
+            &beekeeper_agent_management::LifecycleRequest {
+                agent_pubkey: record.pubkey.clone(),
+                channels: vec![request.channel],
+                ..Default::default()
+            },
+            &Transport::owner(app, relay)?,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(observed_live_target(
+            &observation,
+            &outcome["target"],
+            request.channel,
+            &request.provider_authority,
+        ))
+    })
+    .await
+}
+
+/// Only a refusal closes a Start: it proves no execution was created. An
+/// unconfirmed or conflicting outcome keeps the operation for a retry.
+pub(super) fn refusal_closes_start(error: &beekeeper_agent_management::Error) -> bool {
+    matches!(error, beekeeper_agent_management::Error::Refused(_))
+}
+
+const START_OBSERVATIONS: usize = 6;
+const START_OBSERVATION_GAP: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Look for the started runtime a bounded number of times before saying it is
+/// unconfirmed; an observation error is reported as it is.
+pub(super) async fn await_live_target<F, Fut>(
+    attempts: usize,
+    gap: std::time::Duration,
+    mut observe: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<bool, String>>,
+{
+    for attempt in 0..attempts {
+        if observe().await? {
+            return Ok(());
+        }
+        if attempt + 1 < attempts {
+            tokio::time::sleep(gap).await;
+        }
     }
-    Ok(())
+    Err("Start admission is retained but runtime availability is unconfirmed; retry the original operation".into())
 }
 
 fn observed_live_target(observed: &Value, target: &Value, channel: Uuid, provider: &str) -> bool {
@@ -691,5 +823,114 @@ mod tests {
             channel,
             "provider"
         ));
+    }
+}
+
+/// Ledger 393: what a configuration reconcile does about a pending fresh
+/// Create, and where a new enrollment's workspace goes.
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+
+    /// A refused Start is closed so the next Start can succeed once its cause
+    /// is fixed; an unconfirmed or conflicting one is resumed (ledger 403).
+    #[test]
+    fn only_a_refused_start_is_closed_for_a_new_operation() {
+        use beekeeper_agent_management::Error;
+        assert!(refusal_closes_start(&Error::Refused(
+            "remote start refused in receipt x: PROVIDER_UNAVAILABLE".into()
+        )));
+        assert!(!refusal_closes_start(&Error::Unconfirmed("pending".into())));
+        assert!(!refusal_closes_start(&Error::Conflict("changed".into())));
+    }
+
+    /// A Start whose lease appears on the third look succeeds; one that never
+    /// appears is unconfirmed after the bound; an observation error is not
+    /// retried into a success (ledger 403).
+    #[tokio::test]
+    async fn a_started_runtime_is_looked_for_a_bounded_number_of_times() {
+        let gap = std::time::Duration::from_millis(1);
+        let looks = std::sync::atomic::AtomicUsize::new(0);
+        let live_on_third = await_live_target(6, gap, || async {
+            Ok(looks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2)
+        })
+        .await;
+        assert!(live_on_third.is_ok());
+        assert_eq!(looks.load(std::sync::atomic::Ordering::SeqCst), 3);
+        let never = await_live_target(4, gap, || async { Ok(false) }).await;
+        assert!(never.unwrap_err().contains("unconfirmed"));
+        let broken = await_live_target(4, gap, || async { Err("relay down".to_string()) }).await;
+        assert_eq!(broken.unwrap_err(), "relay down");
+    }
+
+    /// A settings change that completes a pending create enrolls the settings
+    /// being saved; a create with none enrolls what is stored; and desired
+    /// settings never enroll a different actor.
+    #[test]
+    fn a_pending_create_enrolls_the_desired_settings_of_the_same_actor_only() {
+        let mut stored = crate::managed_agents::role_source::tests::installed().into_agent_record();
+        stored.pubkey = "a".repeat(64);
+        stored.runtime = Some("claude".into());
+        let mut desired = stored.clone();
+        desired.runtime = Some("codex".into());
+        assert_eq!(
+            enrollment_record(&stored, Some(&desired))
+                .expect("same actor")
+                .runtime,
+            Some("codex".into())
+        );
+        assert_eq!(
+            enrollment_record(&stored, None).expect("stored").runtime,
+            Some("claude".into())
+        );
+        let mut other = desired.clone();
+        other.pubkey = "b".repeat(64);
+        assert!(enrollment_record(&stored, Some(&other)).is_err());
+    }
+
+    /// A folder-installed role agent reserves `activate: false` and enrolls
+    /// nothing. Reconcile must complete that stopped Create (it was refused as
+    /// a "retained old record"), must not complete a Create reserved to start
+    /// the agent, and must leave every pair with no pending fresh reservation
+    /// — retained legacy records included — to the unchanged ownership check.
+    #[test]
+    fn reconcile_completes_only_a_stopped_pending_fresh_create() {
+        assert_eq!(
+            reconcile_enrollment(Some(false)),
+            ReconcileEnrollment::CompleteStopped
+        );
+        assert_eq!(
+            reconcile_enrollment(Some(true)),
+            ReconcileEnrollment::StartOwed
+        );
+        assert_eq!(reconcile_enrollment(None), ReconcileEnrollment::Ready);
+        // The input is pending only while the Create is owed: a stopped
+        // reservation already enrolled stopped is not pending again, and no
+        // reservation never reads as one.
+        let op = Uuid::new_v4();
+        let enrolled = ownership::Transfer {
+            operation_id: op.to_string(),
+            actor_pubkey: "ab".repeat(32),
+            relay_url: "wss://relay.example".into(),
+            legacy_nonce: format!("fresh-identity:{op}"),
+            definition_event_id: "cd".repeat(32),
+            target: None,
+            phase: ownership::Phase::HostStopped,
+        };
+        assert!(original_fresh_create_pending(false, None));
+        assert!(!original_fresh_create_pending(false, Some(&enrolled)));
+    }
+
+    /// A new workspace is allocated under the instance's nest root, never
+    /// `$HOME/.beekeeper` whatever the instance (393(b)).
+    #[test]
+    fn a_fresh_workspace_lives_under_the_instance_nest_root() {
+        let actor = "ab".repeat(32);
+        assert_eq!(
+            fresh_workspace(Some(PathBuf::from("/tmp/isolated/.beekeeper-dev")), &actor)
+                .expect("allocated"),
+            PathBuf::from(format!("/tmp/isolated/.beekeeper-dev/workspaces/{actor}"))
+        );
+        assert!(fresh_workspace(None, &actor).is_err());
     }
 }

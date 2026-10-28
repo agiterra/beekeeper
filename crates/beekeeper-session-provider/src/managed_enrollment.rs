@@ -62,6 +62,51 @@ fn retain_replay_boundary(value: &mut Value, enrolled: &Event) {
         value["replayFloorUnix"] = json!(enrolled.created_at.as_secs());
     }
 }
+/// A create carrying a role, hire ref or seeded turn is the team hire path:
+/// the desktop answering the hire staged the seat's custody itself (actor
+/// seats, plan D6) and the ordinary admission checks it. Enrollment restaging
+/// is for the identity's own Solo starts only (ledger 401).
+fn is_team_hire(role: Option<&str>, hire_ref: Option<&str>, initial_turn: Option<&str>) -> bool {
+    role.is_some() || hire_ref.is_some() || initial_turn.is_some()
+}
+
+/// A team hire of an enrolled identity restages nothing, but only its attested
+/// owner may publish it, and never across an unresolved start or stop.
+fn admit_team_hire(
+    config: &Config,
+    state: &StateStore,
+    actor: &str,
+    operator: &str,
+) -> Result<(), CreateFailure> {
+    let dir = config.state_dir.join("actors").join(actor);
+    let actor_key =
+        nostr::PublicKey::from_hex(actor).map_err(|_| refused("managed identity invalid"))?;
+    let auth = protected_secret(&dir.join("auth-tag.json"))?;
+    let owner = beekeeper_sdk::nip_oa::verify_auth_tag(auth.trim(), &actor_key)
+        .map_err(|_| refused("actor attestation invalid"))?
+        .to_hex();
+    if owner != operator {
+        return Err(refused(
+            "only the attested owner may hire this managed identity",
+        ));
+    }
+    if state.unresolved_actor_start(Some(actor)) {
+        return Err(refused("a managed actor startup outcome is unconfirmed"));
+    }
+    if state.sessions().any(|record| {
+        record.actor.as_deref() == Some(actor)
+            && config
+                .state_dir
+                .join(format!("stop-quiescence-{}.json", record.session_id))
+                .exists()
+    }) {
+        return Err(refused(
+            "a responsibility has unconfirmed process quiescence; explicit recovery is required",
+        ));
+    }
+    Ok(())
+}
+
 /// Existing command admission still checks transport, project grants, membership and runtime.
 /// This helper supplies only owner-authorized private execution facts already in worker custody.
 pub(crate) async fn stage(
@@ -116,10 +161,12 @@ async fn stage_with_context(
     let Some(mut value) = enrollment(config, actor)? else {
         return Ok(());
     };
-    if role.is_some() || hire_ref.is_some() || initial_turn.is_some() {
-        return Err(refused(
-            "managed enrollment start requires an attributed Solo create without a seeded turn",
-        ));
+    if is_team_hire(
+        role.as_deref(),
+        hire_ref.as_deref(),
+        initial_turn.as_deref(),
+    ) {
+        return admit_team_hire(config, state, actor, operator);
     }
     if value.get("actorPubkey").and_then(Value::as_str) != Some(actor)
         || value.get("providerInstance").and_then(Value::as_str)
@@ -452,6 +499,15 @@ fn complete_with_context(
     let Some(actor) = plan.actor.as_deref() else {
         return Ok(());
     };
+    // A team-hire seat runs on the custody the hire staged; it never becomes
+    // the identity's host-owned primary responsibility.
+    if is_team_hire(
+        plan.role.as_deref(),
+        plan.hire_ref.as_deref(),
+        plan.initial_turn.as_deref(),
+    ) {
+        return Ok(());
+    }
     let Some(value) = enrollment(config, actor)? else {
         return Ok(());
     };
@@ -838,6 +894,9 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "managed_enrollment_hire_tests.rs"]
+mod hire_tests;
 #[cfg(test)]
 #[path = "managed_enrollment_scope_tests.rs"]
 mod scope_tests;

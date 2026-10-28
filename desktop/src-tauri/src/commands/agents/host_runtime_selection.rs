@@ -125,4 +125,30 @@ mod tests {
             assert!(select(&runtimes, &PrivateConfiguration { record }).is_err());
         }
     }
+    /// The C4 fixture's host is commissioned for Codex only. Enrolling the
+    /// stored Claude record is refused; enrolling the Codex settings being
+    /// saved is admitted, which is why a pending create completes with the
+    /// desired record (ledger 401).
+    #[test]
+    fn a_codex_only_host_refuses_the_stale_claude_record_and_admits_the_desired_codex_one() {
+        let mut codex = beekeeper_host_core::managed_runtime::descriptor();
+        codex.instance_ref = "codex-primary".into();
+        codex.runtime = "codex".into();
+        codex.agent_command = "/private/installed/codex-acp".into();
+        let runtimes = vec![codex];
+        let claude = PrivateConfiguration {
+            record: json!({"effective_command":"claude-agent-acp","runtime":"claude"}),
+        };
+        assert_eq!(
+            select(&runtimes, &claude).unwrap_err(),
+            "selected runtime is not commissioned"
+        );
+        let desired = PrivateConfiguration {
+            record: json!({"effective_command":"codex-acp","runtime":"codex"}),
+        };
+        assert_eq!(
+            select(&runtimes, &desired).expect("codex").instance_ref,
+            "codex-primary"
+        );
+    }
 }

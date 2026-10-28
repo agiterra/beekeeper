@@ -18,6 +18,8 @@ use super::{pending, retain_persona_pending, trim_optional, trim_required};
 
 #[cfg(test)]
 mod name_propagation_tests;
+#[cfg(test)]
+mod role_edit_tests;
 
 /// Stage the existing persona edit rules without saving or publishing anything.
 pub(crate) fn prospective_persona_edit(
@@ -46,6 +48,7 @@ pub(crate) fn prospective_persona_edit(
         persona.env_vars = env.clone();
     }
     apply_persona_behavior(&mut persona, input.behavior.clone())?;
+    crate::managed_agents::role_source::refuse_role_execution_edit(source, &persona)?;
     Ok(persona)
 }
 

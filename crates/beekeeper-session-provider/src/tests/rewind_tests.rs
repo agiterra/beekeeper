@@ -461,6 +461,38 @@ async fn a_runtime_that_keeps_its_own_context_refuses_a_rewind() {
 }
 
 #[tokio::test]
+async fn rewind_refuses_an_accepted_turn_before_turn_started_is_folded() {
+    let mut rig = rig().await;
+    rig.three_turns().await;
+    let checkpoint = rig.turn_checkpoint(2).id.to_hex();
+    let session_id = rig.target.session_id.clone();
+    rig.provider
+        .handle_command_event(
+            rig.channel_id,
+            &turn_event(rig.channel_id, "accepted-before-rewind", &rig.target),
+        )
+        .await
+        .expect("accept turn without pumping actor events");
+    assert!(rig.provider.turn_in_flight(&session_id));
+    assert!(rig
+        .provider
+        .state
+        .session(&session_id)
+        .unwrap()
+        .open_turn
+        .is_none());
+
+    rig.rewind("rw-accepted", &checkpoint, "keep").await;
+    let receipt = rig.receipt("rw-accepted");
+    assert_eq!(receipt["error"]["code"], SESSION_BUSY, "{receipt:#}");
+    assert_eq!(rig.generation(), 1);
+    assert!(rig.provider.sessions.handle(&session_id).is_some());
+
+    pump_until_turn_finished(&mut rig.provider).await;
+    assert!(!rig.provider.turn_in_flight(&session_id));
+}
+
+#[tokio::test]
 async fn rewind_is_refused_while_this_or_a_sibling_turn_is_open() {
     let mut rig = rig().await;
     rig.three_turns().await;
@@ -777,5 +809,95 @@ async fn a_redelivered_rewind_in_flight_is_dropped_without_an_answer() {
         record.actor.as_deref(),
         Some(actor.as_str()),
         "the seat staged for the rewind was not forgotten"
+    );
+}
+
+/// Ledger 387(a): generation 1's actor reports `Exited` while it is being
+/// joined, and the provider loop folds that report only after the rewind has
+/// attached generation 2 under the same session id. The stale report must
+/// not end generation 2: the C4 live run lost every rewound execution this
+/// way, 6 ms after it attached.
+#[tokio::test]
+async fn the_rewound_generation_survives_its_predecessors_late_exit() {
+    let mut rig = rig().await;
+    rig.three_turns().await;
+    let turn_two = rig.turn_checkpoint(2).id.to_hex();
+    rig.rewind("rewind-1", &turn_two, "keep").await;
+    assert_eq!(rig.receipt("rewind-1")["session"]["generation"], 2);
+    let session_id = rig.target.session_id.clone();
+    assert!(
+        rig.provider
+            .sessions
+            .handle(&session_id)
+            .is_some_and(|handle| handle.is_live()),
+        "generation 2 is attached and live after the rewind"
+    );
+
+    // Generation 1's report was queued before the join returned.
+    pump_until(&mut rig.provider, |event| {
+        matches!(event, SessionEvent::Exited { .. })
+    })
+    .await;
+    assert!(
+        rig.provider
+            .sessions
+            .handle(&session_id)
+            .is_some_and(|handle| handle.is_live()),
+        "a superseded actor's exit must not forget its successor"
+    );
+
+    // And generation 2 runs the next turn itself, with no native restore.
+    rig.target.generation = 2;
+    rig.turn("turn-after-rewind").await;
+    assert_eq!(rig.generation(), 2, "no further generation was minted");
+
+    // The registered actor's own exit is still folded: it forgets exactly
+    // that actor and the session reads ended, as before.
+    let current = registered_instance(&rig.provider, &session_id);
+    rig.provider
+        .handle_session_event(SessionEvent::Exited {
+            session_id: session_id.clone(),
+            instance: current,
+            reason: session::ExitReason::Idle,
+        })
+        .expect("fold the current exit");
+    assert!(rig.provider.sessions.handle(&session_id).is_none());
+}
+
+/// Ledger 387(b): when N's process group cannot be shown gone, the rewind
+/// opens no N+1 and reopens nothing — no adapter is started and no prompt is
+/// sent — and says so on a strict receipt. The proven case is every other
+/// rewind test here, the late-exit one above included.
+#[tokio::test]
+async fn an_unproven_predecessor_opens_no_successor_and_prompts_nothing() {
+    let mut rig = rig().await;
+    rig.three_turns().await;
+    let prompts_before = rig.read("turns.log");
+    assert_eq!(prompts_before.as_deref(), Some("3\n"));
+    let session_id = rig.target.session_id.clone();
+    crate::session::quiescence_seam::withhold(&session_id);
+    let turn_two = rig.turn_checkpoint(2).id.to_hex();
+
+    rig.rewind("rewind-1", &turn_two, "restore").await;
+
+    let receipt = rig.receipt("rewind-1");
+    assert_eq!(receipt["status"], "failed", "{receipt:#}");
+    assert_eq!(receipt["error"]["code"], REWIND_NOT_RESTARTED);
+    assert!(receipt["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("SESSION_QUIESCENCE_UNCONFIRMED")));
+    assert_eq!(receipt["rewind"]["files"], "kept", "nothing was restored");
+    assert_eq!(rig.receipts("rewind-1"), 1);
+    assert_eq!(rig.generation(), 1, "no successor generation was minted");
+    assert!(rig.provider.sessions.handle(&session_id).is_none());
+    rig.assert_after_turn_three();
+    assert_eq!(
+        rig.read("turns.log"),
+        prompts_before,
+        "no prompt reached an adapter"
+    );
+    assert!(
+        crate::assignment_custody::is_fenced(&session_id),
+        "the seat stays fenced for the lifetime of this provider process"
     );
 }

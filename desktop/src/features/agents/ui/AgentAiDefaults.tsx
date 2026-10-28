@@ -82,7 +82,9 @@ export function AgentAiDefaultsNotice({
             </dd>
           </>
         ) : null}
-        <dt className="text-muted-foreground">Provider</dt>
+        {/* The language-model provider, not the runtime the dialog's own
+            Provider picker sets (ledger 399(f)). */}
+        <dt className="text-muted-foreground">Model provider</dt>
         <dd className="truncate text-foreground">
           {provider ? providerLabel(provider) : "Not configured"}
         </dd>

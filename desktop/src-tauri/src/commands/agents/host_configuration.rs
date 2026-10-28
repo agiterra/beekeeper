@@ -384,6 +384,66 @@ async fn finish_configuration(
     save_intent(path, &intent)
 }
 
+/// Before any configuration is applied to a pair: a fresh identity whose
+/// stopped Create is still owed (a role pack installed from a folder reserves
+/// one and enrolls nothing) is completed here, stopped, exactly as Start's own
+/// prefix does — not refused as a retained old record (ledger 393(a)). Nothing
+/// is started: a reservation that asked to start the agent is left to Start.
+/// A pair with no pending fresh reservation is untouched, so retained legacy
+/// records still meet the unchanged modern-ownership refusal.
+async fn complete_pending_stopped_create(
+    app: &AppHandle,
+    state: &AppState,
+    actor: &str,
+    relay: &str,
+    desired: Option<&ManagedAgentRecord>,
+) -> Result<bool, String> {
+    match enrollment::reconcile_enrollment(enrollment::pending_fresh_activation(app, actor, relay)?)
+    {
+        enrollment::ReconcileEnrollment::Ready => Ok(false),
+        enrollment::ReconcileEnrollment::CompleteStopped => {
+            enrollment::enroll_new_host_agent_as(app, state, actor, relay, false, desired)
+                .await
+                .map(|()| true)
+        }
+        enrollment::ReconcileEnrollment::StartOwed => Err(
+            "Fresh Create outcome is pending and was reserved to start this agent; Start \
+             completes it. No configuration was applied and nothing was started."
+                .into(),
+        ),
+    }
+}
+
+/// A settings save that completed a pending enrollment has already put the new
+/// settings on the host; a later failure must say so rather than read as
+/// "nothing changed" (ledger 403).
+pub(super) fn enrolled_but_not_committed(enrolled_now: bool, error: String) -> String {
+    if enrolled_now {
+        format!(
+            "The host was enrolled with the new settings, but this computer did not record them: {error}. The host holds the new settings; refresh before changing them again."
+        )
+    } else {
+        error
+    }
+}
+
+/// The record a configuration may expect right after this save enrolled the
+/// agent: unchanged, or changed only by the exact echo of the definition the
+/// enrollment published. Any other change is a concurrent edit.
+pub(super) fn expected_after_enrollment(
+    source: &ManagedAgentRecord,
+    reread: ManagedAgentRecord,
+    published: crate::managed_agents::agent_events::ManagedAgentEventContent,
+) -> Result<ManagedAgentRecord, String> {
+    if reread == *source
+        || crate::commands::personas::matches_exact_managed_agent_echo(source, &reread, published)
+    {
+        Ok(reread)
+    } else {
+        Err("client cache changed during enrollment; refresh required".into())
+    }
+}
+
 pub(crate) async fn reconcile_host_agent(
     app: &AppHandle,
     state: &AppState,
@@ -395,6 +455,8 @@ pub(crate) async fn reconcile_host_agent(
     if record.backend != BackendKind::Local {
         return Err("remote settings use their provider boundary".into());
     }
+    complete_pending_stopped_create(app, state, actor, relay, None).await?;
+    let record = record_for_pair(app, actor, relay)?;
     enrollment::require_modern(app, &record, relay)?;
     let (path, intent) = configure(app, state, &record, relay, restart, None, None).await?;
     if record_for_pair(app, actor, relay)? != record {
@@ -462,22 +524,40 @@ pub(crate) async fn update_if_adopted(
     {
         return Err("another community requires its own authorized host enrollment; this edit did not move the identity".into());
     }
-    enrollment::require_modern(app, &source, &relay)?;
+    let enrolled_now =
+        complete_pending_stopped_create(app, state, &source.pubkey, &relay, Some(&desired)).await?;
+    let disclose = |error: String| enrolled_but_not_committed(enrolled_now, error);
+    // Enrolling publishes the definition, and its relay echo lands on the
+    // stored record; the strict source check must accept exactly that echo
+    // (as the local commit below already does), nothing else (ledger 403).
+    let expected_source = if enrolled_now {
+        expected_after_enrollment(
+            &source,
+            record_for_pair(app, &source.pubkey, &relay).map_err(disclose)?,
+            crate::managed_agents::agent_events::agent_event_content(&desired),
+        )
+        .map_err(disclose)?
+    } else {
+        source.clone()
+    };
+    enrollment::require_modern(app, &source, &relay).map_err(disclose)?;
     let (path, intent) = configure(
         app,
         state,
         &desired,
         &relay,
         desired.auto_restart_on_config_change || policy_changed,
-        Some(&source),
+        Some(&expected_source),
         staged_persona.as_ref(),
     )
-    .await?;
+    .await
+    .map_err(disclose)?;
     crate::relay::assert_expected_signer(
         Some(&intent.owner_pubkey),
         &state.signing_keys()?.public_key().to_hex(),
-    )?;
-    {
+    )
+    .map_err(disclose)?;
+    let committed: Result<(), String> = (|| {
         let _lock = state
             .managed_agents_store_lock
             .lock()
@@ -529,7 +609,9 @@ pub(crate) async fn update_if_adopted(
         } else {
             save_managed_agents(app, &records)?;
         }
-    }
+        Ok(())
+    })();
+    committed.map_err(disclose)?;
     let mut warning=Some("Configuration accepted; runtime application remains unconfirmed until observed through relay work.".into());
     if let Err(error) = finish_configuration(app, &desired, &relay, &path, intent).await {
         warning = Some(error);
@@ -567,6 +649,42 @@ pub(crate) async fn update_if_adopted(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Right after enrolling, the stored record may carry exactly the echo of
+    /// the published definition; any other change is a concurrent edit.
+    #[test]
+    fn an_enrollment_echo_is_expected_and_any_other_change_is_not() {
+        let mut source = crate::managed_agents::role_source::tests::installed().into_agent_record();
+        source.pubkey = "a".repeat(64);
+        let published = crate::managed_agents::agent_events::agent_event_content(&source);
+        assert_eq!(
+            expected_after_enrollment(&source, source.clone(), published.clone()).unwrap(),
+            source
+        );
+        let mut edited = source.clone();
+        edited.name = "someone else".into();
+        assert!(expected_after_enrollment(&source, edited, published).is_err());
+    }
+
+    /// A save that enrolled the new settings on the host and then failed to
+    /// commit them locally says so; a save that enrolled nothing passes its
+    /// error through unchanged (ledger 403).
+    #[test]
+    fn a_failure_after_enrolling_the_new_settings_discloses_the_host_holds_them() {
+        let after = enrolled_but_not_committed(true, "client cache changed".into());
+        assert!(
+            after.contains("host was enrolled with the new settings"),
+            "{after}"
+        );
+        assert!(
+            after.contains("did not record them: client cache changed"),
+            "{after}"
+        );
+        assert_eq!(
+            enrolled_but_not_committed(false, "client cache changed".into()),
+            "client cache changed"
+        );
+    }
 
     #[test]
     fn interrupted_configuration_retains_exact_operation_and_quiescence_before_retry() {

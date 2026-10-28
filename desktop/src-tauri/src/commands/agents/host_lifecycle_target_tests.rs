@@ -135,3 +135,29 @@ fn one_refused_agent_is_isolated_from_the_rest_of_the_roster() {
         HostAgentAvailability::default()
     );
 }
+
+/// A Start that never finishes ends with a truthful, retryable outcome instead
+/// of "Starting…" forever (ledger 403); a finished Start passes through.
+#[tokio::test]
+async fn a_start_that_never_finishes_ends_with_a_truthful_retryable_outcome() {
+    let stuck = bounded_start(
+        std::time::Duration::from_millis(20),
+        std::future::pending::<Result<(), String>>(),
+    )
+    .await
+    .unwrap_err();
+    assert!(stuck.contains("outcome is unconfirmed"), "{stuck}");
+    assert!(stuck.contains("resume the same operation"), "{stuck}");
+    assert_eq!(
+        bounded_start(std::time::Duration::from_secs(5), async {
+            Err("refused".to_string())
+        })
+        .await,
+        Err("refused".to_string())
+    );
+    assert!(
+        bounded_start(std::time::Duration::from_secs(5), async { Ok(()) })
+            .await
+            .is_ok()
+    );
+}

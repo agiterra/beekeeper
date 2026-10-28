@@ -199,7 +199,9 @@ pub fn host_owner_file_name() -> &'static str {
     "host-owner.json"
 }
 
-/// Resolve `$HOME`, with the one error message worth reading.
+/// The home the host's state lives under: [`HOME_VAR`] when it is set (an
+/// isolated installation, a container, a test), else this user's own home
+/// ([`os_home_dir`]), with the one error message worth reading.
 pub fn home_dir() -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os(HOME_VAR) {
         let path = PathBuf::from(value);
@@ -208,7 +210,18 @@ pub fn home_dir() -> Result<PathBuf, String> {
         }
         return Ok(path);
     }
-    dirs::home_dir().ok_or_else(|| "cannot resolve the home directory".to_string())
+    os_home_dir().ok_or_else(|| "cannot resolve the home directory".to_string())
+}
+
+/// This user's own home directory, **ignoring [`HOME_VAR`]**.
+///
+/// The question a service manager answers: `launchctl`'s `gui/$UID` domain
+/// and `systemctl --user` are this user's whichever home a registration was
+/// written into. A caller deciding whether a home is the one that manager
+/// serves must ask here, never [`home_dir`] — under an override that answers
+/// the override itself, so a temporary home would always look like ours.
+pub fn os_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
 }
 
 #[cfg(test)]

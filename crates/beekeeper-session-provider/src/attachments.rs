@@ -415,6 +415,18 @@ pub(crate) fn interleave_prompt_blocks(
     blocks
 }
 
+/// UTF-8 bytes of the text blocks in a prompt, as the adapter receives them.
+/// Image data is not text and is not counted.
+pub(crate) fn prompt_text_bytes(blocks: &[PromptBlock]) -> usize {
+    blocks
+        .iter()
+        .map(|block| match block {
+            PromptBlock::Text(text) => text.len(),
+            PromptBlock::Image { .. } => 0,
+        })
+        .sum()
+}
+
 /// Push a text block unless it is only whitespace.
 fn push_text(blocks: &mut Vec<PromptBlock>, text: &str) {
     let trimmed = text.trim();

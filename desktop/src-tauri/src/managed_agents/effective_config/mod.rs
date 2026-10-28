@@ -114,6 +114,19 @@ fn host_owned_field(
     }
 }
 
+/// The runtime this computer pinned for the instance. A deliberately pinned
+/// command that is a known runtime's is that runtime, even where an older
+/// editor left a different `runtime` label beside it (ledger 401); otherwise
+/// the record's own runtime.
+fn instance_runtime(record: &ManagedAgentRecord) -> Option<String> {
+    record
+        .agent_command_override
+        .as_deref()
+        .and_then(crate::managed_agents::known_acp_runtime)
+        .map(|known| known.id.to_string())
+        .or_else(|| non_blank(record.runtime.as_deref()).map(str::to_owned))
+}
+
 /// Effective config for a persona-linked instance.
 ///
 /// Model, provider and runtime are **host-owned**: they say what this computer
@@ -140,7 +153,7 @@ fn resolve_linked(
 
     // No global tier — see `EffectiveAgentConfig::runtime`.
     let runtime = host_owned_field(
-        record.runtime.as_deref(),
+        instance_runtime(record).as_deref(),
         definition.runtime.as_deref(),
         None,
     );
@@ -280,7 +293,7 @@ fn resolve_definition_less(
     // No definition to fall back to, and no global tier for the harness id —
     // see `EffectiveAgentConfig::runtime`.
     let runtime = ResolvedField {
-        value: non_blank(record.runtime.as_deref()).map(str::to_owned),
+        value: instance_runtime(record),
         source: ConfigSource::InstanceLegacy,
     };
 

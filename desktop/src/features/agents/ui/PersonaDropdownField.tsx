@@ -47,6 +47,12 @@ export function PersonaDropdownField({
             )}
             disabled={disabled}
             id={id}
+            // Radix opens on pointer-down or keydown only. An accessibility
+            // press (VoiceOver, or an agent through the same AX action) is a
+            // plain click with no pointer (`detail === 0`); open on it too.
+            onClick={(event) => {
+              if (event.detail === 0) setOpen(true);
+            }}
             type="button"
           >
             <span

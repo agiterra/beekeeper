@@ -567,3 +567,23 @@ test("associate access: creator and collaborators yes; viewer, unknown and loadi
     /could not be read.*relay down/,
   );
 });
+
+test("folder-installed roles are available to associate without project history", () => {
+  const model = build({
+    projectPrivate: true,
+    localAgents: [
+      local(BUILDER, "Builder", "builder"),
+      local(LOOM, "Setup", "project-setup"),
+      local(IRA, "No role", null),
+      local(BOB, "Blank role", "  "),
+      local(ATTIC_BUILDER, "Other project", "builder", OTHER_PROJECT),
+    ],
+  });
+  assert.deepEqual(names(model.available), ["Builder"]);
+  assert.equal(model.projectAgents.length, 0);
+  const row = model.available[0];
+  assert.equal(row.mayAssociate, true);
+  assert.equal(row.isProjectAgent, false);
+  assert.equal(row.carriedFromAnotherComputer, false);
+  assert.equal(row.state, "not-associated");
+});

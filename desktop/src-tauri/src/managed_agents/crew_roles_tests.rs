@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use super::*;
 use crate::managed_agents::types::{AgentDefinition, ManagedAgentRecord};
 
+#[path = "crew_roles_pin_tests.rs"]
+mod pin_tests;
+
 const NOW: &str = "2026-08-27T00:00:00Z";
 
 /// Write a minimal pack: manifest, one persona, and (optionally) a role.

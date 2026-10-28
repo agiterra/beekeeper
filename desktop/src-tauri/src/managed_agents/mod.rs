@@ -54,6 +54,7 @@ mod repos;
 mod restore;
 pub mod retention;
 pub(crate) mod role_packs_view;
+pub(crate) mod role_source;
 pub(crate) use legacy_env::apply_legacy_env_names;
 mod runtime;
 mod runtime_commands;

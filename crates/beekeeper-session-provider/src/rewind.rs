@@ -487,13 +487,13 @@ impl Provider {
         self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)
     }
 
-    /// Steps 2–3, on the loop: the target's open turn and its siblings'.
+    /// Steps 2–3, on the loop: the target's accepted/open turn and its siblings'.
     fn rewind_busy(&self, plan: &RewindPlan) -> Option<Refusal> {
         let record = self.state.session(&plan.target.session_id)?;
-        if record.open_turn.is_some() {
+        if self.turn_in_flight(&plan.target.session_id) {
             return Some(refusal(
                 SESSION_BUSY,
-                "a turn is open on this execution; wait for it to end or interrupt it, then rewind",
+                "a turn is accepted or open on this execution; wait for it to end or interrupt it, then rewind",
             ));
         }
         let tree = canonical(&record.cwd);
@@ -750,8 +750,12 @@ impl Provider {
                 head,
             },
         };
-        self.detach_for_new_generation(&plan.command_id, &plan.target, plan.channel_id)
+        let quiescence = self
+            .detach_for_new_generation(&plan.command_id, &plan.target, plan.channel_id)
             .await?;
+        if quiescence == session::ActorQuiescence::Unproven {
+            return self.rewind_predecessor_unproven(&plan, open);
+        }
         if !restore {
             return self.open_rewound(plan, open, relay).await;
         }
@@ -815,15 +819,16 @@ impl Provider {
     }
 
     /// The restart's detach: the child ends (joined), its packages go, the
-    /// record stays resumable, and N reads `disconnected`.
+    /// record stays resumable, and N reads `disconnected`. Answers what was
+    /// established about N, which the caller must act on.
     async fn detach_for_new_generation(
         &mut self,
         command_id: &str,
         target: &CodingSessionTarget,
         channel_id: uuid::Uuid,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<session::ActorQuiescence> {
         if self.sessions.handle(&target.session_id).is_none() {
-            return Ok(());
+            return Ok(session::ActorQuiescence::AlreadyGone);
         }
         let quiescence = self
             .sessions
@@ -832,7 +837,42 @@ impl Provider {
         self.discard_context_packages(&target.session_id);
         self.publish_metadata(channel_id, target, SessionStatus::Disconnected)?;
         tracing::info!(target: "csp::rewind", %command_id, session_id = %target.session_id, quiescence = ?quiescence, "session detached for rewind");
-        Ok(())
+        Ok(quiescence)
+    }
+
+    /// N was detached but its process group was not shown gone: open no
+    /// successor and touch no files. C3's contract: unknown predecessor
+    /// quiescence prevents the dependent turn (ledger 387(b)). Reopening N in
+    /// place would be a successor too, so unlike step 8 nothing is reopened;
+    /// the seat stays fenced until the absence is established.
+    fn rewind_predecessor_unproven(
+        &mut self,
+        plan: &RewindPlan,
+        mut open: RewindOpen,
+    ) -> anyhow::Result<()> {
+        if !self.state.is_command_consumed(&plan.command_id) {
+            self.state.consume_command(&plan.command_id, now_secs())?;
+        }
+        if self
+            .state
+            .session(&plan.target.session_id)
+            .is_some_and(|record| record.actor.is_some())
+        {
+            self.forget_actor_seat(&plan.command_id);
+        }
+        open.rewind.files = RewindFilesOutcome::Kept;
+        let generation = plan.target.generation;
+        let message = format!(
+            "the files were kept, but the agent was not restarted: generation {generation}'s \
+             process group could not be shown terminal (SESSION_QUIESCENCE_UNCONFIRMED), so no \
+             new generation was opened and generation {generation} was not reopened; the seat \
+             stays fenced"
+        );
+        let mut receipt =
+            LifecycleReceipt::failed(&plan.command_id, REWIND_NOT_RESTARTED, &message);
+        receipt.rewind = Some(open.rewind);
+        tracing::warn!(target: "csp::rewind", command_id = %plan.command_id, code = "SESSION_QUIESCENCE_UNCONFIRMED", "rewind not restarted: {message}");
+        self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)
     }
 
     /// Step 7: open N+1 through the resume path, cut at the rewind.

@@ -374,3 +374,35 @@ export async function installCrewRolePacks(
     expectedRelayUrl,
   });
 }
+
+/** Execution settings a re-apply found on the shared role and moved to the agent. */
+export type ReapplyRoleSourceResponse = {
+  moved: {
+    runtime: string | null;
+    model: string | null;
+    provider: string | null;
+  };
+  cleared: string[];
+  replaced: string[];
+  recoveryCopy: string;
+  applied: unknown | null;
+  applyError: string | null;
+};
+
+/** The refusal prefix naming edited role instructions; retry with the confirm. */
+export const ROLE_INSTRUCTIONS_EDITED = "ROLE_INSTRUCTIONS_EDITED";
+
+/**
+ * Restore a role agent's definition from its pack, re-pin the agent, and move
+ * any execution settings found on the shared role onto the agent. Refuses to
+ * replace edited instructions unless `discardInstructionEdits`.
+ */
+export async function reapplyRoleSource(
+  pubkey: string,
+  discardInstructionEdits: boolean,
+): Promise<ReapplyRoleSourceResponse> {
+  return invokeTauri<ReapplyRoleSourceResponse>("reapply_role_source", {
+    pubkey,
+    discardInstructionEdits,
+  });
+}

@@ -256,7 +256,8 @@ test("the Agents tab lists associated agents as members and a worker seated with
 
   // Before any seat: the associated agents are members and Available; the
   // installed-but-unassociated agent is listed with the warning that the lead
-  // can't hire it; home-role-only agents are absent.
+  // can't hire it; a role agent with no project is offered for association
+  // apart from the members (ledger 391/404).
   const members = page.getByTestId("project-agents-members");
   await expect(members).toContainText("Sage", { timeout: 15_000 });
   const sage = row(page, SAGE.pubkey);
@@ -269,8 +270,26 @@ test("the Agents tab lists associated agents as members and a worker seated with
     keel.getByTestId("project-agent-association-missing"),
   ).toContainText("the lead can't hire it");
   const screen = page.getByTestId("project-agents-screen");
-  await expect(screen).not.toContainText(HOMEBODY.name);
-  await expect(screen).not.toContainText(BOB.name);
+  // Homebody and Bob are builders with no project: Available to associate,
+  // "Not associated yet", never counted among the members. Hire eligibility
+  // follows association, not this listing (project-agent-hiring.spec.ts,
+  // "Who leads in a Tank Loop session offers only Tank Loop agents").
+  const available = page.getByTestId("project-agents-available");
+  for (const agent of [HOMEBODY, BOB]) {
+    const offered = available.locator(
+      `[data-testid="project-agent-row"][data-agent-pubkey="${agent.pubkey}"]`,
+    );
+    await expect(offered).toHaveAttribute("data-agent-state", "not-associated");
+    await expect(offered.getByTestId("project-agent-state")).toHaveText(
+      "Not associated yet",
+    );
+    await expect(
+      members.locator(`[data-agent-pubkey="${agent.pubkey}"]`),
+    ).toHaveCount(0);
+  }
+  await expect(
+    members.locator('[data-testid="project-agent-row"]'),
+  ).toHaveCount(3);
 
   await seedSeats(page);
 
@@ -308,7 +327,16 @@ test("the Agents tab lists associated agents as members and a worker seated with
   );
   // Sage is still Available: an install is not participation.
   await expect(sage).toHaveAttribute("data-agent-state", "available");
-  await expect(screen).not.toContainText(HOMEBODY.name);
+  // Homebody is still only offered; Bob, now seated, moved to borrowed.
+  await expect(
+    available.locator(`[data-agent-pubkey="${HOMEBODY.pubkey}"]`),
+  ).toHaveAttribute("data-agent-state", "not-associated");
+  await expect(
+    members.locator(`[data-agent-pubkey="${HOMEBODY.pubkey}"]`),
+  ).toHaveCount(0);
+  await expect(
+    available.locator(`[data-agent-pubkey="${BOB.pubkey}"]`),
+  ).toHaveCount(0);
 
   await waitForAnimations(page);
   await page.screenshot({
@@ -330,6 +358,40 @@ test("the Agents tab lists associated agents as members and a worker seated with
   await page.getByTestId("role-card-builder").screenshot({
     path: `${SNAPSHOTS}/02-roles-builder-card.png`,
   });
+});
+
+test("a role agent with no project is offered, but only the project's owners and collaborators may associate it", async ({
+  page,
+}) => {
+  await openProjectAgentsTab(page);
+  const available = page.getByTestId("project-agents-available");
+  const members = page.getByTestId("project-agents-members");
+  const offered = available.locator(
+    `[data-testid="project-agent-row"][data-agent-pubkey="${HOMEBODY.pubkey}"]`,
+  );
+  await expect(offered).toHaveAttribute("data-agent-state", "not-associated", {
+    timeout: 15_000,
+  });
+  // This viewer neither owns nor collaborates on General: the offer is shown,
+  // the association is not available, and nothing is written (ledger 404).
+  const associate = offered.getByTestId("project-agent-associate-button");
+  await expect(associate).toBeDisabled();
+  await expect(associate).toHaveAttribute(
+    "title",
+    "Only General's owners and collaborators can associate agents with it.",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).filter(
+          (entry: { command: string }) =>
+            entry.command === "associate_managed_agent_with_project",
+        ).length,
+    ),
+  ).toBe(0);
+  await expect(
+    members.locator(`[data-agent-pubkey="${HOMEBODY.pubkey}"]`),
+  ).toHaveCount(0);
 });
 
 test("the old Contributors path lands on the Agents tab", async ({ page }) => {

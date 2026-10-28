@@ -13,8 +13,29 @@ pub struct Request {
     pub(crate) operator: Option<String>,
     pub(crate) custody: Result<Custody, Refusal>,
     pub(crate) role_definition: Option<RoleDefinition>,
-    pub(crate) runtime_preface: Option<String>,
+    pub(crate) runtime_briefing: Option<RuntimeBriefing>,
     pub(crate) checkpoint: String,
+}
+/// The exact runtime briefing this execution's adapter was (or will be) given,
+/// composed once at open. The continuity block binds to it by size and digest;
+/// it never carries a second copy.
+#[derive(Clone)]
+pub(crate) struct RuntimeBriefing {
+    pub text: String,
+    pub transport: crate::session::BootstrapTransport,
+}
+impl RuntimeBriefing {
+    /// Size and digest, never the text.
+    pub fn binding(&self) -> crate::continuity_bootstrap::RuntimeBinding {
+        crate::continuity_bootstrap::RuntimeBinding {
+            bytes: self.text.len(),
+            digest: beekeeper_core::continuity::value_hash(self.text.as_bytes()),
+            transport: match self.transport {
+                crate::session::BootstrapTransport::SystemPrompt => "system_prompt",
+                crate::session::BootstrapTransport::FirstTurn => "first_turn",
+            },
+        }
+    }
 }
 impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -34,12 +55,14 @@ pub(crate) struct Execution {
     pub custody: Result<Custody, Refusal>,
     pub last_receipt: Option<PreparedBootstrap>,
     pub role_definition: Option<RoleDefinition>,
+    pub runtime_briefing: Option<RuntimeBriefing>,
     pub checkpoint: String,
 }
 impl Execution {
     pub fn from_launch(
         request: &crate::session::CreateRequest,
         continuity: &crate::session::SessionContinuity,
+        runtime_briefing: Option<RuntimeBriefing>,
     ) -> Option<Self> {
         // Only explicit new conversations. An implicit native fallback is not
         // consent to reconstruct, and native resume/load remains native.
@@ -67,7 +90,7 @@ impl Execution {
         });
         Some(Self {
             target: request.target.clone(), custody: Custody::from_launch(request),
-            last_receipt: None, role_definition,
+            last_receipt: None, role_definition, runtime_briefing,
             checkpoint: request.rehydration_mcp.as_ref().map(|d| d.first_turn_brief.clone())
                 .unwrap_or_else(|| "No verified prior checkpoint package is available; no past report establishes current completion.".into()),
         })
@@ -79,7 +102,6 @@ impl Execution {
         command: &str,
         text: &str,
         operator: Option<&str>,
-        runtime_preface: Option<&str>,
     ) -> Result<PreparedBootstrap, Refusal> {
         let (decision, mut answer) = watch::channel(None);
         let request = Request {
@@ -89,7 +111,7 @@ impl Execution {
             operator: operator.map(str::to_owned),
             custody: self.custody.clone(),
             role_definition: self.role_definition.clone(),
-            runtime_preface: runtime_preface.map(str::to_owned),
+            runtime_briefing: self.runtime_briefing.clone(),
             checkpoint: self.checkpoint.clone(),
         };
         events

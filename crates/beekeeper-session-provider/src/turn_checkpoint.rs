@@ -715,8 +715,19 @@ impl crate::Provider {
                 .checkpoint_chain(session_id, capture.target.generation)
                 .and_then(|chain| chain.recorded.get(&seq).cloned().flatten())
         });
-        let payload = checkpoint_payload(&capture, previous_tree.as_deref());
-        let (event, published_tree) = match fit_checkpoint(capture.channel_id, payload) {
+        let mut payload = checkpoint_payload(&capture, previous_tree.as_deref());
+        // A checkpoint stays in the session's channel, where rewind finds it,
+        // but a split generation's file names, branch and summary are tool
+        // output: they are withheld, and the owner's transcript carries them.
+        if self
+            .state
+            .private_output(session_id, capture.target.generation)
+            .is_some()
+        {
+            crate::private_output::withhold_checkpoint_detail(&mut payload);
+        }
+        let channel_id = capture.channel_id;
+        let (event, published_tree) = match fit_checkpoint(channel_id, payload) {
             Ok(fitted) => fitted,
             Err(error) => {
                 tracing::warn!(target: "csp::checkpoint", %session_id, "checkpoint not encodable, publishing it as unavailable: {error}");
@@ -730,7 +741,7 @@ impl crate::Provider {
                                measured is published."
                         .to_owned(),
                 });
-                fit_checkpoint(capture.channel_id, fallback)?
+                fit_checkpoint(channel_id, fallback)?
             }
         };
         let event = event.sign_with_keys(&self.config.keys)?;
@@ -808,6 +819,13 @@ impl crate::Provider {
         payload.turn_id = None;
         // A pre_rewind is the undo point, not a turn a rewind can name.
         payload.restorable = false;
+        if self
+            .state
+            .private_output(&target.session_id, target.generation)
+            .is_some()
+        {
+            crate::private_output::withhold_checkpoint_detail(&mut payload);
+        }
         let (event, _) = fit_checkpoint(channel_id, payload)?;
         let event = event.sign_with_keys(&self.config.keys)?;
         let id = event.id.to_hex();

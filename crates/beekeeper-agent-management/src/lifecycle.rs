@@ -180,7 +180,7 @@ pub(crate) async fn inventory(
         }
     }
     let mut rows: Vec<_> = records.into_values().map(|(_, record)| record).collect();
-    merge_inventory(&mut rows, &uncertain);
+    merge_uncertain(&mut rows, &uncertain);
     Ok(rows)
 }
 
@@ -231,6 +231,25 @@ pub(crate) async fn provider_authorized(
         ));
     }
     Ok(())
+}
+/// Add an accepted create's responsibility only when metadata does not already
+/// observe its session. Metadata rows are keyed per session, newest
+/// generation winning (above); a rewound session's generation-1 create is not
+/// a second, unconfirmed responsibility (ledger 401). A create whose session
+/// has no observed metadata is still added, so zero work is never certified.
+/// Stops keep `merge_inventory`'s exact targets.
+fn merge_uncertain(held: &mut Vec<Responsibility>, creates: &[Responsibility]) {
+    for row in creates {
+        if !held.iter().any(|observed| {
+            observed.channel_id == row.channel_id
+                && observed.provider_authority == row.provider_authority
+                && observed.target.driver == row.target.driver
+                && observed.target.instance_id == row.target.instance_id
+                && observed.target.session_id == row.target.session_id
+        }) {
+            held.push(row.clone())
+        }
+    }
 }
 fn merge_inventory(held: &mut Vec<Responsibility>, fresh: &[Responsibility]) {
     for row in fresh {
@@ -1235,3 +1254,6 @@ mod presence_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "lifecycle_uncertain_tests.rs"]
+mod uncertain_tests;

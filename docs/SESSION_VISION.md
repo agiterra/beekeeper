@@ -129,6 +129,20 @@ Exact live-process migration may be a later capability. The product model must
 not make it a prerequisite for shared observation or provider-independent
 continuity.
 
+Shared observation has one deliberate exception. When an execution receives
+an agent's private continuity (its owner-scoped claims, evidence and
+corrections), everything published *automatically* from that execution — its
+replies, reasoning, tool calls with inputs, outputs and edits, results and
+observed gate rows — goes in full to an owner-private channel whose members
+are the owner, the agent and its host, and stays there for the rest of the
+session, across native restore and later executions. Teammates still see the
+session: who asked, that the agent worked, which kinds of tools it used, how
+it ended, its timing, and anything the agent deliberately tells them. The
+split is enforced by the provider for automatic output. What an agent
+deliberately sends — messages, files, commits — follows its instructions and
+is not filtered; this is a layered sharing model, not a promise of general
+non-interference. Sessions without private continuity are unchanged.
+
 Authority should remain explicit. Observing, contributing context, steering
 agents, approving actions, changing membership, and taking operational control
 are different powers. A shared surface does not imply that every viewer may run

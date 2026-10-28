@@ -16,6 +16,16 @@ pub(crate) enum Admission<'a> {
     Turn,
 }
 
+/// A modern host enrollment that is simply stopped is not a legacy or
+/// half-transferred identity; say what it is and what admits work (ledger 403).
+/// Same code, same admitted set.
+fn stopped_refusal() -> CreateFailure {
+    crate::execution_scope::refuse(
+        "ACTOR_OWNERSHIP_UNAVAILABLE",
+        "this agent is stopped on its host; Start it, then retry — no work was admitted",
+    )
+}
+
 fn refusal() -> CreateFailure {
     crate::execution_scope::refuse("ACTOR_OWNERSHIP_UNAVAILABLE", "this participant is owned by the legacy client or its ownership transfer is incomplete; no work was admitted")
 }
@@ -86,6 +96,8 @@ fn require(
     };
     if allowed {
         Ok(())
+    } else if transfer.phase == Phase::HostStopped {
+        Err(stopped_refusal())
     } else {
         Err(refusal())
     }
@@ -257,5 +269,65 @@ mod tests {
             )
             .is_err());
         }
+    }
+    /// The C4 `builder`/`verifier` hires (ledger 403): a modern enrollment
+    /// left stopped refuses a hire as "stopped; Start it", not as a legacy or
+    /// incomplete transfer. Its own activation is still the only create it
+    /// admits, and once adopted everything is admitted, as before.
+    #[test]
+    fn a_stopped_modern_enrollment_refuses_a_hire_as_stopped_and_still_admits_its_activation() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://isolated.example";
+        let operation = uuid::Uuid::new_v4().to_string();
+        let write = |phase: Phase| {
+            let transfer = ownership::Transfer {
+                operation_id: operation.clone(),
+                actor_pubkey: actor.clone(),
+                relay_url: relay.into(),
+                legacy_nonce: format!("fresh-identity:{operation}"),
+                definition_event_id: "cd".repeat(32),
+                target: None,
+                phase,
+            };
+            beekeeper_host_core::atomic_write::create_dir_all_restricted(
+                &beekeeper_host_core::layout::host_dir(home.path(), Instance::Dev),
+            )
+            .unwrap();
+            beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+                &beekeeper_host_core::layout::host_dir(home.path(), Instance::Dev)
+                    .join("managed-ownership.json"),
+                &serde_json::to_vec(&serde_json::json!({"transfers":[transfer],"history":[]}))
+                    .unwrap(),
+            )
+            .unwrap();
+        };
+        write(Phase::HostStopped);
+        let hire = Admission::Create {
+            command: "hire",
+            initial_turn: true,
+        };
+        let refused = require(home.path(), Instance::Dev, &actor, relay, hire).unwrap_err();
+        assert_eq!(refused.code, "ACTOR_OWNERSHIP_UNAVAILABLE");
+        assert!(
+            refused.message.contains("stopped on its host"),
+            "{}",
+            refused.message
+        );
+        assert!(!refused.message.contains("legacy"));
+        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Turn).is_err());
+        assert!(require(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            Admission::Create {
+                command: &operation,
+                initial_turn: false
+            }
+        )
+        .is_ok());
+        write(Phase::Adopted);
+        assert!(require(home.path(), Instance::Dev, &actor, relay, hire).is_ok());
     }
 }

@@ -93,6 +93,7 @@ mod relay_query;
 mod relay_reconnect;
 mod relay_system_health;
 mod role_packs;
+mod role_source;
 #[cfg(unix)]
 mod shell_sessions;
 mod social;
@@ -179,6 +180,7 @@ pub use relay_query::*;
 pub use relay_reconnect::*;
 pub use relay_system_health::*;
 pub use role_packs::*;
+pub use role_source::*;
 #[cfg(unix)]
 pub use shell_sessions::*;
 pub use social::*;

@@ -214,6 +214,15 @@ export const AGENT_DETAIL_START_TESTID = "agent-detail-start";
 export const AGENT_DETAIL_STOP_TESTID = "agent-detail-stop";
 export const AGENT_DETAIL_RESTART_TESTID = "agent-detail-restart";
 export const AGENT_DETAIL_EDIT_TESTID = "agent-detail-edit";
+/**
+ * Opens this agent's own settings (provider, model, parallelism…), the
+ * instance editor. "Edit" opens the role definition the agent shares, which
+ * has no provider, so without this a role agent's provider could not be
+ * changed anywhere. A change applies to the agent's next execution; a
+ * conversation already running keeps the runtime it was opened on.
+ */
+export const AGENT_DETAIL_SETTINGS_TESTID = "agent-detail-settings";
+export const AGENT_DETAIL_SETTINGS_LABEL = "Provider & settings";
 export const AGENT_DETAIL_NOT_MANAGED =
   "This computer does not manage this agent, so it cannot start or stop it.";
 
@@ -270,3 +279,11 @@ export const AGENT_GROUP_HEADING_TESTID = "agent-group-heading";
 export const AGENT_ROW_PROFILE_BEHIND_TESTID = "agent-row-profile-behind";
 export const AGENT_ROW_PROFILE_BEHIND =
   "Renamed on this computer; the relay still shows the old name until it is reachable.";
+
+/** Ids the role-pack installer mints; such a definition is a shared role. */
+export const ROLE_DEFINITION_ID_PREFIX = "crew-role:";
+export const ROLE_DEFINITION_EXECUTION_NOTE_TESTID =
+  "role-definition-execution-note";
+/** Where a role's execution settings live, shown in place of them. */
+export const ROLE_DEFINITION_EXECUTION_NOTE =
+  "This is a shared role: it holds the agent's instructions. Runtime, model and who can instruct the agent are set per agent, in Provider & settings.";

@@ -747,6 +747,7 @@ fn summary_fixture(
         provider: None,
         persona_out_of_date: false,
         persona_orphaned: false,
+        persona_source_state: None,
         // Both fields derive from one vector in `build_managed_agent_summary`;
         // the fixture reproduces that rule rather than letting them disagree.
         needs_restart: !restart_diff.is_empty(),

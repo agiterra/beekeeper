@@ -297,6 +297,12 @@ export type ManagedAgent = {
    */
   personaOutOfDate: boolean;
   /**
+   * Where this agent's definition pin stands: `missing` (never pinned),
+   * `current`, or `diverged` (the definition changed since). `null` when it
+   * links no definition. A role agent recovers with Re-apply role source.
+   */
+  personaSourceState: "missing" | "current" | "diverged" | null;
+  /**
    * `true` when the agent's linked persona no longer exists. Distinct from
    * out-of-date: there is no current persona to respawn into, so do not prompt
    * a respawn — the pinned snapshot is all the config that remains.

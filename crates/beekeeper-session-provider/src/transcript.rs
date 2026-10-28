@@ -193,6 +193,20 @@ const CONTINUITY_MASK: &str = "••••••••";
 const CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE: &str = "CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE";
 const MAX_CONTINUITY_PATTERNS: usize = 768;
 const MAX_CONTINUITY_PATTERN_BYTES: usize = 256 * 1024;
+/// Largest single fragment registration accepts: the larger of the two
+/// approved continuity bounds, because every fragment is part of either the
+/// admitted dynamic block (the whole block is itself registered) or the
+/// runtime briefing. A literal 8192 here refused every block the 16 KiB bound
+/// admitted (ledger 395), as `CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE`.
+pub(crate) const MAX_CONTINUITY_FRAGMENT_BYTES: usize = {
+    let block = crate::continuity_bootstrap::MAX_BOOTSTRAP_BYTES;
+    let runtime = crate::continuity_bootstrap::MAX_RUNTIME_BRIEFING_BYTES;
+    if block > runtime {
+        block
+    } else {
+        runtime
+    }
+};
 
 #[derive(Default)]
 struct ContinuityRedaction {
@@ -216,7 +230,7 @@ impl ContinuityRedaction {
             if fragment.is_empty() {
                 continue;
             }
-            if fragment.len() > 8192 {
+            if fragment.len() > MAX_CONTINUITY_FRAGMENT_BYTES {
                 return Err(CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE);
             }
             let mut variant = fragment.clone();

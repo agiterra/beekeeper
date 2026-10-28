@@ -38,10 +38,32 @@ pub(crate) async fn start_host_pair_with_floor(
     if record.backend != BackendKind::Local {
         return Err("remote lifecycle uses its provider boundary".into());
     }
-    match conversation_channel {
-        Some(channel) => enrollment::start_conversation(app, &record, relay, channel).await,
-        None => enrollment::start_existing(app, &record, relay).await,
-    }
+    bounded_start(START_DEADLINE, async {
+        match conversation_channel {
+            Some(channel) => enrollment::start_conversation(app, &record, relay, channel).await,
+            None => enrollment::start_existing(app, &record, relay).await,
+        }
+    })
+    .await
+}
+
+/// A desktop Start drives the local host, then the relay inventory under the
+/// app-wide rate-limit gate, then waits for the provider's receipt. Unbounded,
+/// it could read "Starting…" for many minutes with no outcome (ledger 403).
+const START_DEADLINE: std::time::Duration = std::time::Duration::from_secs(150);
+
+/// Bound a Start and say truthfully what a timeout means: its operation is
+/// journaled, and a retry resumes that same operation without a duplicate.
+pub(super) async fn bounded_start(
+    deadline: std::time::Duration,
+    start: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    tokio::time::timeout(deadline, start).await.unwrap_or_else(|_| {
+        Err(format!(
+            "Start did not finish within {} s (often the relay's rate limit or a slow host); its outcome is unconfirmed. The operation is retained: Start again to resume the same operation, which never starts a second execution.",
+            deadline.as_secs()
+        ))
+    })
 }
 
 pub(crate) async fn stop_host_pair(

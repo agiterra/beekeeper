@@ -26,6 +26,11 @@ fn facts() -> RequiredFacts {
         checkpoint: "No prior verified report; unknown.".into(),
         read_at: 100,
         source_ids: vec![],
+        runtime: crate::continuity_bootstrap::RuntimeBinding {
+            bytes: 5325,
+            digest: "ab".repeat(32),
+            transport: "first_turn",
+        },
     }
 }
 fn unknown() -> Knowledge {
@@ -39,21 +44,44 @@ fn unknown() -> Knowledge {
 }
 #[test]
 fn continuity_combined_byte_bound_never_drops_required_sections() {
-    let mut f = facts();
-    let overhead = prepare(facts(), &unknown()).unwrap().payload().len();
-    f.work.push_str(&"x".repeat(MAX_BOOTSTRAP_BYTES - overhead));
-    let bounded = prepare(f, &unknown()).unwrap();
-    assert_eq!(bounded.payload().len(), 8192);
-    assert!(bounded.payload().contains("Required decision"));
-    assert!(bounded.payload().contains("Keep permissions"));
-    let mut f = facts();
-    f.work
-        .push_str(&"x".repeat(MAX_BOOTSTRAP_BYTES - overhead + 1));
-    assert_eq!(prepare(f, &unknown()).unwrap_err(), Refusal::TooLarge);
-    let mut f = facts();
-    f.work
-        .push_str(&"🐝".repeat((MAX_BOOTSTRAP_BYTES - overhead) / 4 + 1));
-    assert_eq!(prepare(f, &unknown()).unwrap_err(), Refusal::TooLarge);
+    assert_eq!(MAX_BOOTSTRAP_BYTES, 16384);
+    for transport in ["system_prompt", "first_turn"] {
+        let base = || {
+            let mut f = facts();
+            f.runtime = runtime(19897, transport);
+            f
+        };
+        let overhead = prepare(base(), &unknown()).unwrap().payload().len();
+        // Exactly at the bound: admitted whole, required sections intact.
+        let mut f = base();
+        f.work.push_str(&"x".repeat(MAX_BOOTSTRAP_BYTES - overhead));
+        let bounded = prepare(f, &unknown()).unwrap();
+        assert_eq!(bounded.payload().len(), 16384, "{transport}");
+        assert!(bounded.payload().contains("Required decision"));
+        assert!(bounded.payload().contains("Keep permissions"));
+        let receipt = bounded.receipt().unwrap();
+        assert_eq!(receipt.bytes, 16384);
+        assert_eq!(receipt.runtime_transport, transport);
+        // One byte over: refused by name with its count, nothing truncated.
+        let mut f = base();
+        f.work
+            .push_str(&"x".repeat(MAX_BOOTSTRAP_BYTES - overhead + 1));
+        let refusal = prepare(f, &unknown()).unwrap_err();
+        assert_eq!(refusal, Refusal::TooLarge { bytes: 16385 }, "{transport}");
+        assert_eq!(refusal.code(), "CONTINUITY_BOOTSTRAP_TOO_LARGE");
+        assert_eq!(
+            refusal.overflow().unwrap(),
+            "dynamic continuity block is 16385 UTF-8 bytes, over its 16384-byte bound by 1"
+        );
+        // Multibyte text is counted in bytes, not characters.
+        let mut f = base();
+        f.work
+            .push_str(&"🐝".repeat((MAX_BOOTSTRAP_BYTES - overhead) / 4 + 1));
+        assert!(matches!(
+            prepare(f, &unknown()).unwrap_err(),
+            Refusal::TooLarge { bytes } if bytes > 16384
+        ));
+    }
 }
 #[test]
 fn continuity_receipts_bind_command_generation_and_do_not_infer_confirmation() {
@@ -190,10 +218,43 @@ async fn continuity_exact_evidence_is_reread_and_correction_shadows_replaced_his
 }
 
 #[cfg(unix)]
+/// The admission answer a provider gives when it cannot split the
+/// generation's automatic output: the owner-private channel did not open and
+/// verify (`bind_failed`), or the split could not be persisted.
+fn split_refusal(bind_failed: bool) -> Refusal {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let mut provider = provider(&state, None);
+    let record = governed_record(Uuid::new_v4(), dir.path(), &"ab".repeat(32));
+    let session_id = record.session_id.clone();
+    provider.state.insert_session(record).unwrap();
+    let opened = if bind_failed {
+        Err(crate::private_output::BindFailure::MembershipUnverified)
+    } else {
+        // A channel opened and verified, then a state directory the split
+        // cannot be written to.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        Ok(Uuid::new_v4())
+    };
+    let refusal = provider
+        .record_private_output(&session_id, 1, "22".repeat(32), opened)
+        .unwrap_err();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    // Nothing was split, so nothing may be sent as if it were.
+    assert!(provider.state.private_output(&session_id, 1).is_none());
+    refusal
+}
+
 async fn adapter_case(mode: u8) {
     let fails = mode == 1;
     let refused = mode == 2 || mode == 3;
     let storage_failed = mode == 4;
+    // 5: the split's channel did not bind; 6: the split did not persist.
+    let split_failed = (mode == 5 || mode == 6).then(|| split_refusal(mode == 5));
     let dir = tempfile::tempdir().unwrap();
     let wire = dir.path().join("wire.jsonl");
     let script = GOOD_AGENT.replace(
@@ -241,7 +302,19 @@ async fn adapter_case(mode: u8) {
         .deliver(crate::session::SessionCommand::Turn {
             command_id: "new-command".into(),
             text: "signed user text".into(),
-            attachments: vec![],
+            // 7: an attachment this host cannot read back, so the adapter is
+            // also handed the undelivered note as its own text block.
+            attachments: if mode == 7 {
+                vec![beekeeper_core::coding_session_command::TurnAttachment {
+                    sha256: "ab".repeat(32),
+                    mime: "text/plain".into(),
+                    size: 12,
+                    dim: None,
+                    filename: Some("notes.txt".into()),
+                }]
+            } else {
+                vec![]
+            },
             operator_pubkey: Some("22".repeat(32)),
             framing: None,
         })
@@ -251,7 +324,11 @@ async fn adapter_case(mode: u8) {
         loop {
             match rx.recv().await.unwrap() {
                 SessionEvent::ContinuityAdmissionRequested { decision, .. } => {
-                    decision.send(Some(Ok(prepared.clone()))).unwrap();
+                    let answer = match split_failed {
+                        Some(refusal) => Err(refusal),
+                        None => Ok(prepared.clone()),
+                    };
+                    decision.send(Some(answer)).unwrap();
                 }
                 SessionEvent::ContinuityReceipt { receipt } => phases.push(receipt.phase),
                 SessionEvent::TurnBaselineRequested { reply, .. } => {
@@ -268,8 +345,16 @@ async fn adapter_case(mode: u8) {
                     break;
                 }
                 SessionEvent::ContinuityRefused { reason, .. } => {
-                    assert!(refused, "unexpected refusal {reason:?}");
-                    assert_eq!(reason, Refusal::Unavailable);
+                    match split_failed {
+                        Some(expected) => {
+                            assert_eq!(expected, Refusal::PrivateDeliveryUnavailable);
+                            assert_eq!(reason, expected);
+                        }
+                        None => {
+                            assert!(refused, "unexpected refusal {reason:?}");
+                            assert_eq!(reason, Refusal::Unavailable);
+                        }
+                    }
                     break;
                 }
                 _ => {}
@@ -279,7 +364,7 @@ async fn adapter_case(mode: u8) {
     .await
     .unwrap();
     let raw = std::fs::read_to_string(wire).unwrap();
-    if refused || storage_failed {
+    if refused || storage_failed || split_failed.is_some() {
         assert!(!raw.contains("session/prompt"));
         assert!(phases.is_empty());
         assert_eq!(prepared.receipt().unwrap().phase, Phase::Prepared);
@@ -292,7 +377,45 @@ async fn adapter_case(mode: u8) {
         .find(|v| v["method"] == "session/prompt")
         .unwrap();
     let text = prompt["params"]["prompt"][0]["text"].as_str().unwrap();
-    assert_eq!(text, format!("{}signed user text", prepared.payload()));
+    let session_new = raw
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["method"] == "session/new")
+        .unwrap();
+    // Composed once: a first-turn briefing is kept (never cleared by the
+    // continuity path), then the block, then the signed words, untruncated.
+    let expected = match session_new["params"]["systemPrompt"].as_str() {
+        Some(_) => format!("{}signed user text", prepared.payload()),
+        None => {
+            let (preamble, rest) = text
+                .split_once(&format!("\n\n{}", prepared.payload()))
+                .expect("the block follows the briefing");
+            assert!(
+                preamble.contains("Beekeeper"),
+                "the runtime briefing leads: {preamble}"
+            );
+            assert_eq!(rest, "signed user text");
+            assert_eq!(text.matches(preamble).count(), 1);
+            text.to_owned()
+        }
+    };
+    assert_eq!(text, expected);
+    // The receipt counts what the adapter was handed: every text block,
+    // after interleaving and the undelivered-attachment note.
+    let handed: Vec<&str> = prompt["params"]["prompt"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    assert_eq!(handed.len(), if mode == 7 { 2 } else { 1 });
+    if mode == 7 {
+        assert!(handed[1].starts_with("[Attachments]"), "{}", handed[1]);
+    }
+    assert_eq!(
+        prepared.receipt().unwrap().prompt_bytes,
+        Some(handed.iter().map(|t| t.len()).sum())
+    );
     assert_eq!(
         phases,
         if fails {
@@ -403,7 +526,7 @@ async fn continuity_stale_target_refuses_before_any_required_source_read() {
         operator: Some("22".repeat(32)),
         custody: Err(Refusal::Unavailable),
         role_definition: None,
-        runtime_preface: None,
+        runtime_briefing: None,
         checkpoint: "none".into(),
     };
     assert!(matches!(
@@ -621,7 +744,7 @@ async fn continuity_consumed_command_is_not_reconstructed_or_replayed() {
         operator: Some("22".repeat(32)),
         custody: Err(Refusal::Unavailable),
         role_definition: None,
-        runtime_preface: None,
+        runtime_briefing: None,
         checkpoint: "none".into(),
     };
     assert!(matches!(
@@ -846,4 +969,153 @@ async fn continuity_saturated_receipt_queue_keeps_durable_unknown_after_error_ca
 #[tokio::test]
 async fn continuity_receipt_storage_failure_prevents_adapter_send() {
     adapter_case(4).await;
+}
+
+/// `promptBytes` was measured before attachment interleaving and the note, so
+/// it described a prompt the adapter was never handed.
+#[cfg(unix)]
+#[tokio::test]
+async fn continuity_receipt_counts_the_final_prompt_including_an_undelivered_attachment_note() {
+    adapter_case(7).await;
+}
+
+/// A generation is admitted private continuity only once its automatic output
+/// is split. A channel that does not bind, or a split that does not persist,
+/// is a refusal by name and the adapter is never prompted.
+#[cfg(unix)]
+#[tokio::test]
+async fn continuity_split_bind_or_persist_failure_makes_zero_adapter_calls() {
+    adapter_case(5).await;
+    adapter_case(6).await;
+}
+
+fn runtime(bytes: usize, transport: &'static str) -> crate::continuity_bootstrap::RuntimeBinding {
+    crate::continuity_bootstrap::RuntimeBinding {
+        bytes,
+        digest: "cd".repeat(32),
+        transport,
+    }
+}
+
+#[test]
+fn continuity_dynamic_bytes_are_identical_across_system_slot_and_first_turn_transports() {
+    let mut system = facts();
+    system.runtime = runtime(6000, "system_prompt");
+    let mut first = facts();
+    first.runtime = runtime(6000, "first_turn");
+    let (system, first) = (
+        prepare(system, &unknown()).unwrap(),
+        prepare(first, &unknown()).unwrap(),
+    );
+    assert_eq!(system.payload(), first.payload());
+    assert_eq!(system.receipt().unwrap().runtime_transport, "system_prompt");
+    assert_eq!(first.receipt().unwrap().runtime_transport, "first_turn");
+    assert_eq!(first.receipt().unwrap().runtime_bytes, 6000);
+    // The briefing is bound, not copied, and is not counted in the block's bound.
+    assert!(first.payload().contains(&"cd".repeat(32)));
+    assert!(first.receipt().unwrap().bytes < MAX_BOOTSTRAP_BYTES);
+}
+
+#[test]
+fn continuity_runtime_briefing_has_its_own_32768_bound_on_both_transports() {
+    use crate::continuity_bootstrap::MAX_RUNTIME_BRIEFING_BYTES;
+    assert_eq!(MAX_RUNTIME_BRIEFING_BYTES, 32768);
+    for transport in ["system_prompt", "first_turn"] {
+        // The measured canonical role seat (ledger 394) now fits.
+        let mut f = facts();
+        f.runtime = runtime(19897, transport);
+        assert!(prepare(f, &unknown()).is_ok(), "{transport}");
+        let mut f = facts();
+        f.runtime = runtime(32768, transport);
+        let prepared = prepare(f, &unknown()).expect(transport);
+        // The receipt still carries the briefing's actual bytes and transport.
+        let receipt = prepared.receipt().unwrap();
+        assert_eq!(receipt.runtime_bytes, 32768);
+        assert_eq!(receipt.runtime_transport, transport);
+        assert_eq!(receipt.runtime_digest, "cd".repeat(32));
+        let mut f = facts();
+        f.runtime = runtime(32769, transport);
+        let refusal = prepare(f, &unknown()).unwrap_err();
+        assert_eq!(refusal, Refusal::RuntimeBriefingTooLarge { bytes: 32769 });
+        assert_eq!(refusal.code(), "CONTINUITY_RUNTIME_BRIEFING_TOO_LARGE");
+        assert_eq!(
+            refusal.overflow().unwrap(),
+            "runtime briefing is 32769 UTF-8 bytes, over its 32768-byte bound by 1"
+        );
+    }
+    // A large briefing never consumes the dynamic block's bound.
+    let big = || {
+        let mut f = facts();
+        f.runtime = runtime(32768, "first_turn");
+        f
+    };
+    let overhead = prepare(big(), &unknown()).unwrap().payload().len();
+    let mut f = big();
+    f.work.push_str(&"x".repeat(MAX_BOOTSTRAP_BYTES - overhead));
+    assert_eq!(prepare(f, &unknown()).unwrap().payload().len(), 16384);
+}
+
+#[test]
+fn continuity_role_text_is_bound_by_digest_and_delivered_once() {
+    use crate::continuity_delivery::{RoleDefinition, RuntimeBriefing};
+    use crate::session::BootstrapTransport;
+    let definition = "You are the builder. Private role rule R-77: never share bench codes.";
+    let role = RoleDefinition {
+        pack: None,
+        compose: None,
+        text: format!("{definition}\n"),
+    };
+    let briefing = RuntimeBriefing {
+        text: format!(
+            "Beekeeper session briefing.\nYour role pack:\n{definition}\nBoundary: fenced."
+        ),
+        transport: BootstrapTransport::FirstTurn,
+    };
+    let line = crate::continuity_collect::role_binding(
+        Some("builder"),
+        &role,
+        &briefing,
+        "cmd",
+        &"22".repeat(32),
+    )
+    .unwrap();
+    assert!(
+        !line.contains("R-77"),
+        "the dynamic block repeats the role: {line}"
+    );
+    assert!(line.contains(&value_hash(definition.as_bytes())));
+    assert!(line.contains(&value_hash(briefing.text.as_bytes())));
+    let mut f = facts();
+    f.directions = line;
+    f.runtime = briefing.binding();
+    let prepared = prepare(f, &unknown()).unwrap();
+    let composed = format!("{}\n\n{}signed", briefing.text, prepared.payload());
+    assert_eq!(composed.matches("R-77").count(), 1);
+    // Verified, not asserted: a briefing without the staged text refuses.
+    let other = RuntimeBriefing {
+        text: "Beekeeper session briefing without the role.".into(),
+        transport: BootstrapTransport::SystemPrompt,
+    };
+    assert_eq!(
+        crate::continuity_collect::role_binding(Some("builder"), &role, &other, "cmd", "op"),
+        Err(Refusal::Unavailable)
+    );
+    let empty = RoleDefinition {
+        pack: None,
+        compose: None,
+        text: "  \n".into(),
+    };
+    assert_eq!(
+        crate::continuity_collect::role_binding(Some("builder"), &empty, &briefing, "cmd", "op"),
+        Err(Refusal::Unavailable)
+    );
+}
+
+#[test]
+fn continuity_block_states_the_enforced_split_and_the_deliberate_rule() {
+    let prepared = prepare(facts(), &unknown()).unwrap();
+    let payload = prepared.payload();
+    assert!(payload.contains(crate::continuity_bootstrap::AUDIENCE));
+    assert!(payload.contains("That split is enforced."));
+    assert!(payload.contains("is not filtered"));
 }

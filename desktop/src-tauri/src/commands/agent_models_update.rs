@@ -104,6 +104,14 @@ pub(in crate::commands) fn prospective_record(
             &agent_command,
             input.harness_override,
         );
+        // A deliberate pin of a known runtime's command is that runtime: keep
+        // the record's runtime with it, or every reader of `runtime` (the hire
+        // host routes by it) sees an agent that does not run (ledger 401).
+        if input.harness_override && input.runtime.is_none() {
+            if let Some(known) = crate::managed_agents::known_acp_runtime(&agent_command) {
+                record.runtime = Some(known.id.to_string());
+            }
+        }
     }
     if let Some(agent_args) = input.agent_args.clone() {
         record.agent_args = agent_args;

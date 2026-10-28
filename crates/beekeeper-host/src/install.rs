@@ -296,8 +296,13 @@ pub fn login_autostart(
 /// wrong to pass a fake home: writing a registration into a tree you nominate
 /// is exactly what these functions claim to do. Touching a different tree's
 /// service manager is the part that was never intended.
+///
+/// Compared against [`layout::os_home_dir`], not [`layout::home_dir`]: the
+/// second honours `BEEKEEPER_HOST_HOME`, so an isolated installation's
+/// temporary home compared equal to itself and its install booted out and
+/// replaced this user's real host (same label, same domain).
 fn home_is_ours(home: &Path) -> bool {
-    let Ok(ours) = layout::home_dir() else {
+    let Some(ours) = layout::os_home_dir() else {
         return false;
     };
     // Canonicalized where possible: a tempdir is `/var/folders/...` while its
@@ -954,7 +959,7 @@ mod tests {
         );
         // And the real one is recognised, or the guard would disable the
         // feature outright instead of protecting it.
-        let ours = layout::home_dir().expect("a home directory");
+        let ours = layout::os_home_dir().expect("a home directory");
         assert!(home_is_ours(&ours), "our own home must still activate");
         // Symlinked and unnormalised spellings of it too, or an install from a
         // path with a `..` in it would silently stop registering anything.
@@ -964,6 +969,65 @@ mod tests {
                     .expect("a home directory has a final component")
             )
         ));
+    }
+
+    /// An isolated host home (`BEEKEEPER_HOST_HOME`) is never this user's
+    /// service manager, for activation or deactivation.
+    ///
+    /// `home_is_ours` compared against `layout::home_dir()`, which returns the
+    /// override itself, so an install under a temporary home passed the guard
+    /// and `launchctl bootout` + `bootstrap` replaced the real host — the
+    /// label and the `gui/$UID` domain are the same whatever home is used.
+    ///
+    /// Run in a child process of this test binary, so the variable is set
+    /// for that process alone. The child asserts the guard before it calls
+    /// anything, so a regression panics there and never reaches `launchctl`.
+    #[test]
+    fn an_isolated_host_home_is_never_this_users_service_manager() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "install::tests::isolated_home_child",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(layout::HOME_VAR, dir.path())
+            .output()
+            .expect("run the child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// The child half of the test above; does nothing unless the parent set
+    /// the override, so `--include-ignored` alone cannot reach `launchctl`.
+    #[test]
+    #[ignore = "run by an_isolated_host_home_is_never_this_users_service_manager"]
+    fn isolated_home_child() {
+        let Some(isolated) = std::env::var_os(layout::HOME_VAR) else {
+            return;
+        };
+        let home = layout::home_dir().expect("the override resolves");
+        assert_eq!(home, std::path::PathBuf::from(isolated));
+        assert_ne!(
+            Some(home.canonicalize().expect("tempdir")),
+            layout::os_home_dir().and_then(|ours| ours.canonicalize().ok()),
+            "the override must not be this user's own home"
+        );
+        assert!(
+            !home_is_ours(&home),
+            "an isolated home passed the service-manager guard"
+        );
+        // Both directions return without acting once the guard holds.
+        let path = registration_path(Service::AgentHost, &home, Instance::Dev);
+        activate(Service::AgentHost, &path, Instance::Dev, &home).expect("no-op");
+        deactivate(Service::AgentHost, &path, Instance::Dev, &home);
+        assert!(daemon_lookup_user(Service::AgentHost, &home).is_none());
     }
 
     /// A registration on disk that the service manager does not have loaded.

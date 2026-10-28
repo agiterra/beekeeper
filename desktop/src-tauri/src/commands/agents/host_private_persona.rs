@@ -189,6 +189,26 @@ fn read_original_source_pin(
     )
 }
 
+/// Why the actor's pin does not authorize this definition, if it does not.
+/// The rule is unchanged; the unpinned case only says so instead of claiming
+/// a difference nobody recorded (ledger 399).
+fn pinned_source_refusal(
+    coordinate: &str,
+    id: &str,
+    pinned: Option<&str>,
+    hash: &str,
+) -> Option<&'static str> {
+    match pinned {
+        Some(source) if source != hash => Some(
+            "private persona differs from the pinned source; reconcile the definition explicitly before updating execution",
+        ),
+        None if coordinate != id => Some(
+            "this agent's definition was never pinned; reconcile it explicitly (a role agent: reinstall its role packs) before updating execution",
+        ),
+        _ => None,
+    }
+}
+
 /// Attach only after the original source/configuration CAS has succeeded.
 /// Retry reuses exact locally retained/cached signed bytes; the shared writer binds30177.
 pub(crate) fn attach_private_persona(
@@ -255,13 +275,10 @@ pub(crate) fn attach_private_persona_definition(
     let hash = persona_content_hash(&projection);
     // Internal IDs (for example builtin:fizz) are not NIP-AP coordinates.
     // A mapped coordinate is authorized only by an affirmative pinned hash.
-    if (d != id && record.persona_source_version.as_deref() != Some(hash.as_str()))
-        || record
-            .persona_source_version
-            .as_deref()
-            .is_some_and(|source| source != hash)
+    if let Some(refusal) =
+        pinned_source_refusal(&d, id, record.persona_source_version.as_deref(), &hash)
     {
-        return Err("private persona differs from the pinned source; reconcile the definition explicitly before updating execution".into());
+        return Err(refusal.into());
     }
     // A content-addressed protected pin is immutable across operation retries.
     // It does not modify original importer stages or public retention/publication.
@@ -319,6 +336,22 @@ pub(crate) fn attach_private_persona_definition(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_unpinned_mapped_definition_is_refused_as_unpinned_not_as_different() {
+        let hash = "a".repeat(64);
+        let other = "b".repeat(64);
+        let unpinned = pinned_source_refusal("builder", "crew-role:builder", None, &hash);
+        assert!(unpinned.is_some_and(|text| text.contains("never pinned")));
+        assert!(!unpinned.is_some_and(|text| text.contains("differs")));
+        let changed = pinned_source_refusal("builder", "crew-role:builder", Some(&other), &hash);
+        assert!(changed.is_some_and(|text| text.contains("differs from the pinned source")));
+        assert_eq!(
+            pinned_source_refusal("builder", "crew-role:builder", Some(&hash), &hash),
+            None
+        );
+        assert_eq!(pinned_source_refusal("fizz", "fizz", None, &hash), None);
+        assert!(pinned_source_refusal("fizz", "fizz", Some(&other), &hash).is_some());
+    }
     #[test]
     fn private_signer_projection_rejects_shared_wrong_owner_or_changed_content() {
         let keys = nostr::Keys::generate();

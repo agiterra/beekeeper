@@ -480,3 +480,29 @@ async fn turn_checkpoint_first_turn_holds_the_prompt_for_a_slow_baseline() {
         "a command still ends it at once"
     );
 }
+
+/// A split generation's checkpoint stays rewindable but carries no tool-output
+/// names: a file a model named after a private value is withheld and counted.
+#[test]
+fn a_split_generations_checkpoint_withholds_names_and_keeps_its_trees() {
+    let base = oid('b');
+    let mut payload = checkpoint_payload(
+        &captured(
+            Some(&base),
+            vec![changed("notes/C4B-1f2e3d.txt"), changed("a.rs")],
+            3,
+        ),
+        None,
+    );
+    crate::private_output::withhold_checkpoint_detail(&mut payload);
+    encodes(&payload);
+    let encoded = encode_coding_session_checkpoint(&payload).unwrap();
+    assert!(!encoded.contains("C4B-1f2e3d") && !encoded.contains("a.rs"));
+    assert!(payload.files.is_empty());
+    assert_eq!(payload.files_not_listed, 5);
+    assert!(payload.restorable, "rewind still names it");
+    let git = payload.git.expect("git");
+    assert_eq!(git.base_tree.as_deref(), Some(base.as_str()));
+    assert_eq!(git.tree, oid('a'));
+    assert_eq!(git.branch, None);
+}

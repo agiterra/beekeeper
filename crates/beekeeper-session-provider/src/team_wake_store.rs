@@ -647,6 +647,22 @@ impl WakeIntentStore {
             .filter_map(|channel| channel.refusal.as_ref().map(|_| channel.channel_ref))
     }
 
+    /// The event each captured terminal wake cites, for `channel_ref`.
+    #[cfg(test)]
+    pub fn terminal_event_ids(&self, channel_ref: Uuid) -> Vec<String> {
+        self.channel_index(channel_ref)
+            .map(|index| {
+                let channel = &self.channels[index];
+                channel
+                    .terminals
+                    .iter()
+                    .chain(channel.in_flight.iter())
+                    .map(|intent| intent.source.event_id().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     #[cfg(test)]
     pub fn channel_counts(&self, channel_ref: Uuid) -> (usize, usize, usize, usize) {
         self.channel_index(channel_ref)

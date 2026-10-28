@@ -121,6 +121,21 @@ export function AgentsView() {
       ) ?? null
     );
   }, [agents.managedAgents, selectedDirectoryRow]);
+  // The agent whose own settings (provider, model…) are open. Kept apart from
+  // the definition editor "Edit" opens: a role agent's provider lives on the
+  // agent, not on the role definition it shares.
+  const [settingsAgentPubkey, setSettingsAgentPubkey] = React.useState<
+    string | null
+  >(null);
+  const settingsAgent = React.useMemo(
+    () =>
+      settingsAgentPubkey === null
+        ? null
+        : (agents.managedAgents.find(
+            (agent) => normalizePubkey(agent.pubkey) === settingsAgentPubkey,
+          ) ?? null),
+    [agents.managedAgents, settingsAgentPubkey],
+  );
   const selectedEditablePersona = React.useMemo(() => {
     if (!selectedManagedAgent?.personaId) return null;
     return (
@@ -466,6 +481,16 @@ export function AgentsView() {
                   personas.openEdit(selectedEditablePersona);
                 }
               }}
+              onEditSettings={
+                selectedManagedAgent
+                  ? () => setSettingsAgentPubkey(selectedDirectoryRow.pubkey)
+                  : undefined
+              }
+              roleSourceState={
+                selectedManagedAgent?.homeRole
+                  ? selectedManagedAgent.personaSourceState
+                  : null
+              }
               onRestart={() => {
                 void agents.handleRestart(selectedDirectoryRow.pubkey);
               }}
@@ -517,6 +542,24 @@ export function AgentsView() {
             }
           }}
           open={agents.agentToAddToChannel !== null}
+        />
+      ) : null}
+      {settingsAgent ? (
+        <AgentDialog
+          agent={settingsAgent}
+          mode="instance-edit"
+          onEditLinkedPersona={
+            selectedEditablePersona
+              ? () => {
+                  setSettingsAgentPubkey(null);
+                  personas.openEdit(selectedEditablePersona);
+                }
+              : undefined
+          }
+          onOpenChange={(open) => {
+            if (!open) setSettingsAgentPubkey(null);
+          }}
+          open
         />
       ) : null}
       {personas.personaDialogState ? (

@@ -93,10 +93,28 @@ static NEST_DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new
 /// when the Tauri app-data directory name starts with `"io.agiterra.beekeeper.app.dev"`.
 /// Pass `false` for production (signed DMG) builds.
 pub fn init_nest_dir(is_dev: bool) {
-    let suffix = if is_dev { NEST_DIR_DEV } else { NEST_DIR_PROD };
     // Explicit workspace scope is independent of HOME and the OS Keychain.
     // Candidate bundles can isolate the shared nest even on Finder launch.
-    let path = match std::env::var_os("BEEKEEPER_NEST_ROOT") {
+    let path = resolve_nest_root(
+        std::env::var_os("BEEKEEPER_NEST_ROOT"),
+        is_dev,
+        dirs::home_dir(),
+    );
+    // set() is a no-op when already initialized, which is correct: only the
+    // first call (at boot, before any filesystem work) should win.
+    let _ = NEST_DIR.set(path);
+}
+
+/// The nest root for an explicit `BEEKEEPER_NEST_ROOT` (`override_root`), else
+/// the instance's default under `home`. A relative override refuses (`None`)
+/// rather than falling back into another scope.
+pub(crate) fn resolve_nest_root(
+    override_root: Option<std::ffi::OsString>,
+    is_dev: bool,
+    home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let suffix = if is_dev { NEST_DIR_DEV } else { NEST_DIR_PROD };
+    match override_root {
         Some(root) => {
             let root = PathBuf::from(root);
             if root.is_absolute() {
@@ -108,11 +126,8 @@ pub fn init_nest_dir(is_dev: bool) {
                 None
             }
         }
-        None => dirs::home_dir().map(|h| h.join(suffix)),
-    };
-    // set() is a no-op when already initialized, which is correct: only the
-    // first call (at boot, before any filesystem work) should win.
-    let _ = NEST_DIR.set(path);
+        None => home.map(|h| h.join(suffix)),
+    }
 }
 
 /// Returns the explicit `BEEKEEPER_NEST_ROOT`, or the default nest root
@@ -697,6 +712,9 @@ pub fn try_regenerate_nest(app: &AppHandle) {
     }
 }
 
+#[cfg(test)]
+#[path = "nest/root_tests.rs"]
+mod root_tests;
 #[cfg(test)]
 mod tests;
 

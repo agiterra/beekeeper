@@ -796,3 +796,15 @@ export function computeLocalModeGate({
       missingNormalizedFields.length === 0 && missingEnvKeys.length === 0,
   };
 }
+
+/** The definition editor's provider choices: every named provider, then Custom. */
+export function buildProviderDropdownOptions(
+  providerOptions: ReadonlyArray<{ id: string; label: string }>,
+): PersonaDropdownOption[] {
+  return [
+    ...providerOptions
+      .filter((option) => option.id.trim().length > 0)
+      .map((option) => ({ label: option.label, value: option.id })),
+    { label: "Custom provider...", value: CUSTOM_PROVIDER_DROPDOWN_VALUE },
+  ];
+}

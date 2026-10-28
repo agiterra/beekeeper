@@ -264,7 +264,13 @@ impl crate::Provider {
             return Err(Refusal::Unavailable);
         }
         let mut source_ids = vec![request.command_id.clone()];
-        let mut directions = if record.role.is_some() || record.pack_ref.is_some() {
+        // The block binds to the briefing this execution's adapter was given,
+        // measured on its own bound; it never carries a second copy of it.
+        let runtime = request
+            .runtime_briefing
+            .as_ref()
+            .ok_or(Refusal::Unavailable)?;
+        let directions = if record.role.is_some() || record.pack_ref.is_some() {
             if !crate::commands::operator_may_steer(&record, operator) {
                 return Err(Refusal::Unavailable);
             }
@@ -291,7 +297,13 @@ impl crate::Provider {
                 )
                 .await?,
             );
-            format!("Authorized staged role {}. Pack revision: {}. Composition revision: {}.\n{}\nCurrent authenticated command {} by {} (authorized coordination; human authorship is not inferred).",record.role.as_deref().unwrap_or("none"),serde_json::to_string(&role.pack).map_err(|_|Refusal::Unavailable)?,serde_json::to_string(&role.compose).map_err(|_|Refusal::Unavailable)?,role.text,request.command_id,operator)
+            role_binding(
+                record.role.as_deref(),
+                role,
+                runtime,
+                &request.command_id,
+                operator,
+            )?
         } else {
             if !self
                 .conversation_author_allowed(actor, record.channel_id, operator, None)
@@ -313,10 +325,6 @@ impl crate::Provider {
                 .map_err(|_| Refusal::Unavailable)?
                 .ok_or(Refusal::Unavailable)?
         };
-        if let Some(preface) = &request.runtime_preface {
-            directions.push_str("\nRequired runtime context:\n");
-            directions.push_str(preface);
-        }
         let work = self
             .assignment_work_brief(&request.target, &request.command_id, &request.text)
             .await
@@ -346,8 +354,29 @@ impl crate::Provider {
             checkpoint: request.checkpoint.clone(),
             read_at: knowledge.read_at,
             source_ids,
+            runtime: runtime.binding(),
         };
         let mut prepared = crate::continuity_bootstrap::prepare(facts, &knowledge)?;
+        // From here this generation holds private continuity: its automatic
+        // output is split before the first private prompt can be sent, and a
+        // channel that cannot be opened and verified refuses the turn rather
+        // than publishing anything in the shared one.
+        let rest = self
+            .rest_client
+            .clone()
+            .ok_or(Refusal::PrivateDeliveryUnavailable)?;
+        let owner_hex = custody.owner.to_hex();
+        let opened = crate::private_output::bind_channel(
+            &rest,
+            self.relay_self.as_deref(),
+            &self.pubkey_hex,
+            actor,
+            &owner_hex,
+        )
+        .await;
+        let channel =
+            self.record_private_output(&record.session_id, record.generation, owner_hex, opened)?;
+        tracing::info!(target: "csp::continuity", session = %record.session_id, generation = record.generation, %channel, "automatic output split: full detail to the owner-private channel");
         let binding = crate::continuity_archive::Binding::for_record(
             &record,
             &self.config.instance_id,
@@ -380,6 +409,35 @@ impl crate::Provider {
 }
 
 impl crate::Provider {
+    /// Persist the split an opened owner-private channel makes, or refuse.
+    /// Either failure — the channel could not be opened and verified, or the
+    /// split could not be made durable — is a refusal before any prompt, so
+    /// nothing private is sent while output would still go to the shared
+    /// channel.
+    pub(crate) fn record_private_output(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        owner: String,
+        opened: Result<uuid::Uuid, crate::private_output::BindFailure>,
+    ) -> Result<uuid::Uuid, Refusal> {
+        let channel = opened.map_err(|failure| {
+            tracing::warn!(target: "csp::continuity", session = %session_id, ?failure, "owner-private output channel unavailable");
+            Refusal::PrivateDeliveryUnavailable
+        })?;
+        self.state
+            .bind_private_output(
+                session_id,
+                crate::private_output::PrivateOutput {
+                    channel,
+                    owner,
+                    from_generation: generation,
+                },
+            )
+            .map_err(|_| Refusal::PrivateDeliveryUnavailable)?;
+        Ok(channel)
+    }
+
     pub(crate) async fn resolve_continuity_event(
         &mut self,
         event: crate::session::SessionEvent,
@@ -398,6 +456,37 @@ impl crate::Provider {
             other => other,
         }
     }
+}
+
+/// The directions line for a staged role: revisions and a digest binding to
+/// the definition the runtime briefing actually carries, never a second copy.
+/// Verified, not asserted: a definition absent from those exact bytes refuses.
+pub(crate) fn role_binding(
+    role_slug: Option<&str>,
+    role: &crate::continuity_delivery::RoleDefinition,
+    runtime: &crate::continuity_delivery::RuntimeBriefing,
+    command_id: &str,
+    operator: &str,
+) -> Result<String, Refusal> {
+    let definition = role.text.trim();
+    if definition.is_empty() || !runtime.text.contains(definition) {
+        return Err(Refusal::Unavailable);
+    }
+    Ok(format!(
+        "Authorized staged role {}. Pack revision: {}. Composition revision: {}.\n\
+         Role definition: {} UTF-8 bytes, sha256 {}, verified present in the runtime briefing \
+         (sha256 {}); it is not repeated here.\n\
+         Current authenticated command {} by {} (authorized coordination; human authorship is \
+         not inferred).",
+        role_slug.unwrap_or("none"),
+        serde_json::to_string(&role.pack).map_err(|_| Refusal::Unavailable)?,
+        serde_json::to_string(&role.compose).map_err(|_| Refusal::Unavailable)?,
+        definition.len(),
+        value_hash(definition.as_bytes()),
+        runtime.binding().digest,
+        command_id,
+        operator
+    ))
 }
 
 /// Read current project source and relay-signed ref state, rather than treating

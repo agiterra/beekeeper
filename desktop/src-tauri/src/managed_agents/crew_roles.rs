@@ -119,7 +119,7 @@ pub const NO_ROLE_SKIP_REASON: &str = "no persona in this pack declares a role, 
 
 /// Prefix of every definition id the installer mints. Namespaced so a crew role
 /// can never collide with a persona the user authored.
-const CREW_ROLE_ID_PREFIX: &str = "crew-role:";
+pub(crate) const CREW_ROLE_ID_PREFIX: &str = "crew-role:";
 
 /// One persona, in one pack on this computer, that declares a role.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -768,6 +768,7 @@ fn install_role_packs_for_team(
                 .unwrap_or_else(|| now.to_string()),
             updated_at: now.to_string(),
         };
+        let source_version = super::persona_events::persona_snapshot(&definition).source_version;
         match definitions.iter_mut().find(|def| def.id == persona_id) {
             Some(slot) => *slot = definition,
             None => definitions.push(definition),
@@ -824,6 +825,11 @@ fn install_role_packs_for_team(
         record.home_role = Some(pack.role.clone());
         record.persona_team_dir = Some(pack.dir.clone());
         record.persona_name_in_team = Some(pack.persona_name.clone());
+        // The install is the binding: pin the definition it just wrote, as a
+        // linked create does. `crew-role:<slug>` is not a NIP-AP coordinate,
+        // so without the pin the private-persona guard refuses every
+        // enrollment and execution update, and readiness reads SourceUnknown.
+        record.persona_source_version = Some(source_version);
         record.created_at = created_at;
         record.updated_at = now.to_string();
         if let Some(previous) = existing.as_ref() {

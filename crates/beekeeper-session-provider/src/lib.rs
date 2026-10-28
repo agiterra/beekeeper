@@ -111,6 +111,7 @@ pub mod pending_completion;
 mod presence;
 mod preview_grant;
 mod price_table;
+mod private_output;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
@@ -1058,6 +1059,8 @@ pub struct Provider {
     /// which is exactly the "not checked" outcome the honesty contract
     /// already models, so no session ever waits on it.
     rest_client: Option<RestClient>,
+    /// Per-session shared-twin state for split generations ([`private_output`]).
+    private_twins: HashMap<String, private_output::TwinState>,
     /// The one subscription to deletions of projects with open executions
     /// ([`project_deletion`]), and its queue for the run loop.
     project_deletion_listener: Option<project_deletion::ProjectDeletionListener>,
@@ -1442,6 +1445,7 @@ impl Provider {
             git_reachability: HashMap::new(),
             recorded_redactions: HashMap::new(),
             rest_client: None,
+            private_twins: HashMap::new(),
             project_deletion_listener: None,
             project_deletion_events: None,
             project_heads: HashMap::new(),
@@ -6710,7 +6714,7 @@ impl Provider {
                     );
                     let elapsed = u64::try_from(now_ms().saturating_sub(open_turn.started_at_ms))
                         .unwrap_or_default();
-                    self.enqueue_transcript(
+                    self.enqueue_routed_transcript(
                         record.channel_id,
                         &target,
                         Some(&open_turn.turn_id),
@@ -7415,9 +7419,18 @@ impl Provider {
             // Filled from the last bounded worktree observation, or left null
             // when the cwd is not a repository, sits on a detached HEAD, or was
             // never successfully observed.
+            //
+            // A branch name is the agent's choice of words, so a generation
+            // whose automatic output is split withholds it here; its owner
+            // reads it in the private channel (`branch_observed`).
             branch: self
                 .git_probes
                 .get(&target.session_id)
+                .filter(|_| {
+                    self.state
+                        .private_output(&target.session_id, target.generation)
+                        .is_none()
+                })
                 .and_then(|observed| observed.branch.clone()),
             // `threadSteer` is the one capability that is a fact about *this*
             // execution rather than about the driver: what the process behind
@@ -9025,13 +9038,37 @@ impl Provider {
         item: serde_json::Value,
         priority: Priority,
     ) -> anyhow::Result<Option<(u64, String)>> {
+        let Some(event_seq) = self.state.allocate_seq(&target.session_id)? else {
+            return Ok(None);
+        };
+        let event_id = self.enqueue_transcript_at(
+            channel_id,
+            target,
+            event_seq,
+            turn_id,
+            item,
+            priority,
+            TranscriptCopy::Shared,
+        )?;
+        Ok(Some((event_seq, event_id)))
+    }
+
+    /// Queue one already-sequenced transcript item into `channel_id`.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_transcript_at(
+        &mut self,
+        channel_id: Uuid,
+        target: &CodingSessionTarget,
+        event_seq: u64,
+        turn_id: Option<&str>,
+        item: serde_json::Value,
+        priority: Priority,
+        copy: TranscriptCopy,
+    ) -> anyhow::Result<String> {
         let workspace_root = self
             .state
             .session(&target.session_id)
             .map(|record| record.cwd.clone());
-        let Some(event_seq) = self.state.allocate_seq(&target.session_id)? else {
-            return Ok(None);
-        };
         let timestamp = now_ms();
         // Measure the envelope around an empty item, then shrink the item to
         // whatever is left. Doing it here rather than in the translator keeps the
@@ -9055,7 +9092,10 @@ impl Provider {
             None => transcript::fit_item_recording(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES),
         };
         self.record_redactions(&target.session_id, &redactions, timestamp);
-        self.conversation_transcript(target, event_seq, &item)?;
+        // Only what teammates may read is mirrored into a conversation reply.
+        if copy == TranscriptCopy::Shared {
+            self.conversation_transcript(target, event_seq, &item)?;
+        }
         let envelope = TranscriptEnvelope::new(target, event_seq, timestamp, turn_id, item);
         let content = serde_json::to_string(&envelope)?;
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?
@@ -9070,13 +9110,86 @@ impl Provider {
         } else {
             priority
         };
-        self.outbox.enqueue(
-            KIND_CODING_SESSION_TRANSCRIPT,
-            &coding_session_transcript_semantic_key(target, event_seq),
+        let key = coding_session_transcript_semantic_key(target, event_seq);
+        let key = match copy {
+            TranscriptCopy::Shared => key,
+            // The same sequence in another channel is another event.
+            TranscriptCopy::OwnerPrivate => format!("owner-private|{key}"),
+        };
+        self.outbox
+            .enqueue(KIND_CODING_SESSION_TRANSCRIPT, &key, priority, event)?;
+        Ok(event_id)
+    }
+
+    /// Queue `item` for a generation whose automatic output is split: the full
+    /// item to the owner-private channel and, when it has one, its
+    /// deterministic twin to the shared channel, both at one sequence number.
+    fn enqueue_split_transcript(
+        &mut self,
+        shared: Uuid,
+        private: Uuid,
+        target: &CodingSessionTarget,
+        turn_id: Option<&str>,
+        item: serde_json::Value,
+        priority: Priority,
+    ) -> anyhow::Result<Option<(u64, Option<String>)>> {
+        let twin = self
+            .private_twins
+            .entry(target.session_id.clone())
+            .or_default()
+            .twin(&item);
+        let Some(event_seq) = self.state.allocate_seq(&target.session_id)? else {
+            return Ok(None);
+        };
+        self.enqueue_transcript_at(
+            private,
+            target,
+            event_seq,
+            turn_id,
+            item,
             priority,
-            event,
+            TranscriptCopy::OwnerPrivate,
         )?;
-        Ok(Some((event_seq, event_id)))
+        let shared_id = match twin {
+            Some(twin) => Some(self.enqueue_transcript_at(
+                shared,
+                target,
+                event_seq,
+                turn_id,
+                twin,
+                priority,
+                TranscriptCopy::Shared,
+            )?),
+            None => None,
+        };
+        Ok(Some((event_seq, shared_id)))
+    }
+
+    /// Queue an item of a generation's automatic output wherever its session
+    /// puts it: split ([`Self::enqueue_split_transcript`]) once the generation
+    /// was admitted private continuity, else into `channel_id` as before.
+    /// Returns the sequence and the id of the event teammates can read, which
+    /// a split item without a twin does not have.
+    fn enqueue_routed_transcript(
+        &mut self,
+        channel_id: Uuid,
+        target: &CodingSessionTarget,
+        turn_id: Option<&str>,
+        item: serde_json::Value,
+        priority: Priority,
+    ) -> anyhow::Result<Option<(u64, Option<String>)>> {
+        match self
+            .state
+            .private_output(&target.session_id, target.generation)
+            .map(|p| p.channel)
+        {
+            Some(private) => {
+                self.enqueue_split_transcript(channel_id, private, target, turn_id, item, priority)
+            }
+            None => Ok(self
+                .enqueue_transcript_with_id(channel_id, target, turn_id, item, priority)?
+                .map(|(seq, id)| (seq, Some(id)))),
+        }
     }
 
     /// Note the recoverable redactions this item carried, for this host only.
@@ -9339,7 +9452,22 @@ impl Provider {
                 reason,
             } => {
                 if let Some((channel, target)) = self.locate(&session_id) {
-                    let receipt = LifecycleReceipt::turn_refused(&command_id, &target, reason.code(), "required private continuity could not be delivered; no prompt was submitted");
+                    let message = match reason.overflow() {
+                        Some(overflow) => format!(
+                            "required private continuity could not be delivered: {overflow}; \
+                             nothing was truncated and no prompt was submitted"
+                        ),
+                        None => "required private continuity could not be delivered; no prompt \
+                                 was submitted"
+                            .to_owned(),
+                    };
+                    tracing::warn!(target: "csp::continuity", %session_id, %command_id, code = reason.code(), "{message}");
+                    let receipt = LifecycleReceipt::turn_refused(
+                        &command_id,
+                        &target,
+                        reason.code(),
+                        &message,
+                    );
                     self.refuse_with_staged_answer(channel, &command_id, &receipt, None)?;
                 }
             }
@@ -9612,7 +9740,10 @@ impl Provider {
                     self.runtime_executes_remotely(&session_id),
                 );
                 let terminal_at_ms = now_ms();
-                let terminal = self.enqueue_transcript_with_id(
+                // The adapter's own failure text is automatic output: a split
+                // generation's full result goes to its owner, teammates read
+                // the twin, and a team wake cites the event they can read.
+                let terminal = self.enqueue_routed_transcript(
                     channel_id,
                     &target,
                     Some(&turn_id),
@@ -9630,7 +9761,7 @@ impl Provider {
                     );
                 }
                 if let (
-                    Some((_, terminal_event_id)),
+                    Some((_, Some(terminal_event_id))),
                     Some((scope, actor, role, caused_by_command_id, source_target, prompt_at_ms)),
                 ) = (terminal, team_terminal)
                 {
@@ -9705,13 +9836,15 @@ impl Provider {
                         self.publish_gate_start(&session_id, channel_id, close);
                     }
                     let coverage = turn_checkpoint::CoverageItem::of(&item);
-                    let seq = self.enqueue_transcript(
-                        channel_id,
-                        &target,
-                        Some(&turn_id),
-                        item,
-                        Priority::Normal,
-                    )?;
+                    let seq = self
+                        .enqueue_routed_transcript(
+                            channel_id,
+                            &target,
+                            Some(&turn_id),
+                            item,
+                            Priority::Normal,
+                        )?
+                        .map(|(seq, _)| seq);
                     self.note_checkpoint_coverage(&session_id, &turn_id, coverage, seq);
                 }
             }
@@ -9719,10 +9852,32 @@ impl Provider {
                 session_id,
                 observed,
             } => {
-                let Some((channel_id, _target)) = self.locate(&session_id) else {
+                let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
-                self.publish_observed_gate_row(&session_id, channel_id, observed)?;
+                // A gate row carries the exact command line and its summary,
+                // both tool payload: a split generation's full row is
+                // owner-private, and the shared channel keeps the provider's
+                // facts only when the command is a fixed one
+                // ([`private_output::shared_gate_row`]).
+                match self
+                    .state
+                    .private_output(&session_id, target.generation)
+                    .map(|p| p.channel)
+                {
+                    Some(private) => {
+                        let shared = private_output::shared_gate_row(&observed.row);
+                        self.publish_observed_gate_row(&session_id, private, observed)?;
+                        if let Some(row) = shared {
+                            self.publish_observed_gate_row(
+                                &session_id,
+                                channel_id,
+                                gate_observer::ObservedGateRow { row },
+                            )?;
+                        }
+                    }
+                    None => self.publish_observed_gate_row(&session_id, channel_id, observed)?,
+                }
             }
             SessionEvent::SteerResolved {
                 session_id,
@@ -9847,7 +10002,33 @@ impl Provider {
                 command_id,
                 outcome,
             } => self.fold_model_switch(&session_id, &command_id, outcome)?,
-            SessionEvent::Exited { session_id, reason } => {
+            SessionEvent::Exited {
+                session_id,
+                instance,
+                reason,
+            } => {
+                // A predecessor joined for a rewind, restart or in-place
+                // reopen queues this report before the join returns, and the
+                // loop may fold it only after a successor attached under the
+                // same session id. It speaks for an actor that is no longer
+                // registered: everything below is keyed by session id and
+                // would end the successor instead (ledger 387(a)). With no
+                // handle registered the report is still the current truth.
+                if let Some(current) = self
+                    .sessions
+                    .handle(&session_id)
+                    .map(session::SessionHandle::instance)
+                    .filter(|current| *current != instance)
+                {
+                    tracing::info!(
+                        target: "csp",
+                        %session_id,
+                        reported = ?instance,
+                        registered = ?current,
+                        "ignored a superseded actor's exit: {reason:?}"
+                    );
+                    return Ok(());
+                }
                 // The process is gone and its mailbox with it. Turns it had
                 // taken custody of and not started are owed an answer, and they
                 // get a terminal one: `turn_dropped` / `NO_LIVE_EXECUTION`,
@@ -9957,7 +10138,32 @@ impl Provider {
                     reachable = ?reachability.map(|fact| fact.reachable),
                     "observed the session worktree"
                 );
+                // The branch a split generation's shared metadata withholds
+                // goes to its owner, once per change.
+                let owner_branch = observed.branch.clone().filter(|branch| {
+                    self.state
+                        .private_output(&session_id, target.generation)
+                        .is_some()
+                        && self
+                            .git_probes
+                            .get(&session_id)
+                            .and_then(|o| o.branch.as_ref())
+                            != Some(branch)
+                });
                 self.git_probes.insert(session_id.clone(), observed);
+                if let Some(branch) = owner_branch {
+                    self.enqueue_routed_transcript(
+                        channel_id,
+                        &target,
+                        None,
+                        serde_json::json!({
+                            "kind": "status",
+                            "status": BRANCH_OBSERVED_STATUS,
+                            "branch": branch,
+                        }),
+                        Priority::Normal,
+                    )?;
+                }
                 // Applied together with `git_probes`, under the same fence,
                 // so a commit change between probes can never leave a stale
                 // reachability claim behind: a fresh probe that observed no
@@ -11041,7 +11247,7 @@ impl Provider {
         if let (Some(code), Some(object)) = (error_code, item.as_object_mut()) {
             object.insert("errorCode".into(), serde_json::json!(code));
         }
-        let terminal = self.enqueue_transcript_with_id(
+        let terminal = self.enqueue_routed_transcript(
             record.channel_id,
             target,
             Some(&open_turn.turn_id),
@@ -11051,7 +11257,7 @@ impl Provider {
         if open_turn.team_wake_eligible {
             let vocabulary = team_wake::vocabulary_near(Some(&record.cwd));
             if let (
-                Some((_, terminal_event_id)),
+                Some((_, Some(terminal_event_id))),
                 Some(actor),
                 Some(role),
                 Some(session_ref),
@@ -12154,6 +12360,8 @@ mod tests {
     mod observed_gate_row_tests;
     #[path = "operation_fence_tests.rs"]
     mod operation_fence_tests;
+    #[path = "private_output_split_tests.rs"]
+    mod private_output_split_tests;
     #[path = "relay_restart_wire_tests.rs"]
     mod relay_restart_wire_tests;
     #[path = "relay_throttling_tests.rs"]
@@ -13239,6 +13447,18 @@ mod tests {
                 return;
             }
         }
+    }
+
+    /// The actor registered for `session_id`, as its own `Exited` would name
+    /// it; a fresh token when none is (the report is then folded as current).
+    pub(crate) fn registered_instance(
+        provider: &Provider,
+        session_id: &str,
+    ) -> session::ActorInstance {
+        provider.sessions.handle(session_id).map_or_else(
+            session::ActorInstance::next,
+            session::SessionHandle::instance,
+        )
     }
 
     /// Drain and record session reports until one satisfies `done`.
@@ -19993,6 +20213,7 @@ mod tests {
         provider
             .handle_session_event(session::SessionEvent::Exited {
                 session_id: record.session_id.clone(),
+                instance: registered_instance(&provider, &record.session_id),
                 reason: session::ExitReason::Idle,
             })
             .expect("fold the exit");
@@ -20064,6 +20285,7 @@ mod tests {
         provider
             .handle_session_event(session::SessionEvent::Exited {
                 session_id: record.session_id.clone(),
+                instance: registered_instance(&provider, &record.session_id),
                 reason: session::ExitReason::AgentGone("killed".into()),
             })
             .expect("fold the exit");
@@ -20590,6 +20812,7 @@ done
         provider
             .handle_session_event(session::SessionEvent::Exited {
                 session_id: record.session_id.clone(),
+                instance: registered_instance(&provider, &record.session_id),
                 reason: session::ExitReason::Idle,
             })
             .expect("fold the exit");
@@ -20654,6 +20877,7 @@ done
         provider
             .handle_session_event(session::SessionEvent::Exited {
                 session_id: record.session_id.clone(),
+                instance: registered_instance(&provider, &record.session_id),
                 reason: session::ExitReason::Idle,
             })
             .expect("fold the exit");
@@ -23983,4 +24207,15 @@ done
                 .thread_steer
         );
     }
+}
+
+/// Owner-private status slug naming the branch a split generation's shared
+/// metadata withholds ([`private_output`]).
+const BRANCH_OBSERVED_STATUS: &str = "branch_observed";
+
+/// Which copy of a transcript item is being queued.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TranscriptCopy {
+    Shared,
+    OwnerPrivate,
 }

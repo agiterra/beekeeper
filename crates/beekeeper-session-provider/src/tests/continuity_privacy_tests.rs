@@ -153,8 +153,9 @@ fn continuity_privacy_json_escaped_strings_keys_and_overlaps() {
 #[test]
 fn continuity_privacy_registration_is_atomic_bounded_and_lasts_across_turns() {
     let mut t = translator();
+    assert_eq!(super::MAX_CONTINUITY_FRAGMENT_BYTES, 32768);
     assert_eq!(
-        t.register_continuity_fragments(&["x".repeat(8193)]),
+        t.register_continuity_fragments(&["x".repeat(32769)]),
         Err(CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE)
     );
     let too_many: Vec<_> = (0..800).map(|i| format!("extra-private-{i}")).collect();
@@ -221,7 +222,8 @@ fn continuity_privacy_limits_count_utf8_bytes_and_reject_without_partial_additio
         .unwrap();
     let before = t.continuity.patterns.clone();
     assert_eq!(
-        t.register_continuity_fragments(&["new-fragment".into(), "é".repeat(4097)]),
+        // 16,385 characters but 32,770 bytes: over the byte bound.
+        t.register_continuity_fragments(&["new-fragment".into(), "é".repeat(16385)]),
         Err(CONTINUITY_PRIVATE_DELIVERY_UNAVAILABLE)
     );
     assert_eq!(t.continuity.patterns, before);
@@ -242,4 +244,27 @@ fn continuity_privacy_structured_scalar_and_buffer_debug_do_not_escape() {
     let wire = assert_private(items);
     assert!(!wire.contains("78235614"));
     assert!(!wire.contains(private_prefix));
+}
+
+/// Ledger 395: the admitted block is registered whole, so registration must
+/// accept every block the dynamic bound admits and every runtime-sized
+/// fragment. A literal 8192 refused the 11,324-byte canonical seat block after
+/// `prepare` had admitted it.
+#[test]
+fn continuity_registration_accepts_every_block_and_briefing_the_bounds_admit() {
+    use crate::continuity_bootstrap::{MAX_BOOTSTRAP_BYTES, MAX_RUNTIME_BRIEFING_BYTES};
+    let mut t = translator();
+    assert_eq!(
+        t.register_continuity_fragments(&["b".repeat(MAX_BOOTSTRAP_BYTES)]),
+        Ok(())
+    );
+    assert_eq!(
+        t.register_continuity_fragments(&["r".repeat(MAX_RUNTIME_BRIEFING_BYTES)]),
+        Ok(())
+    );
+    // The measured canonical block size registers too.
+    assert_eq!(
+        t.register_continuity_fragments(&["c".repeat(11324)]),
+        Ok(())
+    );
 }

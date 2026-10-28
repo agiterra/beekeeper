@@ -110,6 +110,24 @@
       "observed": "SV-54: failed under concurrent load in the checkpoints stage 1 affected run and in other worktrees' runs at the same time; not reproduced alone. A load flake, recorded so a gate reads it as known.",
       "ledger": "none yet: first recorded by SV-54 (plans/SESSION_VIEW_PARITY_PLAN.md)",
       "intermittent": true
+    },
+    {
+      "spec": "project-agents-repo.spec.ts",
+      "title": "a plan is read from main, drafted, previewed, badged, and refused when a newer head appears",
+      "line": 176,
+      "verifiedOn": "d16dbc95c",
+      "verifiedAt": "2026-10-28",
+      "observed": "Fails deterministically: the plan file opens in Edit with an empty editor and no preview (agents-repo-preview never shows the file text). 2 of 2 alone at four workers on candidate 14 and 2 of 2 on an untouched worktree of canonical main d16dbc95c (ls-remote 2026-10-28T22:34:24Z, Hive and GitHub mirror equal); failed in both full runs (smoke14c, smoke15). Not caused by the landing that records it.",
+      "ledger": "404"
+    },
+    {
+      "spec": "project-agents-repo.spec.ts",
+      "title": "the commit dialog prints a stale-base refusal verbatim, then a landing, and marks the drafts committed",
+      "line": 358,
+      "verifiedOn": "d16dbc95c",
+      "verifiedAt": "2026-10-28",
+      "observed": "Fails deterministically: the plan file opens in Edit with an empty editor and no preview (agents-repo-preview never shows the file text). 2 of 2 alone at four workers on candidate 14 and 2 of 2 on an untouched worktree of canonical main d16dbc95c (ls-remote 2026-10-28T22:34:24Z, Hive and GitHub mirror equal); failed in both full runs (smoke14c, smoke15). Not caused by the landing that records it.",
+      "ledger": "404"
     }
   ]
 }

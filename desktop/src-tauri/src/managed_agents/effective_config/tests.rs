@@ -1,6 +1,9 @@
 use super::*;
 use std::collections::BTreeMap;
 
+#[path = "override_runtime_tests.rs"]
+mod override_runtime;
+
 fn definition(
     id: &str,
     model: Option<&str>,

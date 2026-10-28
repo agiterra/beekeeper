@@ -176,6 +176,8 @@ export type MockManagedAgentSeed = {
   envVars?: Record<string, string>;
   /** The role this agent is, from its pack persona. */
   homeRole?: string | null;
+  /** Where its definition pin stands (ledger 401). */
+  personaSourceState?: "missing" | "current" | "diverged" | null;
   /** The project this agent belongs to, `30621:<owner>:<d>`; `null` = none. */
   projectRef?: string | null;
   /** Whether this computer holds the pack behind that role. */
@@ -1146,6 +1148,7 @@ type RawManagedAgent = {
   runtime: string | null;
   /** The role this agent is, from its pack persona. */
   home_role?: string | null;
+  persona_source_state?: "missing" | "current" | "diverged" | null;
   /** The project this agent belongs to (`30621:<owner>:<d>`), or `null`. */
   project_ref?: string | null;
   /** Whether this computer holds the pack behind that role. */
@@ -2155,6 +2158,7 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
     persona_id: agent.persona_id,
     runtime: agent.runtime ?? null,
     home_role: agent.home_role ?? null,
+    persona_source_state: agent.persona_source_state ?? null,
     project_ref: agent.project_ref ?? null,
     has_role_pack: agent.has_role_pack ?? false,
     pack_refused_shared_home: agent.pack_refused_shared_home ?? false,
@@ -2715,6 +2719,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     // must mirror the wire shape, not omit the key.
     runtime: seed.runtime ?? null,
     home_role: seed.homeRole ?? null,
+    persona_source_state: seed.personaSourceState ?? null,
     project_ref: seed.projectRef ?? null,
     has_role_pack: seed.hasRolePack ?? false,
     // The default a current build mints: its own nest, nothing refused.
@@ -14710,6 +14715,18 @@ export function maybeInstallE2eTauriMocks() {
           ...cloneManagedAgent(agent),
           rosterAdded: true,
           rosterError: null,
+        };
+      }
+      case "reapply_role_source": {
+        // The real command restores the role from its pack; the mock answers
+        // as if the definition carried nothing to move (ledger 401).
+        return {
+          moved: { runtime: null, model: null, provider: null },
+          cleared: [],
+          replaced: [],
+          recoveryCopy: "/mock/role-source-recovery/copy.json",
+          applied: null,
+          applyError: null,
         };
       }
       case "update_managed_agent":

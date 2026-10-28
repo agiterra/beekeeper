@@ -20,6 +20,7 @@ export function buildRuntimeModelProviderPayload({
   initialModel,
   initialProvider,
   initialModelProviderEditableWithoutRuntime,
+  lockedTo = null,
 }: {
   runtime: string;
   model: string;
@@ -30,11 +31,27 @@ export function buildRuntimeModelProviderPayload({
   initialModel: string | null | undefined;
   initialProvider: string | null | undefined;
   initialModelProviderEditableWithoutRuntime: boolean;
+  /**
+   * A role definition: restate exactly what it loaded. Its execution settings
+   * are per agent, and the backend refuses a change (ledger 401).
+   */
+  lockedTo?: {
+    runtime?: string | null;
+    model?: string | null;
+    provider?: string | null;
+  } | null;
 }): {
   runtime: string | undefined;
   model: string | undefined;
   provider: string | undefined;
 } {
+  if (lockedTo) {
+    return {
+      runtime: lockedTo.runtime ?? undefined,
+      model: lockedTo.model ?? undefined,
+      provider: lockedTo.provider ?? undefined,
+    };
+  }
   const trimmedRuntime = runtime.trim();
   const previousRuntime = initialPreviousRuntime;
   const isAutoSeededRuntimeForBuiltinEdit =

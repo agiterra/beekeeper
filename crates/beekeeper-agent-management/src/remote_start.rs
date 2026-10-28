@@ -103,12 +103,15 @@ pub async fn start_remote(
             channels: vec![args.channel],
             ..Default::default()
         };
-        let rows = crate::lifecycle::inventory(&scope, client).await?;
+        // One read per identical filter for this pre-publish inventory: an
+        // actor with history otherwise repeats them per row (ledger 403).
+        let reads = crate::read_cache::ReadCache::new(client);
+        let rows = crate::lifecycle::inventory(&scope, &reads).await?;
         let mut active = Vec::new();
         for row in rows {
             // Inventory remains actor-wide for uncertainty. A healthy DM
             // responsibility does not fulfill an explicit stream responsibility.
-            let terminal = crate::lifecycle::terminal(&row, client).await?;
+            let terminal = crate::lifecycle::terminal(&row, &reads).await?;
             if !terminal && row.channel_id == args.channel {
                 if row.provider_authority != args.provider_authority {
                     return Err(Error::Conflict(

@@ -83,15 +83,19 @@ export function HostManagementPanel({
     },
     [pubkey, client, onStatusChange],
   );
+  // The parent's controls follow this report: unknown while an action is
+  // pending, otherwise the last real read. Re-reading must not clear it: an
+  // identical answer keeps the same `data` reference (structural sharing), so
+  // nothing re-reported it and Start/Stop/Restart stayed disabled under a
+  // "Start" label (ledger 403). Every action re-validates on the backend.
   useEffect(() => {
     if (info && !managementPending) observed(info);
     else onStatusChange?.(undefined);
   }, [info, managementPending, observed, onStatusChange]);
   const refetch = query.refetch;
   useEffect(() => {
-    onStatusChange?.(undefined);
     if (!managementPending) void refetch();
-  }, [managementPending, refetch, onStatusChange]);
+  }, [managementPending, refetch]);
   async function refresh() {
     setError(null);
     try {

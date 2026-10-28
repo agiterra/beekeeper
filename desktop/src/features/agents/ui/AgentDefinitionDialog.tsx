@@ -8,6 +8,7 @@ import type {
   UpdatePersonaInput,
 } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
+import * as roleDefinition from "./roleDefinition";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { AgentCreationPreview } from "./AgentCreationPreview";
@@ -35,6 +36,7 @@ import {
   AUTO_PROVIDER_DROPDOWN_VALUE,
   BLOCK_BUILD_HIDDEN_PROVIDER_IDS,
   buildPersonaRuntimeDropdownOptions,
+  buildProviderDropdownOptions,
   CUSTOM_PROVIDER_DROPDOWN_VALUE,
   computeLocalModeGate,
   formatRuntimeOptionLabel,
@@ -187,6 +189,7 @@ export function AgentDefinitionDialog({
     [globalConfig.preferred_runtime, runtimes],
   );
   const isCreateMode = Boolean(initialValues && !("id" in initialValues));
+  const isRoleDefinition = roleDefinition.isRole(initialValues);
   const shouldReduceMotion = useReducedMotion();
   const initialModelProviderEditableWithoutRuntime = Boolean(
     initialValues &&
@@ -347,6 +350,7 @@ export function AgentDefinitionDialog({
       initialModel: initialValues.model,
       initialProvider: initialValues.provider,
       initialModelProviderEditableWithoutRuntime,
+      lockedTo: isRoleDefinition ? initialValues : null,
     });
     const namePool = parsePersonaNamePoolText(namePoolText);
     const namePoolInput =
@@ -585,15 +589,7 @@ export function AgentDefinitionDialog({
   const runtimeSummaryLabel = selectedRuntime
     ? formatRuntimeOptionLabel(selectedRuntime)
     : runtime.trim() || "Not configured";
-  const providerDropdownOptions: PersonaDropdownOption[] = [
-    ...providerOptions
-      .filter((option) => option.id.trim().length > 0)
-      .map((option) => ({
-        label: option.label,
-        value: option.id,
-      })),
-    { label: "Custom provider...", value: CUSTOM_PROVIDER_DROPDOWN_VALUE },
-  ];
+  const providerDropdownOptions = buildProviderDropdownOptions(providerOptions);
   const modelDropdownOptions: PersonaDropdownOption[] =
     buildModelDropdownOptions({
       allowCustom: !isRelayMesh,
@@ -809,7 +805,8 @@ export function AgentDefinitionDialog({
           </div>
         </div>
 
-        {modelFieldVisible ? (
+        <roleDefinition.Note show={isRoleDefinition} />
+        {modelFieldVisible && !isRoleDefinition ? (
           <AgentAiConfigurationModeField
             mode={aiConfigurationMode}
             needsProviderSelection={runtimeCanChooseLlmProvider}
@@ -818,7 +815,7 @@ export function AgentDefinitionDialog({
         ) : null}
 
         <div
-          className="space-y-5"
+          className={cn("space-y-5", isRoleDefinition && "hidden")}
           data-testid={`agent-${aiConfigurationMode}-configuration-section`}
         >
           {aiConfigurationMode === "custom" ? (
@@ -981,6 +978,7 @@ export function AgentDefinitionDialog({
               >
                 <PersonaAdvancedFields
                   afterRespondTo={isCreateMode ? createRunSection : undefined}
+                  hideBehavior={isRoleDefinition}
                   behaviorDraft={behaviorDraft}
                   disabled={isPending}
                   envVars={envVars}

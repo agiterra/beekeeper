@@ -48,6 +48,7 @@ export type RawManagedAgent = {
   model_source?: ManagedAgent["modelSource"];
   provider: string | null;
   persona_out_of_date: boolean;
+  persona_source_state?: "missing" | "current" | "diverged" | null;
   persona_orphaned: boolean;
   needs_restart: boolean;
   restart_diff?: RawRestartDiffEntry[];
@@ -107,6 +108,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     modelSource: agent.model_source ?? null,
     provider: agent.provider ?? null,
     personaOutOfDate: agent.persona_out_of_date ?? false,
+    personaSourceState: agent.persona_source_state ?? null,
     personaOrphaned: agent.persona_orphaned ?? false,
     needsRestart: agent.needs_restart ?? false,
     restartDiff: agent.restart_diff ?? [],

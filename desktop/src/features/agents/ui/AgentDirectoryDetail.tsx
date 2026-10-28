@@ -4,12 +4,15 @@ import { X } from "lucide-react";
 
 import type { AgentDirectoryRow } from "@/features/agents/lib/agentDirectoryModel";
 import { HostManagementPanel } from "./HostManagementPanel";
+import { RoleSourceNotice } from "./RoleSourceNotice";
 import type { ManagedAgentHostStatus } from "@/shared/api/tauriManagedAgents";
 import { Button } from "@/shared/ui/button";
 import {
   AGENT_DETAIL_CLOSE_TESTID,
   AGENT_DETAIL_CONTROLS_TESTID,
   AGENT_DETAIL_EDIT_TESTID,
+  AGENT_DETAIL_SETTINGS_LABEL,
+  AGENT_DETAIL_SETTINGS_TESTID,
   AGENT_DETAIL_INSTALLED_NO,
   AGENT_DETAIL_INSTALLED_YES,
   AGENT_DETAIL_NOT_MANAGED,
@@ -49,6 +52,8 @@ export function AgentDirectoryDetail({
   onRestart,
   onEdit,
   canEdit,
+  onEditSettings,
+  roleSourceState,
   isStartPending,
   isRestartPending,
   isPending,
@@ -61,6 +66,10 @@ export function AgentDirectoryDetail({
   onRestart: () => void;
   onEdit: () => void;
   canEdit: boolean;
+  /** Opens the agent's own settings; absent when this computer cannot edit them. */
+  onEditSettings?: () => void;
+  /** A role agent's pin, when it needs the explicit re-apply. */
+  roleSourceState?: "missing" | "current" | "diverged" | null;
   isStartPending: boolean;
   isRestartPending: boolean;
   isPending: boolean;
@@ -261,12 +270,26 @@ export function AgentDirectoryDetail({
             >
               Edit
             </Button>
+            {onEditSettings && !remote ? (
+              <Button
+                data-testid={AGENT_DETAIL_SETTINGS_TESTID}
+                disabled={isPending}
+                onClick={onEditSettings}
+                size="sm"
+                variant="outline"
+              >
+                {AGENT_DETAIL_SETTINGS_LABEL}
+              </Button>
+            ) : null}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             {AGENT_DETAIL_NOT_MANAGED}
           </p>
         )}
+        {roleSourceState && !remote ? (
+          <RoleSourceNotice pubkey={row.pubkey} state={roleSourceState} />
+        ) : null}
       </section>
       {row.isInstalled && canEdit && !remote ? (
         <HostManagementPanel
