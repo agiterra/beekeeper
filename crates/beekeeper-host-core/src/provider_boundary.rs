@@ -106,6 +106,9 @@ pub fn invoke_provider_at(
         "BUZZ_ACP_PRIVATE_KEY",
         "BEEKEEPER_AUTH_TAG",
         "BUZZ_AUTH_TAG",
+        // The file form wins over the variable, so it goes with it.
+        "BEEKEEPER_AUTH_TAG_FILE",
+        "BUZZ_AUTH_TAG_FILE",
     ] {
         cmd.env_remove(key);
     }

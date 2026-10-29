@@ -18,6 +18,8 @@ export NOSTR_PRIVATE_KEY=<hex-or-nsec>
 
 # Optional: NIP-OA owner attestation
 export BEEKEEPER_AUTH_TAG='["auth","<owner-pk>","<conditions>","<owner-sig>"]'
+# ...or a file holding it, read on every signature (wins over the variable)
+export BEEKEEPER_AUTH_TAG_FILE=/path/to/auth-tag.json
 
 # Commits are now automatically signed
 git commit -m "signed with nostr"

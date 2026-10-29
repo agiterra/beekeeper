@@ -138,6 +138,8 @@ pub(super) fn validate_record(
                     "BEEKEEPER_PRIVATE_KEY"
                         | "NOSTR_PRIVATE_KEY"
                         | "BEEKEEPER_AUTH_TAG"
+                        | "BEEKEEPER_AUTH_TAG_FILE"
+                        | "BUZZ_AUTH_TAG_FILE"
                         | "BEEKEEPER_CSP_PRIVATE_KEY"
                 )
             }) {

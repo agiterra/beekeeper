@@ -937,6 +937,7 @@ mod tests {
             "BEEKEEPER_PRIVATE_KEY",
             "BEEKEEPER_ACP_PRIVATE_KEY",
             "BEEKEEPER_AUTH_TAG",
+            "BEEKEEPER_AUTH_TAG_FILE",
             "BEEKEEPER_API_TOKEN",
             "BEEKEEPER_S3_ACCESS_KEY",
             "BEEKEEPER_S3_SECRET_KEY",
@@ -956,7 +957,12 @@ mod tests {
                 assert!(FENCE.covers(&spelling), "{spelling} escaped the fence");
             }
         }
-        for legacy in ["BUZZ_PRIVATE_KEY", "BUZZ_ACP_PRIVATE_KEY", "BUZZ_AUTH_TAG"] {
+        for legacy in [
+            "BUZZ_PRIVATE_KEY",
+            "BUZZ_ACP_PRIVATE_KEY",
+            "BUZZ_AUTH_TAG",
+            "BUZZ_AUTH_TAG_FILE",
+        ] {
             assert!(FENCE.covers(legacy), "{legacy} escaped the fence");
         }
     }

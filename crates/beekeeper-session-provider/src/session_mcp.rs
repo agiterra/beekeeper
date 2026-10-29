@@ -56,6 +56,7 @@ pub(super) fn servers(request: &CreateRequest) -> Result<Vec<McpServer>, AcpErro
                     "BEEKEEPER_RELAY_URL"
                         | "BEEKEEPER_PRIVATE_KEY"
                         | "BEEKEEPER_AUTH_TAG"
+                        | "BEEKEEPER_AUTH_TAG_FILE"
                         | "BEEKEEPER_ACP_DISPLAY_NAME"
                         | "HOME"
                         | "TMPDIR"

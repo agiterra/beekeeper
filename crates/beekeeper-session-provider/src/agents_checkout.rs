@@ -441,7 +441,11 @@ fn configure_scoped_git(cmd: &mut Command, args: &[&str], auth: Option<&ScopedGi
         for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
             cmd.env_remove(var);
         }
+        // The file form too: git-credential-nostr prefers it over the scoped
+        // tag set below.
         cmd.env_remove("BUZZ_AUTH_TAG")
+            .env_remove("BUZZ_AUTH_TAG_FILE")
+            .env_remove("BEEKEEPER_AUTH_TAG_FILE")
             .env_remove("BEEKEEPER_PRIVATE_KEY");
         cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
