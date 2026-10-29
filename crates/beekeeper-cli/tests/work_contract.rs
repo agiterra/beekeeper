@@ -23,6 +23,7 @@ fn bee(args: &[&str]) -> Output {
         // gate.
         .env_remove("BEEKEEPER_PRIVATE_KEY")
         .env_remove("BEEKEEPER_AUTH_TAG")
+        .env_remove("BEEKEEPER_AUTH_TAG_FILE")
         .env("BEEKEEPER_RELAY_URL", "http://127.0.0.1:1/")
         .args(args)
         .output()
@@ -35,6 +36,7 @@ fn bee_with_key(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_bee"))
         .env("BEEKEEPER_PRIVATE_KEY", "1".repeat(64))
         .env_remove("BEEKEEPER_AUTH_TAG")
+        .env_remove("BEEKEEPER_AUTH_TAG_FILE")
         .env("BEEKEEPER_RELAY_URL", "http://127.0.0.1:1/")
         .args(args)
         .output()

@@ -923,6 +923,7 @@ async fn a_result_needing_a_ref_read_defers_the_wake_off_the_loop() {
             base_url: "http://127.0.0.1:1".into(),
             keys: fixture.provider_keys.clone(),
             auth_tag_json: None,
+            auth_tag_source: None,
         });
 
     fixture

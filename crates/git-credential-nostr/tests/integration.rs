@@ -31,6 +31,9 @@ fn run_helper_with_args(
         .current_dir(std::env::temp_dir())
         .env_remove("NOSTR_PRIVATE_KEY")
         .env_remove("BEEKEEPER_AUTH_TAG")
+        .env_remove("BEEKEEPER_AUTH_TAG_FILE")
+        .env_remove("BUZZ_AUTH_TAG")
+        .env_remove("BUZZ_AUTH_TAG_FILE")
         .env_remove("GIT_CONFIG_COUNT")
         // Prevent git config on the test machine from supplying credentials.
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -187,6 +190,77 @@ fn includes_nip_oa_auth_tag_in_signed_event() {
             "",
             serde_json::from_str::<Vec<String>>(&auth_tag).unwrap()[3].as_str(),
         ]));
+}
+
+/// AGI-198: `BEEKEEPER_AUTH_TAG_FILE` wins over `BEEKEEPER_AUTH_TAG`, and is
+/// read by each invocation, so a renewal written between two git operations is
+/// what the second one signs. An unreadable file falls back to the env value
+/// and says so on stderr without printing the tag.
+#[test]
+fn auth_tag_file_wins_and_is_read_by_each_invocation() {
+    let agent_keys = Keys::generate();
+    let nsec = agent_keys.secret_key().to_bech32().unwrap();
+    let tag = |conditions: &str| {
+        serde_json::to_string(&["auth", &"ab".repeat(32), conditions, &"00".repeat(64)]).unwrap()
+    };
+    let signed_conditions = |out: &std::process::Output| {
+        assert!(
+            out.status.success(),
+            "helper failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let credential = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("credential="))
+            .expect("credential output");
+        let event: nostr::Event = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(credential)
+                .unwrap(),
+        )
+        .unwrap();
+        event
+            .tags
+            .iter()
+            .find(|t| t.as_slice().first().map(String::as_str) == Some("auth"))
+            .map(|t| t.as_slice()[2].clone())
+    };
+    let dir = std::env::temp_dir().join(format!("gcn-auth-tag-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("auth-tag.json");
+    let path_str = path.to_str().unwrap().to_owned();
+    let env_tag = tag("created_at<1");
+
+    std::fs::write(&path, format!("{}\n", tag("created_at<1900000000"))).unwrap();
+    let env = [
+        ("NOSTR_PRIVATE_KEY", nsec.as_str()),
+        ("BEEKEEPER_AUTH_TAG", env_tag.as_str()),
+        ("BEEKEEPER_AUTH_TAG_FILE", path_str.as_str()),
+    ];
+    let out = run_helper(&valid_input(), &env);
+    assert_eq!(
+        signed_conditions(&out).as_deref(),
+        Some("created_at<1900000000")
+    );
+
+    std::fs::write(&path, tag("created_at<1900014400")).unwrap();
+    let out = run_helper(&valid_input(), &env);
+    assert_eq!(
+        signed_conditions(&out).as_deref(),
+        Some("created_at<1900014400")
+    );
+
+    std::fs::remove_file(&path).unwrap();
+    let out = run_helper(&valid_input(), &env);
+    assert_eq!(signed_conditions(&out).as_deref(), Some("created_at<1"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains(&path_str), "{stderr}");
+    assert!(
+        !stderr.contains(&env_tag),
+        "the tag must never be printed: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A configured but malformed owner attestation must fail closed rather than

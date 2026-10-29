@@ -143,12 +143,14 @@ fn emit_runtime_lifecycle(
 /// Resolve the agent's owner pubkey at startup.
 ///
 /// Priority:
-/// 1. `BEEKEEPER_AUTH_TAG` env var — NIP-OA attestation signed by the owner.
-///    Verified against the agent's own pubkey to extract the owner pubkey.
+/// 1. `BEEKEEPER_AUTH_TAG_FILE` / `BEEKEEPER_AUTH_TAG` — NIP-OA attestation
+///    signed by the owner. Verified against the agent's own pubkey to extract
+///    the owner pubkey. A renewal keeps the owner, so reading it once here is
+///    enough.
 /// 2. `--agent-owner` CLI flag / `BEEKEEPER_ACP_AGENT_OWNER` env var.
 fn resolve_agent_owner(config: &Config) -> Option<String> {
-    // Try BEEKEEPER_AUTH_TAG first (NIP-OA attestation).
-    if let Ok(auth_tag) = std::env::var("BEEKEEPER_AUTH_TAG") {
+    // Try the NIP-OA attestation first (file, else BEEKEEPER_AUTH_TAG).
+    if let Some(auth_tag) = beekeeper_core::auth_tag_source::current_auth_tag() {
         if !auth_tag.is_empty() {
             let agent_pk = config.keys.public_key();
             match beekeeper_sdk::nip_oa::verify_auth_tag(&auth_tag, &agent_pk) {
@@ -2284,16 +2286,18 @@ async fn tokio_main() -> Result<()> {
 
     let pubkey_hex = config.keys.public_key().to_hex();
 
-    // Parse BEEKEEPER_AUTH_TAG into a nostr::Tag for NIP-OA relay membership delegation.
-    let relay_auth_tag: Option<nostr::Tag> = std::env::var("BEEKEEPER_AUTH_TAG")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .and_then(|s| beekeeper_sdk::nip_oa::parse_auth_tag(&s).ok());
+    // NIP-OA relay membership delegation: BEEKEEPER_AUTH_TAG_FILE (re-read at
+    // every AUTH and bridge write) else BEEKEEPER_AUTH_TAG.
+    let relay_auth_tag = relay::RelayAuthTag::from_env();
 
-    let mut relay =
-        HarnessRelay::connect(&config.relay_url, &config.keys, &pubkey_hex, relay_auth_tag)
-            .await
-            .map_err(|e| anyhow::anyhow!("relay connect error: {e}"))?;
+    let mut relay = HarnessRelay::connect_with_auth_tag(
+        &config.relay_url,
+        &config.keys,
+        &pubkey_hex,
+        relay_auth_tag,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("relay connect error: {e}"))?;
 
     // Tell the relay background task the watermark so it can use
     // `since = watermark - 5s` on the first REQ instead of `since=now`.
@@ -5769,14 +5773,22 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                 },
             ];
             // Forward BEEKEEPER_AUTH_TAG (NIP-OA owner attestation credential)
-            // so the MCP server can attach it to every signed event.
-            if let Ok(auth_tag) = std::env::var("BEEKEEPER_AUTH_TAG") {
-                if !auth_tag.is_empty() {
-                    env.push(EnvVar {
-                        name: "BEEKEEPER_AUTH_TAG".into(),
-                        value: auth_tag,
-                    });
-                }
+            // so the MCP server can attach it to every signed event — the tag
+            // as of this spawn (the file's contents when one is set), and the
+            // file pointer itself so the server, and every `bee` it runs,
+            // re-reads a tag the host renews later.
+            let auth_tag_source = beekeeper_core::auth_tag_source::AuthTagSource::from_env();
+            if let Some(auth_tag) = auth_tag_source.current().filter(|tag| !tag.is_empty()) {
+                env.push(EnvVar {
+                    name: beekeeper_core::auth_tag_source::AUTH_TAG_VAR.into(),
+                    value: auth_tag,
+                });
+            }
+            if let Some(file) = auth_tag_source.file() {
+                env.push(EnvVar {
+                    name: beekeeper_core::auth_tag_source::AUTH_TAG_FILE_VAR.into(),
+                    value: file.to_string_lossy().into_owned(),
+                });
             }
             // Forward the agent's display name so dev-mcp can use it as the git
             // author name instead of the raw npub. Read from the process env
@@ -6272,6 +6284,7 @@ mod author_gate_tests {
             base_url: "http://localhost:0".into(),
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
+            auth_tag_source: None,
         }
     }
 
@@ -6686,6 +6699,7 @@ mod author_gate_tests {
             base_url,
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
+            auth_tag_source: None,
         };
         (rest, requests, server)
     }
@@ -6803,6 +6817,7 @@ mod author_gate_tests {
             base_url,
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
+            auth_tag_source: None,
         };
         (
             pool::ChannelInfoResolver::new(HashMap::new(), rest),
@@ -8292,6 +8307,47 @@ mod build_mcp_servers_tests {
             "BEEKEEPER_AUTH_TAG should be forwarded when set"
         );
         assert_eq!(auth_tag_env.unwrap().value, "test-attestation-tag");
+    }
+
+    /// AGI-198: with BEEKEEPER_AUTH_TAG_FILE set, each MCP server spawn gets
+    /// the file's tag as of that spawn plus the pointer, so the server re-reads
+    /// later renewals itself.
+    #[test]
+    fn session_new_mcp_server_forwards_the_auth_tag_file_and_its_current_tag() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth-tag.json");
+        std::fs::write(&path, "[\"auth\",\"first\"]\n").unwrap();
+        std::env::set_var("BEEKEEPER_AUTH_TAG", "stale-env-tag");
+        std::env::set_var("BEEKEEPER_AUTH_TAG_FILE", &path);
+        let config = test_config();
+        let first = build_mcp_servers(&config);
+        std::fs::write(&path, "[\"auth\",\"renewed\"]").unwrap();
+        let second = build_mcp_servers(&config);
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG_FILE");
+
+        let get = |servers: &[McpServer], name: &str| {
+            servers[0]
+                .env
+                .iter()
+                .find(|e| e.name == name)
+                .map(|e| e.value.clone())
+        };
+        assert_eq!(
+            get(&first, "BEEKEEPER_AUTH_TAG").as_deref(),
+            Some("[\"auth\",\"first\"]")
+        );
+        assert_eq!(
+            get(&second, "BEEKEEPER_AUTH_TAG").as_deref(),
+            Some("[\"auth\",\"renewed\"]")
+        );
+        let pointer = path.to_string_lossy().into_owned();
+        assert_eq!(
+            get(&second, "BEEKEEPER_AUTH_TAG_FILE"),
+            Some(pointer.clone())
+        );
+        assert_eq!(get(&second, "BUZZ_AUTH_TAG_FILE"), Some(pointer));
     }
 
     #[test]

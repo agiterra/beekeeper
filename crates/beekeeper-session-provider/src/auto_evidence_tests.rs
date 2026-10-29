@@ -674,6 +674,7 @@ mod over_http {
             base_url: format!("http://{address}"),
             keys: keys.clone(),
             auth_tag_json: None,
+            auth_tag_source: None,
         }
     }
 
