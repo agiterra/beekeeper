@@ -42,6 +42,7 @@ fn provider_reading_from(state_dir: &Path, base_url: String) -> Provider {
         base_url,
         keys,
         auth_tag_json: None,
+        auth_tag_source: None,
     });
     provider
 }

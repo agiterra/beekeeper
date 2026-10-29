@@ -356,7 +356,7 @@ async fn run_command(
     let mut conn = NostrWsConnection::connect_authenticated(
         &client.ws_url(),
         client.keys(),
-        client.auth_tag(),
+        client.auth_tag().as_ref(),
     )
     .await
     .map_err(|error| ws_error(error, "device connection"))?;

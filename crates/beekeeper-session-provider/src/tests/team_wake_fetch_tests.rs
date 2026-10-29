@@ -43,6 +43,7 @@ fn provider_reading_from(state_dir: &Path, base_url: String, channel: Uuid) -> P
         base_url,
         keys,
         auth_tag_json: None,
+        auth_tag_source: None,
     });
     // Subscribed and never scanned: the next tick reads its partition.
     provider.subscribed.insert(channel);

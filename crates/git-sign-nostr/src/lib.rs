@@ -71,6 +71,7 @@
 //!    process and git is the reader. Blocking on stdout would indicate git itself
 //!    is hung, which is outside our control.
 
+pub mod auth_tag_file;
 pub mod legacy_env;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -452,7 +453,9 @@ fn load_key() -> Result<zeroize::Zeroizing<String>, Error> {
 
 /// Load the NIP-OA auth tag from env or git config.
 ///
-/// Priority per NIP-GS spec: `BEEKEEPER_AUTH_TAG` env var > `nostr.authtag` git config.
+/// Priority per NIP-GS spec: `BEEKEEPER_AUTH_TAG` env var > `nostr.authtag` git config,
+/// where the env var may be supplied as a file via `BEEKEEPER_AUTH_TAG_FILE`
+/// (which wins over `BEEKEEPER_AUTH_TAG`; see [`auth_tag_file`]).
 /// The env var takes precedence so that CI/CD pipelines and agent harnesses can
 /// inject auth tags without modifying repo config.
 ///
@@ -465,10 +468,7 @@ fn load_auth_tag() -> Result<Option<(String, String, String)>, Error> {
     // NIP-GS spec: check env var first, then git config.
     // Use git_config_strict for auth tag to fail closed on read errors —
     // a configured-but-unreadable auth tag must not be silently omitted.
-    let json_str = match std::env::var("BEEKEEPER_AUTH_TAG")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
+    let json_str = match auth_tag_file::env_auth_tag().filter(|s| !s.is_empty()) {
         Some(val) => Some(val),
         None => git_config_strict("nostr.authtag")
             .map_err(|e| Error::Fatal(format!("failed to read nostr.authtag: {e}")))?,
@@ -2016,6 +2016,34 @@ Initial commit"
             matches!(result, Ok(None)),
             "absent auth tag should be Ok(None)"
         );
+
+        // AGI-198, in this test because it shares the process environment
+        // with the cases above: BEEKEEPER_AUTH_TAG_FILE wins over
+        // BEEKEEPER_AUTH_TAG and is read at each call, so a renewal is used
+        // by the next signature.
+        let tag = |conditions: &str| {
+            format!(
+                r#"["auth","{}","{conditions}","{}"]"#,
+                "a".repeat(64),
+                "b".repeat(128)
+            )
+        };
+        let dir = std::env::temp_dir().join(format!("gsn-auth-tag-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("auth-tag.json");
+        std::fs::write(&path, format!("{}\n", tag("created_at<1900000000"))).unwrap();
+        std::env::set_var("BEEKEEPER_AUTH_TAG", tag("created_at<1"));
+        std::env::set_var("BEEKEEPER_AUTH_TAG_FILE", &path);
+        let conditions = || load_auth_tag().unwrap().unwrap().1;
+        assert_eq!(conditions(), "created_at<1900000000");
+        std::fs::write(&path, tag("created_at<1900014400")).unwrap();
+        assert_eq!(conditions(), "created_at<1900014400");
+        // Unreadable file → the env value, with a warning on stderr.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(conditions(), "created_at<1");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG_FILE");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Helper: sign a payload and return the armored signature

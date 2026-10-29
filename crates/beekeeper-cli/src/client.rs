@@ -522,10 +522,118 @@ pub struct BeekeeperClient {
     http: reqwest::Client,
     relay_url: String, // base URL, no trailing slash, e.g. "https://relay.example.com"
     keys: Keys,
-    /// Optional NIP-OA auth tag injected into every signed event.
-    auth_tag: Option<Tag>,
-    /// Raw JSON of the auth tag for the `x-auth-tag` HTTP header.
-    auth_tag_json: Option<String>,
+    /// The NIP-OA auth tag injected into every signed event and sent as the
+    /// `x-auth-tag` header — fixed, or re-read from `BEEKEEPER_AUTH_TAG_FILE`
+    /// at every use.
+    auth: ClientAuthTag,
+}
+
+/// A parsed, verified NIP-OA auth tag and its canonical JSON wire form.
+#[derive(Clone)]
+pub(crate) struct VerifiedAuthTag {
+    pub(crate) tag: Tag,
+    pub(crate) json: String,
+}
+
+/// The client's auth tag: the value verified at startup, and optionally a
+/// file to re-read before every use.
+///
+/// A renewed tag (a later `created_at<T`) reaches a long-lived client this
+/// way; the environment variable it started with cannot change. A re-read that
+/// yields nothing new costs one small file read and a string compare; a
+/// changed value is parsed and verified against this client's key before it
+/// is used. A changed value that fails is reported on stderr and the last
+/// good tag stays in use — it may well still be inside its window, and
+/// dropping it would turn one bad write into certain refusals.
+struct ClientAuthTag {
+    refresh: Option<beekeeper_core::auth_tag_source::AuthTagSource>,
+    state: std::sync::Mutex<AuthTagState>,
+}
+
+struct AuthTagState {
+    /// The source text `current` was derived from; `None` until a refresh
+    /// has read one.
+    raw: Option<String>,
+    current: Option<VerifiedAuthTag>,
+    /// Last source text that failed, so a persistent bad write warns once.
+    rejected: Option<String>,
+}
+
+impl ClientAuthTag {
+    fn fixed(current: Option<VerifiedAuthTag>) -> Self {
+        Self {
+            refresh: None,
+            state: std::sync::Mutex::new(AuthTagState {
+                raw: None,
+                current,
+                rejected: None,
+            }),
+        }
+    }
+
+    fn get(&self, keys: &Keys) -> Option<VerifiedAuthTag> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(source) = &self.refresh else {
+            return state.current.clone();
+        };
+        let raw = source.current().filter(|raw| !raw.is_empty());
+        if raw == state.raw {
+            return state.current.clone();
+        }
+        match raw.as_deref().map(|raw| verify_auth_tag_input(raw, keys)) {
+            None => {
+                state.raw = None;
+                state.current = None;
+            }
+            Some(Ok(verified)) => {
+                state.raw = raw;
+                state.current = Some(verified);
+                state.rejected = None;
+            }
+            Some(Err(error)) => {
+                if state.rejected != raw {
+                    eprintln!(
+                        "bee: warning: the auth tag re-read from {} was refused ({error}); \
+                         keeping the previous one",
+                        source
+                            .file()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_default()
+                    );
+                    state.rejected = raw;
+                }
+            }
+        }
+        state.current.clone()
+    }
+}
+
+/// Parse and verify hand-authored auth tag input against `keys`, returning the
+/// tag and its canonical JSON (derived from the parsed tag, never the raw
+/// input).
+///
+/// `BEEKEEPER_AUTH_TAG` is hand-authored configuration, so the unquoted raw
+/// shorthand `[auth,hex,,hex]` is normalized to JSON here — at this input edge
+/// only. The SDK grammar and the `x-auth-tag` wire format stay strict JSON.
+pub(crate) fn verify_auth_tag_input(input: &str, keys: &Keys) -> Result<VerifiedAuthTag, CliError> {
+    let json = crate::normalize_auth_tag_input(input);
+    let tag = beekeeper_sdk::nip_oa::parse_auth_tag(&json)
+        .map_err(|e| CliError::Auth(format!("BEEKEEPER_AUTH_TAG is malformed: {e}")))?;
+    beekeeper_sdk::nip_oa::verify_auth_tag(&json, &keys.public_key()).map_err(|e| {
+        CliError::Auth(format!(
+            "BEEKEEPER_AUTH_TAG verification failed for pubkey {}: {e}",
+            keys.public_key().to_hex()
+        ))
+    })?;
+    let canonical = serde_json::to_string(tag.as_slice())
+        .map_err(|e| CliError::Auth(format!("BEEKEEPER_AUTH_TAG serialization failed: {e}")))?;
+    Ok(VerifiedAuthTag {
+        tag,
+        json: canonical,
+    })
 }
 
 impl BeekeeperClient {
@@ -549,13 +657,40 @@ impl BeekeeperClient {
             .connect_timeout(env_duration_secs("BEEKEEPER_CONNECT_TIMEOUT_SECS", 15))
             .build()
             .map_err(|e| CliError::Other(e.to_string()))?;
+        // The pair is set together by every caller; a tag without its JSON
+        // keeps the old behaviour of signing with it and sending no header.
+        let current = auth_tag.map(|tag| VerifiedAuthTag {
+            json: auth_tag_json.unwrap_or_default(),
+            tag,
+        });
         Ok(Self {
             http,
             relay_url,
             keys,
-            auth_tag,
-            auth_tag_json,
+            auth: ClientAuthTag::fixed(current),
         })
+    }
+
+    /// Re-read the auth tag from `source` before every use.
+    ///
+    /// For a `source` with a file (`BEEKEEPER_AUTH_TAG_FILE`): each signed
+    /// event, `x-auth-tag` header and WebSocket AUTH reads the file again, so
+    /// a renewed tag is used without restarting the process. The tag passed
+    /// to [`Self::new`] stays in use until the file yields a different valid
+    /// one. A `source` without a file changes nothing.
+    pub fn with_auth_tag_source(
+        mut self,
+        source: beekeeper_core::auth_tag_source::AuthTagSource,
+    ) -> Self {
+        if source.file().is_some() {
+            self.auth.refresh = Some(source);
+        }
+        self
+    }
+
+    /// The auth tag to use for the request about to be made.
+    fn current_auth(&self) -> Option<VerifiedAuthTag> {
+        self.auth.get(&self.keys)
     }
 
     /// Get the keypair.
@@ -575,8 +710,8 @@ impl BeekeeperClient {
     }
 
     /// Verified NIP-OA tag to carry on an authenticated WebSocket connection.
-    pub(crate) fn auth_tag(&self) -> Option<&Tag> {
-        self.auth_tag.as_ref()
+    pub(crate) fn auth_tag(&self) -> Option<Tag> {
+        self.current_auth().map(|auth| auth.tag)
     }
 
     /// Return the owner pubkey carried by the NIP-OA auth tag, if any.
@@ -584,10 +719,8 @@ impl BeekeeperClient {
     /// The auth tag is `["auth", owner_pubkey, conditions, sig]`; the
     /// owner pubkey lives at index 1.
     pub fn auth_tag_owner_hex(&self) -> Option<String> {
-        self.auth_tag
-            .as_ref()
-            .map(|t| t.as_slice())
-            .and_then(|slice| slice.get(1).cloned())
+        self.auth_tag()
+            .and_then(|tag| tag.as_slice().get(1).cloned())
     }
 
     /// Return the cryptographically verified NIP-OA owner of this signing key.
@@ -596,10 +729,10 @@ impl BeekeeperClient {
     /// that use the owner to grant authority must use this method rather than
     /// treating the second string in an `auth` tag as an attested identity.
     pub fn verified_auth_tag_owner_hex(&self) -> Result<Option<String>, CliError> {
-        let Some(auth_tag_json) = self.auth_tag_json.as_deref() else {
+        let Some(auth) = self.current_auth().filter(|auth| !auth.json.is_empty()) else {
             return Ok(None);
         };
-        let owner = beekeeper_sdk::nip_oa::verify_auth_tag(auth_tag_json, &self.keys.public_key())
+        let owner = beekeeper_sdk::nip_oa::verify_auth_tag(&auth.json, &self.keys.public_key())
             .map_err(|error| {
                 CliError::Auth(format!(
                     "NIP-OA owner verification failed for pubkey {}: {error}",
@@ -615,7 +748,8 @@ impl BeekeeperClient {
     /// auth tag injection. Callers MUST NOT add `auth` tags to the builder
     /// before calling this method.
     pub fn sign_event(&self, builder: EventBuilder) -> Result<nostr::Event, CliError> {
-        let builder = if let Some(ref tag) = self.auth_tag {
+        let auth_tag = self.auth_tag();
+        let builder = if let Some(ref tag) = auth_tag {
             builder.tags([tag.clone()])
         } else {
             builder
@@ -630,7 +764,7 @@ impl BeekeeperClient {
             .iter()
             .filter(|t| t.as_slice().first().map(|s| s.as_str()) == Some("auth"))
             .count();
-        let expected = if self.auth_tag.is_some() { 1 } else { 0 };
+        let expected = if auth_tag.is_some() { 1 } else { 0 };
         if auth_count != expected {
             return Err(CliError::Other(format!(
                 "event has {auth_count} auth tags — expected {expected}; \
@@ -643,9 +777,9 @@ impl BeekeeperClient {
 
     /// Attach the `x-auth-tag` header if configured (NIP-OA relay membership delegation).
     fn with_auth_tag(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match self.auth_tag_json {
-            Some(ref json) => req.header("x-auth-tag", json),
-            None => req,
+        match self.current_auth() {
+            Some(auth) if !auth.json.is_empty() => req.header("x-auth-tag", auth.json),
+            _ => req,
         }
     }
 
@@ -1215,7 +1349,7 @@ impl BeekeeperClient {
             &ws_url,
             event,
             &self.keys,
-            self.auth_tag.as_ref(),
+            self.auth_tag().as_ref(),
             75,
         )
         .await
@@ -1687,10 +1821,15 @@ pub(crate) const RELAY_REFUSALS_THE_CLI_NAMES: &[&str] = &[
 
 /// Append the CLI's remedy to a refusal the relay just returned.
 ///
-/// Reads `BEEKEEPER_AUTH_TAG` only to know whether this process carries an owner
-/// attestation at all; the tag's value is never printed.
+/// Reads `BEEKEEPER_AUTH_TAG` / `BEEKEEPER_AUTH_TAG_FILE` only to know whether
+/// this process carries an owner attestation at all; the tag's value is never
+/// printed.
 fn decorate_refusal(message: String) -> String {
-    refusal_with_remedy(&message, std::env::var("BEEKEEPER_AUTH_TAG").is_ok())
+    let source = beekeeper_core::auth_tag_source::AuthTagSource::from_env();
+    refusal_with_remedy(
+        &message,
+        source.env_value().is_some() || source.file().is_some(),
+    )
 }
 
 /// The relay's refusal, plus one sentence naming the gate that refused it.
@@ -3022,6 +3161,82 @@ mod tests {
             &auth_json,
             "x-auth-tag header must carry the raw auth tag JSON"
         );
+    }
+
+    /// AGI-198: a client built over `BEEKEEPER_AUTH_TAG_FILE` uses whatever
+    /// the file holds at each use — header, signed event and WebSocket tag —
+    /// so a renewal written by the host reaches a running process.
+    #[test]
+    fn a_rewritten_auth_tag_file_is_used_by_the_next_request() {
+        let owner = Keys::generate();
+        let keys = Keys::generate();
+        let tag_for = |deadline: u64| {
+            beekeeper_sdk::nip_oa::compute_auth_tag(
+                &owner,
+                &keys.public_key(),
+                &format!("created_at<{deadline}"),
+            )
+            .unwrap()
+        };
+        let (first, renewed) = (tag_for(1_900_000_000), tag_for(1_900_014_400));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth-tag.json");
+        std::fs::write(&path, format!("{first}\n")).unwrap();
+
+        let source = beekeeper_core::auth_tag_source::AuthTagSource::new(Some(path.clone()), None);
+        let initial =
+            super::verify_auth_tag_input(source.current().as_deref().unwrap(), &keys).unwrap();
+        let client = BeekeeperClient::new(
+            "https://test.relay".into(),
+            keys.clone(),
+            Some(initial.tag),
+            Some(initial.json),
+        )
+        .unwrap()
+        .with_auth_tag_source(source);
+
+        let header = |client: &BeekeeperClient| {
+            client
+                .with_auth_tag(client.http.post("https://test.relay/events"))
+                .build()
+                .unwrap()
+                .headers()
+                .get("x-auth-tag")
+                .map(|value| value.to_str().unwrap().to_owned())
+        };
+        let conditions_of = |tag: Tag| tag.as_slice()[2].clone();
+        assert_eq!(header(&client).as_deref(), Some(first.as_str()));
+        assert_eq!(
+            conditions_of(client.auth_tag().unwrap()),
+            "created_at<1900000000"
+        );
+
+        std::fs::write(&path, &renewed).unwrap();
+        assert_eq!(header(&client).as_deref(), Some(renewed.as_str()));
+        assert_eq!(
+            conditions_of(client.auth_tag().unwrap()),
+            "created_at<1900014400"
+        );
+        let event = client
+            .sign_event(EventBuilder::new(Kind::Custom(9), "hi"))
+            .unwrap();
+        let signed: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|t| t.as_slice().first().map(String::as_str) == Some("auth"))
+            .map(|t| t.as_slice()[2].clone())
+            .collect();
+        assert_eq!(signed, vec!["created_at<1900014400".to_owned()]);
+
+        // A bad write is refused and the last good tag stays in use.
+        std::fs::write(&path, "not a tag").unwrap();
+        assert_eq!(header(&client).as_deref(), Some(renewed.as_str()));
+        // A tag for another key is refused the same way.
+        let foreign =
+            beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &Keys::generate().public_key(), "")
+                .unwrap();
+        std::fs::write(&path, &foreign).unwrap();
+        assert_eq!(header(&client).as_deref(), Some(renewed.as_str()));
     }
 
     #[test]
