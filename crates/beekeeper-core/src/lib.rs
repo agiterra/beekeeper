@@ -16,6 +16,9 @@ pub mod agents_repo_draft;
 pub mod agents_repo_draft_fold;
 /// Kind:50000 application-event envelope rules shared by ingest and relay producers.
 pub mod application_event;
+/// Where a process reads its NIP-OA auth tag: `BEEKEEPER_AUTH_TAG_FILE`
+/// (re-read at every use), else `BEEKEEPER_AUTH_TAG`.
+pub mod auth_tag_source;
 /// This build's own commit, its ordinal and its time — the client-side
 /// counterpart of the relay's NIP-11 `software_commit`, with the same
 /// disclosed `unknown`/`null` non-answers.

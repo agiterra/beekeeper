@@ -315,21 +315,23 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
 
     let pubkey_hex = config.keys.public_key().to_hex();
 
-    // Parse BEEKEEPER_AUTH_TAG for relay membership / NIP-OA.
-    let relay_auth_tag: Option<nostr::Tag> = std::env::var("BEEKEEPER_AUTH_TAG")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .and_then(|s| beekeeper_sdk::nip_oa::parse_auth_tag(&s).ok());
+    // Relay membership / NIP-OA: BEEKEEPER_AUTH_TAG_FILE (re-read at every
+    // use) else BEEKEEPER_AUTH_TAG.
+    let relay_auth_tag = crate::relay::RelayAuthTag::from_env();
 
     let startup_watermark: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
-    let mut relay =
-        HarnessRelay::connect(&config.relay_url, &config.keys, &pubkey_hex, relay_auth_tag)
-            .await
-            .map_err(|e| anyhow::anyhow!("setup-mode relay connect error: {e}"))?;
+    let mut relay = HarnessRelay::connect_with_auth_tag(
+        &config.relay_url,
+        &config.keys,
+        &pubkey_hex,
+        relay_auth_tag,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("setup-mode relay connect error: {e}"))?;
 
     if let Err(e) = relay.set_startup_watermark(startup_watermark).await {
         tracing::warn!("setup-mode: failed to set startup watermark: {e}");

@@ -57,6 +57,7 @@ async fn a_lead_drafts_commits_and_adopts_its_plan_through_bee_inside_the_bounda
         base_url: http.clone(),
         keys: keys.clone(),
         auth_tag_json: None,
+        auth_tag_source: None,
     };
     // Host setup: the channel is filed under the project (kind:9002 with a
     // `project` tag, as the desktop files a session's channel).

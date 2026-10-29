@@ -6379,6 +6379,7 @@ done"#
                 base_url,
                 keys: ctx.agent_keys.clone(),
                 auth_tag_json: None,
+                auth_tag_source: None,
             },
         );
         let ctx = Arc::new(ctx);
@@ -6542,6 +6543,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 base_url,
                 keys: ctx.agent_keys.clone(),
                 auth_tag_json: None,
+                auth_tag_source: None,
             },
         );
         let (result_tx, mut result_rx) = mpsc::unbounded_channel();
@@ -8420,6 +8422,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 base_url: "http://127.0.0.1:0".to_string(),
                 keys: agent_keys.clone(),
                 auth_tag_json: None,
+                auth_tag_source: None,
             },
             channel_info: ChannelInfoResolver::new(
                 std::collections::HashMap::new(),
@@ -8428,6 +8431,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                     base_url: "http://127.0.0.1:0".to_string(),
                     keys: agent_keys.clone(),
                     auth_tag_json: None,
+                    auth_tag_source: None,
                 },
             ),
             context_message_limit: 0,
@@ -8858,6 +8862,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             base_url,
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
+            auth_tag_source: None,
         };
         (
             ChannelInfoResolver::new(std::collections::HashMap::new(), rest),

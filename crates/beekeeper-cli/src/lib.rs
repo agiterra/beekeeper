@@ -73,6 +73,14 @@ where
     };
     let format_explicit =
         matches.value_source("format") == Some(clap::parser::ValueSource::CommandLine);
+    // An `--auth-tag` typed on the command line is a deliberate choice for
+    // this run; a `BEEKEEPER_AUTH_TAG_FILE` merely inherited from the
+    // environment must not override it. A file named with `--auth-tag-file`
+    // still wins.
+    let auth_tag_from_command_line =
+        matches.value_source("auth_tag") == Some(clap::parser::ValueSource::CommandLine);
+    let auth_tag_file_from_command_line =
+        matches.value_source("auth_tag_file") == Some(clap::parser::ValueSource::CommandLine);
     let mut cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(e) => {
@@ -87,6 +95,9 @@ where
     {
         *explicit = format_explicit;
     }
+    if auth_tag_from_command_line && !auth_tag_file_from_command_line {
+        cli.auth_tag_file = None;
+    }
 
     // Local-only and self-reporting: `bee preview` prints its own wire-shaped
     // result or refusal and owns its exit codes (0/1/2/3/4, WIRE-C4 § 6).
@@ -100,7 +111,7 @@ where
             match commands::preview::share::relay_client(
                 &cli.relay,
                 cli.private_key.as_deref(),
-                cli.auth_tag.as_deref(),
+                auth_tag_source(&cli).current().as_deref(),
             ) {
                 Ok(c) => Some(c),
                 Err(f) => return commands::preview::report(Err(f)),
@@ -171,6 +182,8 @@ Configuration (flags override env vars):
   BEEKEEPER_RELAY_URL     Relay base URL        [default: http://localhost:3000]
   BEEKEEPER_PRIVATE_KEY   Nostr private key (hex or nsec)  [required]
   BEEKEEPER_AUTH_TAG      NIP-OA auth tag JSON  [optional]
+  BEEKEEPER_AUTH_TAG_FILE File holding the auth tag JSON, re-read at every use;
+                          wins over BEEKEEPER_AUTH_TAG  [optional]
 
 The 'pack' subcommand runs locally and does not require a relay connection.
 
@@ -193,6 +206,13 @@ struct Cli {
     /// NIP-OA auth tag JSON (owner attestation). Injected into every signed event.
     #[arg(long, env = "BEEKEEPER_AUTH_TAG", hide_env_values = true)]
     auth_tag: Option<String>,
+
+    /// File holding the NIP-OA auth tag JSON, re-read before every request so
+    /// a renewed tag is picked up. Wins over BEEKEEPER_AUTH_TAG; an unreadable
+    /// or empty file falls back to it with a warning. An explicit --auth-tag
+    /// on the command line wins over this variable's env value.
+    #[arg(long, env = "BEEKEEPER_AUTH_TAG_FILE", hide_env_values = true)]
+    auth_tag_file: Option<std::path::PathBuf>,
 
     /// Output format: 'json' (default, full fields) or 'compact' (reduced fields).
     #[arg(long, value_enum, default_value = "json")]
@@ -5942,6 +5962,16 @@ pub enum PulseCmd {
     },
 }
 
+/// Where this run reads its auth tag: `--auth-tag-file` /
+/// `BEEKEEPER_AUTH_TAG_FILE` (re-read at every use), falling back to
+/// `--auth-tag` / `BEEKEEPER_AUTH_TAG`.
+fn auth_tag_source(cli: &Cli) -> beekeeper_core::auth_tag_source::AuthTagSource {
+    beekeeper_core::auth_tag_source::AuthTagSource::new(
+        cli.auth_tag_file.clone(),
+        cli.auth_tag.clone(),
+    )
+}
+
 /// Normalize hand-authored `BEEKEEPER_AUTH_TAG` input to strict JSON.
 ///
 /// `.env` files and shell exports sometimes carry the tag in the unquoted
@@ -6216,6 +6246,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         return commands::sessions::explain::cmd_explain(word.as_deref(), &cli.format);
     }
 
+    // Resolved before `cli.private_key` is moved out below.
+    let source = auth_tag_source(&cli);
+
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
     let private_key_str = cli.private_key.ok_or_else(|| {
@@ -6226,35 +6259,22 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     let keys = Keys::parse(&private_key_str)
         .map_err(|e| CliError::Key(format!("invalid BEEKEEPER_PRIVATE_KEY: {e}")))?;
 
-    // NIP-OA: parse and verify the auth tag if provided.
-    //
-    // `BEEKEEPER_AUTH_TAG` is hand-authored configuration, so the unquoted raw
-    // shorthand `[auth,hex,,hex]` is normalized to JSON here — at this input
-    // edge only. The SDK grammar and the `x-auth-tag` wire format stay strict
-    // JSON; all validation and signature verification happen on the strict
-    // path below, unchanged.
-    let (auth_tag, auth_tag_json) = match cli.auth_tag {
+    // NIP-OA: parse and verify the auth tag if provided — from
+    // `BEEKEEPER_AUTH_TAG_FILE` when set (and re-read by the client before
+    // every later use), else `BEEKEEPER_AUTH_TAG`. A tag that is present but
+    // malformed or unverifiable fails the command here, as it always has.
+    // Normalization of the hand-authored shorthand and the canonical wire form
+    // live in `client::verify_auth_tag_input`.
+    let (auth_tag, auth_tag_json) = match source.current() {
         Some(ref input) if !input.is_empty() => {
-            let json = normalize_auth_tag_input(input);
-            let tag = beekeeper_sdk::nip_oa::parse_auth_tag(&json)
-                .map_err(|e| CliError::Auth(format!("BEEKEEPER_AUTH_TAG is malformed: {e}")))?;
-            beekeeper_sdk::nip_oa::verify_auth_tag(&json, &keys.public_key()).map_err(|e| {
-                CliError::Auth(format!(
-                    "BEEKEEPER_AUTH_TAG verification failed for pubkey {}: {e}",
-                    keys.public_key().to_hex()
-                ))
-            })?;
-            // Canonical wire form derives from the parsed-and-verified tag
-            // (same shape as beekeeper-acp's RestClient), never from raw input.
-            let canonical = serde_json::to_string(tag.as_slice()).map_err(|e| {
-                CliError::Auth(format!("BEEKEEPER_AUTH_TAG serialization failed: {e}"))
-            })?;
-            (Some(tag), Some(canonical))
+            let verified = client::verify_auth_tag_input(input, &keys)?;
+            (Some(verified.tag), Some(verified.json))
         }
         _ => (None, None),
     };
 
-    let client = BeekeeperClient::new(relay_url, keys, auth_tag, auth_tag_json)?;
+    let client = BeekeeperClient::new(relay_url, keys, auth_tag, auth_tag_json)?
+        .with_auth_tag_source(source);
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,

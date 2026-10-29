@@ -340,7 +340,9 @@ async fn fetch_url(url: &str) -> Result<Vec<u8>, ErrorData> {
     let authed = auth.is_some();
     if let Some(header) = auth {
         req = req.header("Authorization", header);
-        if let Ok(auth_tag) = std::env::var("BEEKEEPER_AUTH_TAG") {
+        // Read at each fetch: BEEKEEPER_AUTH_TAG_FILE (so a renewed tag is
+        // used without restarting this server), else BEEKEEPER_AUTH_TAG.
+        if let Some(auth_tag) = beekeeper_core::auth_tag_source::current_auth_tag() {
             if !auth_tag.trim().is_empty() {
                 req = req.header("x-auth-tag", auth_tag);
             }

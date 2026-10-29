@@ -50,6 +50,7 @@ fn bee(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_bee"))
         .env_remove("BEEKEEPER_PRIVATE_KEY")
         .env_remove("BEEKEEPER_AUTH_TAG")
+        .env_remove("BEEKEEPER_AUTH_TAG_FILE")
         .env("BEEKEEPER_RELAY_URL", "http://127.0.0.1:1/")
         .args(args)
         .output()

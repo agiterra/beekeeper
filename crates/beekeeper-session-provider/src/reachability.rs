@@ -103,6 +103,7 @@ mod tests {
             base_url: "http://127.0.0.1:1".to_owned(),
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
+            auth_tag_source: None,
         }
     }
 

@@ -247,6 +247,88 @@ pub(crate) fn merge_discovered_channels(
     map
 }
 
+/// The NIP-OA auth tag this harness presents for relay membership delegation —
+/// on every NIP-42 AUTH (initial, mid-session, reconnect) and as the
+/// `x-auth-tag` header on bridge writes.
+///
+/// [`RelayAuthTag::Source`] re-reads `BEEKEEPER_AUTH_TAG_FILE` at each use, so a
+/// tag the host renews after this process started (a later `created_at<T`) is
+/// what the next request and the next reconnect carry. Without the file the
+/// tag is parsed once from `BEEKEEPER_AUTH_TAG`, exactly as before.
+#[derive(Debug, Clone, Default)]
+pub enum RelayAuthTag {
+    /// No auth tag.
+    #[default]
+    None,
+    /// A tag fixed for the life of the process.
+    Fixed(Box<nostr::Tag>),
+    /// Re-read from the file (falling back to the env value) at every use.
+    Source(beekeeper_core::auth_tag_source::AuthTagSource),
+}
+
+impl RelayAuthTag {
+    /// From this process's `BEEKEEPER_AUTH_TAG_FILE` / `BEEKEEPER_AUTH_TAG`.
+    ///
+    /// Without a file, an empty or unparseable `BEEKEEPER_AUTH_TAG` is no tag,
+    /// as it always was.
+    pub fn from_env() -> Self {
+        Self::from_source(beekeeper_core::auth_tag_source::AuthTagSource::from_env())
+    }
+
+    /// From an explicit source; see [`Self::from_env`].
+    pub fn from_source(source: beekeeper_core::auth_tag_source::AuthTagSource) -> Self {
+        if source.file().is_some() {
+            return Self::Source(source);
+        }
+        match source
+            .env_value()
+            .filter(|raw| !raw.is_empty())
+            .map(beekeeper_sdk::nip_oa::parse_auth_tag)
+        {
+            Some(Ok(tag)) => Self::Fixed(Box::new(tag)),
+            _ => Self::None,
+        }
+    }
+
+    /// The tag to present right now.
+    pub fn current(&self) -> Option<nostr::Tag> {
+        match self {
+            Self::None => None,
+            Self::Fixed(tag) => Some((**tag).clone()),
+            Self::Source(source) => source_tag(source),
+        }
+    }
+
+    /// The current tag's JSON, for the `x-auth-tag` header.
+    pub fn current_json(&self) -> Option<String> {
+        self.current()
+            .and_then(|tag| serde_json::to_string(tag.as_slice()).ok())
+    }
+}
+
+impl From<Option<nostr::Tag>> for RelayAuthTag {
+    fn from(tag: Option<nostr::Tag>) -> Self {
+        tag.map_or(Self::None, |tag| Self::Fixed(Box::new(tag)))
+    }
+}
+
+/// Read `source` now and parse what it holds. A malformed value is no tag,
+/// as an unparseable `BEEKEEPER_AUTH_TAG` always was — but said, not silent.
+fn source_tag(source: &beekeeper_core::auth_tag_source::AuthTagSource) -> Option<nostr::Tag> {
+    let raw = source.current().filter(|raw| !raw.is_empty())?;
+    match beekeeper_sdk::nip_oa::parse_auth_tag(&raw) {
+        Ok(tag) => Some(tag),
+        Err(e) => {
+            // Never the value: only where it came from and why.
+            warn!(
+                file = ?source.file(),
+                "auth tag from BEEKEEPER_AUTH_TAG_FILE is malformed ({e}); presenting no auth tag"
+            );
+            None
+        }
+    }
+}
+
 /// Lightweight HTTP client for pre-prompt context fetches via the Nostr HTTP bridge.
 ///
 /// Extracted from `HarnessRelay` fields so it can be shared (via `Arc`) with
@@ -261,6 +343,11 @@ pub struct RestClient {
     pub keys: Keys,
     /// Optional NIP-OA auth tag JSON for `x-auth-tag` header (relay membership delegation).
     pub auth_tag_json: Option<String>,
+    /// When set, the `x-auth-tag` header is read from this source
+    /// (`BEEKEEPER_AUTH_TAG_FILE`, re-read at every request) instead of
+    /// [`Self::auth_tag_json`], so a tag renewed after this process started is
+    /// what the next request carries.
+    pub auth_tag_source: Option<beekeeper_core::auth_tag_source::AuthTagSource>,
 }
 
 /// Whether an HTTP status code is retriable (transient server/rate-limit errors).
@@ -345,6 +432,16 @@ async fn read_json_body(what: &str, resp: reqwest::Response) -> Result<Value, Re
 }
 
 impl RestClient {
+    /// The `x-auth-tag` value for the request about to be sent.
+    pub fn auth_tag_header(&self) -> Option<String> {
+        match &self.auth_tag_source {
+            Some(source) => {
+                source_tag(source).and_then(|tag| serde_json::to_string(tag.as_slice()).ok())
+            }
+            None => self.auth_tag_json.clone(),
+        }
+    }
+
     /// Sign a NIP-98 HTTP Auth event (kind:27235) for the given method/URL/body.
     ///
     /// Returns the `Authorization: Nostr <base64>` header value (without the
@@ -464,7 +561,6 @@ impl RestClient {
     ) -> Result<reqwest::Response, RelayError> {
         let url = format!("{}{}", self.base_url, path);
         let body_owned = body_bytes.to_vec();
-        let auth_tag_header = self.auth_tag_json.clone();
         self.request_with_retry("POST", path, || {
             // NIP-98 is re-signed each attempt (fresh created_at).
             // sign_nip98 is infallible in practice (key is always valid).
@@ -476,7 +572,8 @@ impl RestClient {
                 .post(&url)
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json");
-            if let Some(ref tag) = auth_tag_header {
+            // Read per attempt: a tag renewed between retries is used.
+            if let Some(tag) = self.auth_tag_header() {
                 req = req.header("x-auth-tag", tag);
             }
             req.body(body_owned.clone()).send()
@@ -973,8 +1070,8 @@ pub struct HarnessRelay {
     relay_url: String,
     /// Keys used for NIP-42 signing and NIP-98 HTTP auth.
     keys: Keys,
-    /// Optional NIP-OA auth tag for relay membership delegation.
-    auth_tag: Option<nostr::Tag>,
+    /// NIP-OA auth tag for relay membership delegation.
+    auth_tag: RelayAuthTag,
     /// Handle to the background task (for clean shutdown).
     /// Wrapped in `Option` so `shutdown()` can take ownership without conflicting
     /// with `Drop` (which only has `&mut self`).
@@ -1095,13 +1192,25 @@ impl HarnessRelay {
         agent_pubkey_hex: &str,
         auth_tag: Option<nostr::Tag>,
     ) -> Result<Self, RelayError> {
+        Self::connect_with_auth_tag(relay_url, keys, agent_pubkey_hex, auth_tag.into()).await
+    }
+
+    /// [`Self::connect`] with a [`RelayAuthTag`], which may re-read
+    /// `BEEKEEPER_AUTH_TAG_FILE` at every AUTH (initial, mid-session and each
+    /// reconnect) and every bridge write.
+    pub async fn connect_with_auth_tag(
+        relay_url: &str,
+        keys: &Keys,
+        agent_pubkey_hex: &str,
+        auth_tag: RelayAuthTag,
+    ) -> Result<Self, RelayError> {
         // Perform the initial connection and auth handshake, retrying
         // transient failures (dropped handshake, timeout) with bounded
         // jittered backoff. A terminal error (bad URL, bad auth tag,
         // rejected/invalid signing key) fails immediately — see
         // `is_terminal_connect_error`.
         let (ws, handshake_buffer) =
-            retry_initial_connect(|| do_connect(relay_url, keys, auth_tag.as_ref())).await?;
+            retry_initial_connect(|| do_connect(relay_url, keys, &auth_tag)).await?;
 
         let (event_tx, event_rx) =
             mpsc::channel::<Option<BeekeeperEvent>>(event_channel_capacity());
@@ -1218,10 +1327,11 @@ impl HarnessRelay {
             http: self.http.clone(),
             base_url: relay_ws_to_http(&self.relay_url),
             keys: self.keys.clone(),
-            auth_tag_json: self
-                .auth_tag
-                .as_ref()
-                .and_then(|t| serde_json::to_string(t.as_slice()).ok()),
+            auth_tag_json: self.auth_tag.current_json(),
+            auth_tag_source: match &self.auth_tag {
+                RelayAuthTag::Source(source) => Some(source.clone()),
+                _ => None,
+            },
         }
     }
 
@@ -2435,7 +2545,7 @@ async fn run_background_task(
     keys: Keys,
     relay_url: String,
     agent_pubkey_hex: String,
-    auth_tag: Option<nostr::Tag>,
+    auth_tag: RelayAuthTag,
 ) {
     let mut state = BgState::new();
 
@@ -2448,7 +2558,7 @@ async fn run_background_task(
         &keys,
         &relay_url,
         &agent_pubkey_hex,
-        auth_tag.as_ref(),
+        &auth_tag,
     )
     .await;
     if !handshake_ok {
@@ -2465,7 +2575,7 @@ async fn run_background_task(
             &agent_pubkey_hex,
             &event_tx,
             &observer_control_tx,
-            auth_tag.as_ref(),
+            &auth_tag,
         )
         .await
         {
@@ -2490,7 +2600,7 @@ async fn run_background_task(
                         &event_tx,
                         &observer_control_tx,
                         true,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                     )
                     .await,
                     ReconnectOutcome::Shutdown
@@ -2550,7 +2660,7 @@ async fn run_background_task(
                         &agent_pubkey_hex,
                         &event_tx,
                         &observer_control_tx,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                     )
                     .await
                     {
@@ -2581,7 +2691,7 @@ async fn run_background_task(
                                     &event_tx,
                                     &observer_control_tx,
                                     true,
-                                    auth_tag.as_ref(),
+                                    &auth_tag,
                                 )
                                 .await,
                                 ReconnectOutcome::Shutdown
@@ -2712,7 +2822,7 @@ async fn run_background_task(
                                        &keys,
                                        &relay_url,
                                        &agent_pubkey_hex,
-                                       auth_tag.as_ref(),
+                                       &auth_tag,
                                    )
                                    .await
                                }
@@ -2741,7 +2851,7 @@ async fn run_background_task(
                                &agent_pubkey_hex,
                                &event_tx,
                            &observer_control_tx,
-            auth_tag.as_ref(),
+            &auth_tag,
                            )
                            .await;
                            match outcome {
@@ -2762,7 +2872,7 @@ async fn run_background_task(
                                    wait_for_reconnect(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx, &observer_control_tx, true,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                                    ).await,
                                    ReconnectOutcome::Shutdown
                                ) { return; }
@@ -2795,7 +2905,7 @@ async fn run_background_task(
                                    wait_for_reconnect(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx, &observer_control_tx, true,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                                    ).await,
                                    ReconnectOutcome::Shutdown
                                ) { return; }
@@ -2831,7 +2941,7 @@ async fn run_background_task(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
                                    &observer_control_tx,
-            auth_tag.as_ref(),
+            &auth_tag,
                                    ).await {
                                        ReconnectOutcome::Shutdown => return,
                                        ReconnectOutcome::Ok => {
@@ -2845,7 +2955,7 @@ async fn run_background_task(
                                                wait_for_reconnect(
                                                    &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx, &observer_control_tx, true,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                                                ).await,
                                                ReconnectOutcome::Shutdown
                                            ) { return; }
@@ -2870,7 +2980,7 @@ async fn run_background_task(
                                &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
                            &observer_control_tx,
-            auth_tag.as_ref(),
+            &auth_tag,
                            ).await {
                                ReconnectOutcome::Shutdown => return,
                                ReconnectOutcome::Ok => {
@@ -2884,7 +2994,7 @@ async fn run_background_task(
                                        wait_for_reconnect(
                                            &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx, &observer_control_tx, true,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                                        ).await,
                                        ReconnectOutcome::Shutdown
                                    ) { return; }
@@ -2903,7 +3013,7 @@ async fn run_background_task(
                                    &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
                                &observer_control_tx,
-            auth_tag.as_ref(),
+            &auth_tag,
                                ).await {
                                    ReconnectOutcome::Shutdown => return,
                                    ReconnectOutcome::Ok => {
@@ -2917,7 +3027,7 @@ async fn run_background_task(
                                            wait_for_reconnect(
                                                &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx, &observer_control_tx, true,
-                        auth_tag.as_ref(),
+                        &auth_tag,
                                            ).await,
                                            ReconnectOutcome::Shutdown
                                        ) { return; }
@@ -2984,7 +3094,7 @@ async fn handle_ws_message(
     keys: &Keys,
     relay_url: &str,
     agent_pubkey_hex: &str,
-    auth_tag: Option<&nostr::Tag>,
+    auth_tag: &RelayAuthTag,
 ) -> bool {
     match msg {
         Message::Text(text) => {
@@ -3383,7 +3493,7 @@ async fn process_handshake_buffer(
     keys: &Keys,
     relay_url: &str,
     agent_pubkey_hex: &str,
-    auth_tag: Option<&nostr::Tag>,
+    auth_tag: &RelayAuthTag,
 ) -> bool {
     if buffer.is_empty() {
         return true;
@@ -3932,7 +4042,7 @@ async fn try_autonomous_reconnect(
     agent_pubkey_hex: &str,
     event_tx: &mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: &mpsc::Sender<Event>,
-    auth_tag: Option<&nostr::Tag>,
+    auth_tag: &RelayAuthTag,
 ) -> ReconnectOutcome {
     state.requeue_observer_in_flight();
     state.requeue_latest_ephemeral_in_flight();
@@ -4063,7 +4173,7 @@ async fn wait_for_reconnect(
     event_tx: &mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: &mpsc::Sender<Event>,
     skip_drain: bool,
-    auth_tag: Option<&nostr::Tag>,
+    auth_tag: &RelayAuthTag,
 ) -> ReconnectOutcome {
     state.requeue_observer_in_flight();
     state.requeue_latest_ephemeral_in_flight();
@@ -4466,26 +4576,28 @@ fn extract_h_tag_uuid(event: &nostr::Event) -> Option<Uuid> {
 
 /// Build and send a NIP-42 AUTH response event.
 ///
-/// If `auth_tag` is provided (NIP-OA owner attestation), it is included in the
-/// AUTH event so the relay can use it for membership delegation fallback.
+/// If `auth_tag` currently yields a tag (NIP-OA owner attestation), it is
+/// included in the AUTH event so the relay can use it for membership delegation
+/// fallback. It is read here, at each AUTH, so a reconnect after the tag was
+/// renewed presents the renewed tag.
 async fn send_auth_response(
     ws: &mut WsStream,
     challenge: &str,
     relay_url: &str,
     keys: &Keys,
-    auth_tag: Option<&nostr::Tag>,
+    auth_tag: &RelayAuthTag,
 ) -> Result<(), RelayError> {
     let relay_nostr_url = RelayUrl::parse(relay_url)
         .map_err(|e| RelayError::Http(format!("invalid relay URL: {e}")))?;
 
-    let auth_event = if let Some(tag) = auth_tag {
+    let auth_event = if let Some(tag) = auth_tag.current() {
         // Cannot use EventBuilder::auth() shortcut — it doesn't accept extra tags.
         let tags = vec![
             nostr::Tag::parse(["relay", relay_url])
                 .map_err(|e| RelayError::Http(format!("tag parse error: {e}")))?,
             nostr::Tag::parse(["challenge", challenge])
                 .map_err(|e| RelayError::Http(format!("tag parse error: {e}")))?,
-            tag.clone(),
+            tag,
         ];
         EventBuilder::new(nostr::Kind::Authentication, "")
             .tags(tags)
@@ -4863,7 +4975,7 @@ where
 async fn do_connect(
     relay_url: &str,
     keys: &Keys,
-    auth_tag: Option<&nostr::Tag>,
+    auth_tag: &RelayAuthTag,
 ) -> Result<(WsStream, VecDeque<RelayMessage>), RelayError> {
     let parsed = relay_url
         .parse::<url::Url>()
@@ -5442,6 +5554,36 @@ mod tests {
             .expect("read test websocket frame");
         serde_json::from_str(message.to_text().expect("expected text frame"))
             .expect("parse test websocket frame")
+    }
+
+    /// AGI-198: every NIP-42 AUTH (initial, mid-session, reconnect) goes
+    /// through `send_auth_response`, which reads the tag at that moment.
+    #[tokio::test]
+    async fn each_auth_response_carries_the_tag_the_file_holds_then() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, first, renewed, auth_tag) = renewable_auth_tag(dir.path());
+        let (mut client, mut server) = test_ws_pair().await;
+        let keys = nostr::Keys::generate();
+        let auth_tag_of = |frame: serde_json::Value| {
+            let tags = frame[1]["tags"].as_array().unwrap().clone();
+            tags.into_iter()
+                .find(|tag| tag[0] == "auth")
+                .map(|tag| serde_json::to_string(&tag).unwrap())
+        };
+
+        send_auth_response(&mut client, "c1", "wss://relay.test", &keys, &auth_tag)
+            .await
+            .unwrap();
+        assert_eq!(auth_tag_of(next_test_frame(&mut server).await), Some(first));
+
+        std::fs::write(&path, &renewed).unwrap();
+        send_auth_response(&mut client, "c2", "wss://relay.test", &keys, &auth_tag)
+            .await
+            .unwrap();
+        assert_eq!(
+            auth_tag_of(next_test_frame(&mut server).await),
+            Some(renewed)
+        );
     }
 
     fn test_channel_filter() -> ChannelFilter {
@@ -7315,7 +7457,7 @@ mod tests {
     #[tokio::test]
     async fn do_connect_wrong_scheme_is_terminal() {
         let keys = nostr::Keys::generate();
-        let err = do_connect("https://example.com", &keys, None)
+        let err = do_connect("https://example.com", &keys, &RelayAuthTag::None)
             .await
             .unwrap_err();
         assert!(
@@ -7590,7 +7732,7 @@ mod tests {
             &keys,
             "wss://relay.test",
             "agent-pubkey",
-            None,
+            &RelayAuthTag::None,
         )
         .await;
 
@@ -7677,7 +7819,7 @@ mod tests {
             &keys,
             "wss://relay.test",
             "agent-pubkey",
-            None,
+            &RelayAuthTag::None,
         )
         .await;
 
@@ -8151,6 +8293,7 @@ mod tests {
             base_url: base_url.to_owned(),
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
+            auth_tag_source: None,
         }
     }
 
@@ -8278,6 +8421,98 @@ mod tests {
             let _ = stream.shutdown().await;
         });
         format!("http://{addr}")
+    }
+
+    /// AGI-198: a tag source over BEEKEEPER_AUTH_TAG_FILE, written once and
+    /// renewed later. The agent pubkey is irrelevant to the harness (it parses,
+    /// the relay verifies), so the tags are signed for a throwaway key.
+    fn renewable_auth_tag(
+        dir: &std::path::Path,
+    ) -> (std::path::PathBuf, String, String, RelayAuthTag) {
+        let owner = nostr::Keys::generate();
+        let agent = nostr::Keys::generate();
+        let tag_for = |deadline: u64| {
+            beekeeper_sdk::nip_oa::compute_auth_tag(
+                &owner,
+                &agent.public_key(),
+                &format!("created_at<{deadline}"),
+            )
+            .unwrap()
+        };
+        let (first, renewed) = (tag_for(1_900_000_000), tag_for(1_900_014_400));
+        let path = dir.join("auth-tag.json");
+        std::fs::write(&path, format!("{first}\n")).unwrap();
+        let source = beekeeper_core::auth_tag_source::AuthTagSource::new(
+            Some(path.clone()),
+            Some("[\"auth\",\"stale-env\"]".into()),
+        );
+        (path, first, renewed, RelayAuthTag::from_source(source))
+    }
+
+    #[tokio::test]
+    async fn rest_client_sends_the_auth_tag_the_file_holds_at_each_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, first, renewed, auth_tag) = renewable_auth_tag(dir.path());
+        let mut client = test_rest_client("http://unused");
+        client.auth_tag_source = match auth_tag {
+            RelayAuthTag::Source(source) => Some(source),
+            _ => unreachable!(),
+        };
+
+        let (base, rx) = mock_http_once("200 OK", b"{\"count\":0}".to_vec()).await;
+        client.base_url = base;
+        let _ = client
+            .count(&[nostr::Filter::new().kind(Kind::Custom(1))])
+            .await;
+        assert_eq!(rx.await.unwrap().headers.get("x-auth-tag"), Some(&first));
+
+        std::fs::write(&path, &renewed).unwrap();
+        let (base, rx) = mock_http_once("200 OK", b"{\"count\":0}".to_vec()).await;
+        client.base_url = base;
+        let _ = client
+            .count(&[nostr::Filter::new().kind(Kind::Custom(1))])
+            .await;
+        assert_eq!(rx.await.unwrap().headers.get("x-auth-tag"), Some(&renewed));
+
+        // The source wins over a fixed value; without one, the fixed value.
+        client.auth_tag_json = Some("fixed".into());
+        assert_eq!(client.auth_tag_header(), Some(renewed));
+        client.auth_tag_source = None;
+        assert_eq!(client.auth_tag_header().as_deref(), Some("fixed"));
+    }
+
+    #[test]
+    fn relay_auth_tag_without_a_file_is_parsed_once_from_the_env_value() {
+        let tag = beekeeper_sdk::nip_oa::compute_auth_tag(
+            &nostr::Keys::generate(),
+            &nostr::Keys::generate().public_key(),
+            "",
+        )
+        .unwrap();
+        let fixed = RelayAuthTag::from_source(
+            beekeeper_core::auth_tag_source::AuthTagSource::fixed(Some(tag.clone())),
+        );
+        assert!(matches!(fixed, RelayAuthTag::Fixed(_)));
+        assert_eq!(fixed.current_json(), Some(tag));
+        for none in [None, Some(String::new()), Some("not json".to_owned())] {
+            let source = beekeeper_core::auth_tag_source::AuthTagSource::fixed(none);
+            assert!(matches!(
+                RelayAuthTag::from_source(source),
+                RelayAuthTag::None
+            ));
+        }
+    }
+
+    #[test]
+    fn relay_auth_tag_falls_back_to_the_env_value_when_the_file_goes_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, _first, _renewed, auth_tag) = renewable_auth_tag(dir.path());
+        std::fs::remove_file(&path).unwrap();
+        // The stale env value parses as no NIP-OA tag (wrong arity), so the
+        // fallback is visible as None rather than as the old file contents.
+        assert_eq!(auth_tag.current(), None);
+        std::fs::write(&path, "garbage").unwrap();
+        assert_eq!(auth_tag.current(), None, "a malformed file is no tag");
     }
 
     #[tokio::test]

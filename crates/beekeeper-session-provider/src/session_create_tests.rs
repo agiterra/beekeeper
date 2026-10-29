@@ -146,6 +146,7 @@ async fn generic_actor_fixture(with_mcp: bool) {
         base_url: format!("http://{address}"),
         keys: provider.config.keys.clone(),
         auth_tag_json: None,
+        auth_tag_source: None,
     });
     provider.relay_self = Some(Keys::generate().public_key().to_hex());
     provider

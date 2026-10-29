@@ -640,6 +640,9 @@ impl crate::publish::EventSink for ConversationPublisher {
         let key = fs::read_to_string(actor_dir.join("key")).map_err(|e| e.to_string())?;
         let mut rest = self.rest.clone();
         rest.keys = Keys::parse(key.trim()).map_err(|e| e.to_string())?;
+        // The actor's own attestation, never the provider's: a renewing source
+        // on the provider's client would otherwise win over it.
+        rest.auth_tag_source = None;
         rest.auth_tag_json = match fs::read_to_string(actor_dir.join("auth-tag.json")) {
             Ok(tag) => Some(tag),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,

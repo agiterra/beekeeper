@@ -197,7 +197,7 @@ async fn run_connection(
     let mut conn = match NostrWsConnection::connect_authenticated(
         &client.ws_url(),
         client.keys(),
-        client.auth_tag(),
+        client.auth_tag().as_ref(),
     )
     .await
     {

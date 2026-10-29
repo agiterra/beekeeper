@@ -5,6 +5,7 @@
 //! event as the credential value.  Git then sends:
 //!   Authorization: Nostr <credential>
 
+pub mod auth_tag_file;
 pub mod legacy_env;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -286,7 +287,9 @@ pub fn authorization_header(
     ))
 }
 
-/// Load the NIP-OA owner attestation injected by Beekeeper Desktop/ACP.
+/// Load the NIP-OA owner attestation injected by Beekeeper Desktop/ACP:
+/// `BEEKEEPER_AUTH_TAG_FILE`, else `BEEKEEPER_AUTH_TAG`, else the
+/// `nostr.authtag` git config ([`auth_tag_file::env_auth_tag`]).
 ///
 /// The tag must be part of the signed NIP-98 event: Git's credential protocol
 /// can return an Authorization value, but it cannot add a separate HTTP header.
@@ -295,8 +298,7 @@ pub fn authorization_header(
 /// every git request fails, and a caller that quietly dropped it would report a
 /// success git will never have.
 pub fn resolve_auth_tag() -> Result<Option<Tag>, String> {
-    let raw = std::env::var("BEEKEEPER_AUTH_TAG")
-        .ok()
+    let raw = auth_tag_file::env_auth_tag()
         .filter(|value| !value.is_empty())
         .or_else(|| git_config("nostr.authtag"));
 

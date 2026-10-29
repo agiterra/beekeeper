@@ -62,6 +62,7 @@ impl Custody {
                 base_url,
                 keys,
                 auth_tag_json: Some(tag.into()),
+                auth_tag_source: None,
             },
         })
     }

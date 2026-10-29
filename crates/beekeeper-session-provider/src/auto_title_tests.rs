@@ -715,6 +715,7 @@ fn test_provider(state_dir: &Path, auto_title: &str) -> crate::Provider {
         base_url: "http://127.0.0.1:9".into(),
         keys: Keys::generate(),
         auth_tag_json: None,
+        auth_tag_source: None,
     });
     provider
 }
@@ -898,6 +899,7 @@ async fn the_founders_first_turn_streams_while_its_title_is_still_running() {
         base_url: format!("http://{address}"),
         keys: Keys::generate(),
         auth_tag_json: None,
+        auth_tag_source: None,
     });
     provider
         .state
