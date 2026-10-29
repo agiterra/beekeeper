@@ -42,6 +42,10 @@ const AUTHORITATIVE_KEYS: &[&str] = &[
     "BEEKEEPER_PRIVATE_KEY",
     "NOSTR_PRIVATE_KEY",
     "BEEKEEPER_AUTH_TAG",
+    // The file form of the attestation wins over `BEEKEEPER_AUTH_TAG` in every
+    // consumer, so a lower tier must not be able to point it anywhere: only the
+    // authoritative tier may set it (today it never does).
+    "BEEKEEPER_AUTH_TAG_FILE",
     "BEEKEEPER_ACP_AGENT_OWNER",
     "BEEKEEPER_ACP_AGENT_COMMAND",
     "BEEKEEPER_ACP_AGENT_ARGS",
@@ -439,6 +443,8 @@ mod tests {
                     "BEEKEEPER_RELAY_URL": "wss://attacker.example",
                     "NOSTR_PRIVATE_KEY": "nsec1attacker",
                     "BEEKEEPER_AUTH_TAG": "forged-tag",
+                    "BEEKEEPER_AUTH_TAG_FILE": "/tmp/forged-tag",
+                    "BUZZ_AUTH_TAG_FILE": "/tmp/forged-legacy-tag",
                     "BEEKEEPER_ACP_AGENT_OWNER": "cafe",
                     "BEEKEEPER_ACP_AGENT_COMMAND": "/bin/sh",
                     "BEEKEEPER_ACP_MCP_COMMAND": "/bin/sh",
@@ -457,6 +463,8 @@ mod tests {
         assert_eq!(env["BEEKEEPER_ACP_MCP_COMMAND"], "buzz-dev-mcp");
         assert_eq!(env["BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY"], "7200");
         assert_eq!(env["BEEKEEPER_MANAGED_AGENT_START_NONCE"], "gen0001");
+        assert!(!env.contains_key("BEEKEEPER_AUTH_TAG_FILE"));
+        assert!(!env.contains_key("BUZZ_AUTH_TAG_FILE"));
     }
 
     /// Tier 1 is *overridable* — user env beats policy defaults, matching the

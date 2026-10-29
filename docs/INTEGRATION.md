@@ -235,6 +235,26 @@ relay then admits the seat exactly as the rest of its HTTP surface does:
   principals and takes the more permissive, and a seat of the repo owner
   carries owner authority (`api/git/policy.rs`).
 
+**A tag that expires: `BEEKEEPER_AUTH_TAG_FILE`.** An attestation can carry a
+`created_at<T` condition (a broker caps it at hours), and the relay checks `T` on
+every authenticated request. An environment variable is fixed when a process
+starts, so a renewal cannot reach a running harness, MCP server or `bee`: after
+`T` every new HTTP call, NIP-42 AUTH and reconnect is refused. Point
+`BEEKEEPER_AUTH_TAG_FILE` at a file holding the same JSON instead (a trailing
+newline is fine) and every consumer re-reads it at the point of use — each
+`bee` request and signed event, each harness AUTH (initial, mid-session,
+reconnect) and bridge write, each MCP server spawn (the harness forwards both
+the pointer and the tag as of that spawn), `view_image`'s media fetch, and each
+`git-credential-nostr` / `git-sign-nostr` run. The file wins over
+`BEEKEEPER_AUTH_TAG`; a file that is set but unreadable or empty falls back to it
+with a warning naming the path and the error (never the tag). Renew it with an
+atomic write (write a sibling, then rename): a reader that catches a half-written
+file sees a malformed tag for that one use. The shared reader is
+`beekeeper_core::auth_tag_source`; the two git helpers carry a local copy.
+Every list that clears, fences or refuses `BEEKEEPER_AUTH_TAG` names
+`BEEKEEPER_AUTH_TAG_FILE` and `BUZZ_AUTH_TAG_FILE` beside it, because the pointer
+outranks the tag it would otherwise smuggle past the clear.
+
 This is inheritance, not a bypass. An owner with no grant admits nobody,
 removing the owner revokes every seat attested to them in the same request, and
 every denial is the same generic 404 as a nonexistent repo, so nothing about

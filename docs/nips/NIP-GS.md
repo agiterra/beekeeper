@@ -470,7 +470,11 @@ sources, checked in order:
 
 1. `BEEKEEPER_AUTH_TAG` environment variable — a JSON-encoded array of 4 strings
    (`["auth", "<owner>", "<conditions>", "<sig>"]`). The program extracts
-   elements 1–3 for the `oa` field.
+   elements 1–3 for the `oa` field. When `BEEKEEPER_AUTH_TAG_FILE` names a
+   readable, non-empty file, its contents (same JSON, surrounding whitespace
+   ignored) are used in place of the variable, so a host can renew a
+   time-limited tag without restarting the agent; an unreadable or empty file
+   falls back to the variable with a warning.
 2. `nostr.authtag` git config key — same JSON format.
 
 If no auth tag is available, the `oa` field is omitted. This is not an error.

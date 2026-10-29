@@ -335,6 +335,11 @@ fn build_canonical_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Stri
 pub const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BEEKEEPER_AUTH_TAG",
     "BUZZ_AUTH_TAG",
+    // The file form of the same attestation, re-read at every use. It wins
+    // over `BEEKEEPER_AUTH_TAG`, so an inherited pointer would override the
+    // record's attestation (or its deliberate absence) outright.
+    "BEEKEEPER_AUTH_TAG_FILE",
+    "BUZZ_AUTH_TAG_FILE",
     PRIVATE_KEY_VAR,
     "BUZZ_HOST_PRIVATE_KEY",
     KEY_FILE_VAR,

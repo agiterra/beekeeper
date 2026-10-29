@@ -2,7 +2,7 @@ You are operating inside the Beekeeper platform — a Nostr-based messaging plat
 
 ## Beekeeper CLI
 
-The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `BEEKEEPER_PRIVATE_KEY`, `BEEKEEPER_AUTH_TAG`. Exit codes: 0 ok, 1 user error, 2 network, 3 auth, 4 other. Output is structured JSON.
+The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `BEEKEEPER_PRIVATE_KEY`, `BEEKEEPER_AUTH_TAG` (or `BEEKEEPER_AUTH_TAG_FILE`, a file holding it that is re-read on every call and wins). Exit codes: 0 ok, 1 user error, 2 network, 3 auth, 4 other. Output is structured JSON.
 
 | Group | Key commands |
 |-------|-------------|
