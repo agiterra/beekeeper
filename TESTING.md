@@ -180,13 +180,14 @@ Desktop's data** if its services are sharing your dev stack (see callout
 above).
 
 > **Heads up — scrub stale env first.** If your shell inherits any of
-> `BEEKEEPER_AUTH_TAG`, `BEEKEEPER_RELAY_URL`, or `BEEKEEPER_PRIVATE_KEY` from a
-> prior session (or a staging config), `unset` them before continuing.
+> `BEEKEEPER_AUTH_TAG`, `BEEKEEPER_AUTH_TAG_FILE`, `BEEKEEPER_RELAY_URL`, or
+> `BEEKEEPER_PRIVATE_KEY` from a prior session (or a staging config), `unset`
+> them before continuing.
 > A stale `BEEKEEPER_AUTH_TAG` fails the **local dev relay** with
 > `auth_error: signature verification failed` on the first CLI write —
 > it is *not* tolerated.
 > ```bash
-> unset BEEKEEPER_AUTH_TAG BEEKEEPER_RELAY_URL BEEKEEPER_PRIVATE_KEY
+> unset BEEKEEPER_AUTH_TAG BEEKEEPER_AUTH_TAG_FILE BEEKEEPER_RELAY_URL BEEKEEPER_PRIVATE_KEY
 > ```
 
 ### 2. Build the binaries
@@ -468,6 +469,7 @@ CLI-side, only two matter for testing:
 | `BEEKEEPER_RELAY_URL`      | `http://localhost:3000`  | CLI relay base; accepts `ws(s)://` and normalises |
 | `BEEKEEPER_PRIVATE_KEY`    | — (**required**)         | `nsec1…` or 64-char hex |
 | `BEEKEEPER_AUTH_TAG`       | unset                    | Optional NIP-OA owner attestation JSON |
+| `BEEKEEPER_AUTH_TAG_FILE`  | unset                    | File holding that JSON, re-read at every use; wins over `BEEKEEPER_AUTH_TAG` |
 
 ---
 

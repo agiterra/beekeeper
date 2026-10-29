@@ -689,6 +689,10 @@ fn the_clear_list_names_both_spellings_of_every_beekeeper_name() {
         }
     }
     assert!(INHERITED_KEYS_TO_CLEAR.contains(&"BUZZ_AUTH_TAG"));
+    // The file form wins over the variable, so a clear that missed it would
+    // let an inherited pointer override the record's attestation.
+    assert!(INHERITED_KEYS_TO_CLEAR.contains(&"BEEKEEPER_AUTH_TAG_FILE"));
+    assert!(INHERITED_KEYS_TO_CLEAR.contains(&"BUZZ_AUTH_TAG_FILE"));
 }
 
 /// The child sees every name the host sets in both spellings, with the same

@@ -82,10 +82,14 @@ const PASSTHROUGH_ENV: &[&str] = &[
     // and BEEKEEPER_RELAY_URL are kept for the `bee` CLI. BEEKEEPER_AUTH_TAG is a
     // non-secret signed ownership attestation needed by portable owner-scoped
     // CLI operations; MCP subprocesses are trusted like the agent runtime.
+    // BEEKEEPER_AUTH_TAG_FILE names a file holding that same attestation, re-read
+    // at every use so a renewed tag reaches a running dev-mcp and each `bee` it
+    // spawns; wherever the tag passes, its pointer passes too.
     "NOSTR_PRIVATE_KEY",
     "BEEKEEPER_PRIVATE_KEY",
     "BEEKEEPER_RELAY_URL",
     "BEEKEEPER_AUTH_TAG",
+    "BEEKEEPER_AUTH_TAG_FILE",
     // Agent display name — dev-mcp uses it as the git author name. On the
     // Desktop path this arrives via the wire `mcpServers[].env` declaration
     // (which wins here anyway); the allowlist entry covers ACP clients that
@@ -1039,6 +1043,7 @@ mod content_tests {
     #[test]
     fn passthrough_includes_beekeeper_owner_attestation() {
         assert!(PASSTHROUGH_ENV.contains(&"BEEKEEPER_AUTH_TAG"));
+        assert!(PASSTHROUGH_ENV.contains(&"BEEKEEPER_AUTH_TAG_FILE"));
     }
 
     #[test]
