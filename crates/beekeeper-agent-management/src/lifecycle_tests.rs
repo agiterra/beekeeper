@@ -970,6 +970,8 @@ async fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal
         ..Default::default()
     };
     let original = local::Operation {
+        hire: None,
+        hire_decision: None,
         request: json!({"owner":relay.keys().public_key().to_hex(),"relay":relay.relay_url(),"prompt":args.system_prompt,"model":args.model,"privateConfig":private}),
         actor_pubkey: actor.pubkey.clone(),
         events: vec![definition.clone()],

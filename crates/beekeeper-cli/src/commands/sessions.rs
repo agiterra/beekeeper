@@ -113,6 +113,7 @@ pub mod handover_render;
 mod hire_evidence;
 #[cfg(test)]
 mod hire_evidence_tests;
+pub mod hire_host;
 pub mod measure;
 pub mod observations;
 pub mod operations;
@@ -3004,6 +3005,7 @@ pub async fn dispatch(
             )
             .await
         }
+        SessionsCmd::HireHost(command) => hire_host::dispatch(command, client).await,
         SessionsCmd::Hire(crate::SessionsHireArgs {
             channel,
             session_ref,

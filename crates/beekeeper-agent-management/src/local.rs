@@ -5,6 +5,10 @@ use super::*;
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Operation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) hire: Option<crate::hire::Progress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) hire_decision: Option<crate::hire_refusal::Decision>,
     pub(crate) request: Value,
     pub(crate) actor_pubkey: String,
     pub(crate) events: Vec<Event>,
@@ -201,6 +205,25 @@ pub(crate) fn operation_path(context: &Context, id: Uuid) -> Result<PathBuf, Cli
 }
 
 pub(crate) fn read_operation(path: &Path, request: &Value) -> Result<Option<Operation>, CliError> {
+    let operation = read_stored_operation(path)?;
+    if operation
+        .as_ref()
+        .is_some_and(|held| held.request != *request)
+    {
+        return Err(CliError::Conflict("operation UUID was already used with a different request; original operation preserved".into()));
+    }
+    Ok(operation)
+}
+
+pub(crate) fn read_stored_operation(path: &Path) -> Result<Option<Operation>, CliError> {
+    read_operation_value(path)?
+        .map(|value| {
+            serde_json::from_value(value).map_err(|_| fail("operation journal is malformed"))
+        })
+        .transpose()
+}
+
+pub(crate) fn read_operation_value(path: &Path) -> Result<Option<Value>, CliError> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -226,11 +249,8 @@ pub(crate) fn read_operation(path: &Path, request: &Value) -> Result<Option<Oper
             "operation journal grew beyond its bound".into(),
         ));
     }
-    let operation: Operation =
+    let operation: Value =
         serde_json::from_slice(&bytes).map_err(|_| fail("operation journal is malformed"))?;
-    if operation.request != *request {
-        return Err(CliError::Conflict("operation UUID was already used with a different request; original operation preserved".into()));
-    }
     Ok(Some(operation))
 }
 
@@ -293,9 +313,61 @@ pub(crate) fn stage_actor(
     cwd: &Path,
     project: Option<&str>,
 ) -> Result<(), CliError> {
+    stage_actor_with_role(
+        config,
+        command,
+        actor,
+        name,
+        credentials,
+        cwd,
+        project,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_actor_with_role(
+    config: &HostConfig,
+    command: &str,
+    actor: &str,
+    name: &str,
+    credentials: (&str, &str),
+    cwd: &Path,
+    project: Option<&str>,
+    role: Option<Value>,
+) -> Result<(), CliError> {
     let (key, auth) = credentials;
     let path = config.provider_state_dir.join("actor-seats.json");
-    let mut seats: Value = match std::fs::read(&path) {
+    // Bind before publishing custody; callers publish the create only after
+    // this entire operation succeeds. The custody lock is never nested.
+    crate::bind_pending_directory(
+        &config.provider_state_dir.join(PROJECTS_FILE_NAME),
+        command,
+        cwd,
+        project,
+    )?;
+    update_actor_seats(&path, |pending| {
+        let mut seat = json!({"pubkey":actor,"nsec":key,"authTag":auth,
+            "relayUrl":config.relay_url,"displayName":name});
+        if let Some(role) = role {
+            let fields = role
+                .as_object()
+                .ok_or_else(|| fail("seat role fields malformed"))?;
+            for (k, v) in fields {
+                seat[k] = v.clone();
+            }
+        }
+        pending.insert(command.to_string(), seat);
+        Ok(())
+    })
+}
+
+fn update_actor_seats(
+    path: &Path,
+    mutate: impl FnOnce(&mut serde_json::Map<String, Value>) -> Result<(), CliError>,
+) -> Result<(), CliError> {
+    let _lock = beekeeper_session_provider::actor_seats::lock_seats(path).map_err(fail)?;
+    let mut seats: Value = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
             fail("existing actor seat custody is malformed; refusing to replace it")
         })?,
@@ -308,20 +380,13 @@ pub(crate) fn stage_actor(
         .get_mut("pending")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| fail("existing actor seats pending map is malformed"))?;
-    pending.insert(
-        command.to_string(),
-        json!({"pubkey":actor,"nsec":key,"authTag":auth,
-        "relayUrl":config.relay_url,"displayName":name}),
-    );
-    save(&path, &seats)?;
-    crate::bind_pending_directory(
-        &config.provider_state_dir.join(PROJECTS_FILE_NAME),
-        command,
-        cwd,
-        project,
-    )?;
-    Ok(())
+    mutate(pending)?;
+    save(path, &seats)
 }
+
+#[cfg(test)]
+#[path = "seat_lock_tests.rs"]
+mod seat_lock_tests;
 
 pub(crate) fn install_route(
     state: &Path,

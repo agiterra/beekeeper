@@ -124,6 +124,8 @@ fn newer_definition_staging_preserves_captured_floor_and_refuses_explicit_drift(
         .sign_with_keys(relay.keys())
         .expect("new revision");
     let operation = Operation {
+        hire: None,
+        hire_decision: None,
         request: json!({}),
         actor_pubkey: actor,
         events: vec![revised],
@@ -240,6 +242,8 @@ fn existing_unproved_floor_never_becomes_latest_definition_time_or_stage_write()
         let before = std::fs::read(&path).expect("retained enrollment");
         let config_before = std::fs::read(dir.join("configuration.json")).expect("snapshot");
         let operation = Operation {
+            hire: None,
+            hire_decision: None,
             request: json!({}),
             actor_pubkey: actor,
             events: vec![head],

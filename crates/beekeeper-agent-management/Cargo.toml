@@ -8,6 +8,10 @@ repository.workspace = true
 description = "Shared headless managed identity administration"
 
 [dependencies]
+beekeeper-persona = { path = "../beekeeper-persona" }
+sha2.workspace = true
+hex.workspace = true
+tracing.workspace = true
 beekeeper-core.workspace = true
 beekeeper-sdk.workspace = true
 beekeeper-host-core = { path = "../beekeeper-host-core" }

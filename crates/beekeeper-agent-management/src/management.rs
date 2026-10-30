@@ -466,6 +466,8 @@ pub async fn create(
                 events.push(create);
             }
             let operation = Operation {
+                hire: None,
+                hire_decision: None,
                 request: request.clone(),
                 actor_pubkey: actor.pubkey.clone(),
                 events,

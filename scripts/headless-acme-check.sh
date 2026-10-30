@@ -99,9 +99,12 @@ err() { echo -e "${RED}[acme]${NC} $*" >&2; }
 START_EPOCH="$(date +%s)"
 # Short base on purpose: the host's control socket is an AF_UNIX path, capped
 # at ~104 bytes, and a scratch directory under a long TMPDIR would exceed it.
-WORKDIR="$(mktemp -d /tmp/acme-check.XXXXXX)"
+WORKDIR="${HEADLESS_ACME_WORKDIR:-$(mktemp -d /tmp/acme-check.XXXXXX)}"
+mkdir -p "${WORKDIR}"
+chmod 700 "${WORKDIR}"
 DB_NAME="buzz_acme_check_$$_$(date +%s)"
 RELAY_PID=""
+PROXY_PID=""
 HOST_PID=""
 RESULT_FILE="${WORKDIR}/results"
 : > "${RESULT_FILE}"
@@ -119,6 +122,8 @@ cleanup() {
     kill -9 "${HOST_PID}" 2>/dev/null || true
   fi
   if [[ -n "${RELAY_PID}" ]]; then kill "${RELAY_PID}" 2>/dev/null || true; fi
+  if [[ -n "${PROXY_PID}" ]]; then kill "${PROXY_PID}" 2>/dev/null || true; fi
+  source_manifest "${WORKDIR}/source-after.json"
   sleep 1
   dev_pg -d postgres \
     -c "DROP DATABASE IF EXISTS ${DB_NAME};" >/dev/null 2>&1 || true
@@ -135,6 +140,10 @@ cleanup() {
     exit 1
   fi
   ok "ALL STEPS PASSED"
+  if [[ "${HEADLESS_ACME_KEEP:-0}" == 1 ]]; then
+    ok "evidence preserved at ${WORKDIR}"
+    exit 0
+  fi
   # The provider resolves `node` through this repository's hermit stubs, and
   # hermit then unpacks a read-only package cache under the fake HOME; make it
   # writable before removing it, or the scratch directory outlives the run.
@@ -166,12 +175,34 @@ free_port() {
 jq_py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 strip_ansi() { sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g'; }
 
+source_manifest() {
+  python3 - "$1" <<'MANIFEST'
+import hashlib,json,pathlib,subprocess,sys
+paths=set(subprocess.check_output(['git','diff','--name-only','HEAD'],text=True).splitlines())
+paths.update(subprocess.check_output(['git','ls-files','--others','--exclude-standard'],text=True).splitlines())
+manifest={'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'files':{p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() if pathlib.Path(p).is_file() else None for p in sorted(paths)}}
+pathlib.Path(sys.argv[1]).write_text(json.dumps(manifest,indent=2))
+MANIFEST
+}
+source_manifest "${WORKDIR}/source-before.json"
+python3 - "${WORKDIR}/binaries-before.json" "${BEE_BIN}" "${RELAY_BIN}" "${HOST_BIN}" "${PROVIDER_BIN}" "${STUB}" "${REPO_ROOT}/target/debug/git-credential-nostr" "${REPO_ROOT}/conformance/acme-acp/hire_report.py" "${REPO_ROOT}/conformance/acme-acp/hire_proxy.py" "${REPO_ROOT}/conformance/acme-acp/hire_git_fault.py" <<'HASHES'
+import hashlib,json,pathlib,sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({str(pathlib.Path(p).resolve()):hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in sys.argv[2:]},indent=2))
+HASHES
+
 # ── Relay ───────────────────────────────────────────────────────────────────
 log "creating scratch database ${DB_NAME}..."
 dev_pg -d postgres \
   -c "CREATE DATABASE ${DB_NAME};" >/dev/null
 
 RELAY_PORT="$(free_port)"
+RELAY_BIND_PORT="${RELAY_PORT}"
+if [[ "${HEADLESS_HIRE_CHECK:-0}" == 1 ]]; then
+  dev_services_are_compose_defaults && { err "hire proof requires explicitly isolated service containers"; exit 1; }
+  RELAY_BIND_PORT="$(free_port)"
+  python3 "${REPO_ROOT}/conformance/acme-acp/hire_proxy.py" "${RELAY_PORT}" "${RELAY_BIND_PORT}" "${WORKDIR}" > "${WORKDIR}/proxy.log" 2>&1 &
+  PROXY_PID=$!
+fi
 RELAY_HTTP="http://127.0.0.1:${RELAY_PORT}"
 RELAY_WS="ws://127.0.0.1:${RELAY_PORT}"
 RELAY_KEY="$(openssl rand -hex 32)"
@@ -179,7 +210,7 @@ log "starting beekeeper-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14)..."
 DATABASE_URL="$(dev_pg_url "${DB_NAME}")" \
   REDIS_URL="$(dev_redis_url 14)" \
   RELAY_URL="${RELAY_WS}" \
-  BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
+  BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_BIND_PORT}" \
   BEEKEEPER_RELAY_PRIVATE_KEY="${RELAY_KEY}" \
   BEEKEEPER_REQUIRE_AUTH_TOKEN=false \
   BEEKEEPER_RECONCILE_CHANNELS=true \
@@ -280,7 +311,7 @@ step_host_run() {
   PROVIDER_PUBKEY="$(cat "${WORKDIR}/provider.pubkey")"
   HOME="${FAKE_HOME}" BEEKEEPER_HOST_HOME="${HOST_HOME}" BEEKEEPER_HOST_SOCK="${SOCK}" \
     BEEKEEPER_HOST_INSTANCE=production RUST_LOG="${RUST_LOG:-info},csp=info" \
-    "${HOST_BIN}" run > "${WORKDIR}/host.log" 2>&1 &
+    env -u FOREIGN_CLIENT_KEY_FILE -u FOREIGN_CLIENT_KEY -u BEEKEEPER_PRIVATE_KEY -u NOSTR_PRIVATE_KEY "${HOST_BIN}" run > "${WORKDIR}/host.log" 2>&1 &
   HOST_PID=$!
   echo "${HOST_PID}" > "${WORKDIR}/host.pid"
   local state=""
@@ -463,8 +494,19 @@ step_stop() {
 
 run_step 1 "commission a fresh host home with the acme descriptor and a 0600 credential file" step_commission
 run_step 2 "run the host in the foreground; it spawns and supervises the provider" step_host_run
+if [[ "${HEADLESS_HIRE_CHECK:-0}" == 1 ]]; then
+  step_hire() {
+    BEEKEEPER_RELAY_URL="${RELAY_HTTP}" BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" \
+      BEEKEEPER_HOST_HOME="${HOST_HOME}" BEEKEEPER_HOST_SOCK="${SOCK}" BEEKEEPER_HOST_INSTANCE=production \
+      python3 "${REPO_ROOT}/conformance/acme-acp/hire_acceptance.py" "${WORKDIR}" "${CHANNEL}" "${OWNER_PUBKEY}" "${BEE_BIN}" || return $?
+    pass 3 "canonical role install, headless hire, signed authority and actor-authored assignment report"
+  }
+  run_step 3 "deterministic headless hire vertical path" step_hire
+else
 run_step 3 "bee agents create admits one participant on acme-primary" step_create
 run_step 4 "one addressed message, exactly one signed reply carrying the credential witness" step_reply
 run_step 5 "signed 44223 metadata discloses credentialSource acme-vault" step_metadata
 run_step 6 "live 24224 presence readable via /query" step_presence
 run_step 7 "bee agents stop → signed stopped receipt; bee host stop → provider gone, host answering" step_stop
+
+fi

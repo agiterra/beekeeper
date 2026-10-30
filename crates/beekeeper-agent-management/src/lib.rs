@@ -148,3 +148,21 @@ impl std::fmt::Debug for PrivateConfiguration {
         formatter.write_str("PrivateConfiguration(<redacted>)")
     }
 }
+
+pub mod seat_materialization;
+
+pub mod hire;
+
+pub mod authority;
+pub mod hire_evidence;
+
+pub mod hire_source;
+pub mod role_install;
+
+pub mod hire_host;
+
+mod hire_pack_integrity;
+
+mod hire_preparation;
+
+mod hire_refusal;

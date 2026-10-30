@@ -118,6 +118,15 @@ def main() -> int:
                 f"acme answered prompt {prompts}: ACME_TOKEN sha256 prefix "
                 f"{credential_witness()}"
             )
+            if session.get("cwd") and os.path.isfile(os.path.join(session["cwd"], "hire-proof.json")):
+                from hire_report import report_assignment
+                try:
+                    report = report_assignment(params, session["cwd"])
+                    if report:
+                        text += "\n" + report
+                except Exception as error:
+                    text += "\nACME_HIRE_REPORT_FAILED: " + str(error)
+                    log(str(error))
             notify(
                 "session/update",
                 {

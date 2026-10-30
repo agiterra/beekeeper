@@ -378,6 +378,18 @@ impl ActorSeatsFile {
     }
 }
 
+/// Acquire the stable sibling custody lock used by staging and consumption.
+/// Hold it across the complete read/modify/atomic-write transaction, never
+/// through execution or relay waits. Dropping the returned file releases it.
+pub fn lock_seats(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    restrict_new_file(&mut options);
+    let lock = options.open(path.with_extension("lock"))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
 /// Delete one seat entry, rewriting the file with owner-only permissions.
 ///
 /// Called after the spawn attempt, success or failure: a seat entry is a
@@ -392,21 +404,11 @@ pub fn consume_seat(path: Option<&Path>, command_id: &str) -> std::io::Result<()
     let Some(path) = path else {
         return Ok(());
     };
-    // The host stages/restages under this same stable sibling lock. Reading
-    // before acquiring it could resurrect consumed entries or lose new seats.
-    let mut lock_options = OpenOptions::new();
-    lock_options
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false);
-    restrict_new_file(&mut lock_options);
-    let lock = match lock_options.open(path.with_extension("lock")) {
+    let _lock = match lock_seats(path) {
         Ok(lock) => lock,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    lock.lock()?;
     let body = match std::fs::read_to_string(path) {
         Ok(body) => body,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

@@ -2775,6 +2775,12 @@ pub enum ModerationCmd {
 /// direct-SQL equivalents for questions this surface does not answer.
 #[derive(Subcommand)]
 pub enum SessionsCmd {
+    /// Canonical one-role installation and an isolated owner-side hire listener.
+    #[command(
+        subcommand,
+        after_help = "Recipe:\n  bee sessions hire-host run --home /isolated/home --project <coordinate> --channel 00000000-0000-4000-8000-000000000001 --genesis <hex64> --actor <hex64> --provider-instance <ref> --model <id> --isolated-cutover --once"
+    )]
+    HireHost(commands::sessions::hire_host::Command),
     /// List the coding-session generations recorded in a channel. Each row's
     /// `sessionRef` is the umbrella id `--session-ref` takes elsewhere; the
     /// uuid inside `target` is the execution's sessionId, a different id
@@ -7257,6 +7263,7 @@ mod tests {
                 "grant-seat",
                 "handover",
                 "hire",
+                "hire-host",
                 "inbox",
                 "list",
                 "measure",
@@ -7489,7 +7496,8 @@ mod tests {
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
             // C3b lane C: `rewind` (SV-29).
-            ("sessions", 46),
+            // Owner-authenticated isolated hire responder.
+            ("sessions", 47),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

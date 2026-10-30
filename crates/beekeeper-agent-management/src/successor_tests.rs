@@ -279,6 +279,8 @@ async fn canonical_cli_successor_fences_other_contexts_and_reconciles_without_de
         .sign_with_keys(&owner)
         .expect("definition");
     let operation = Operation {
+        hire: None,
+        hire_decision: None,
         request: json!({"type":"create"}),
         actor_pubkey: actor.clone(),
         events: vec![event],

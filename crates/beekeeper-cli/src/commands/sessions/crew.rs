@@ -1572,59 +1572,7 @@ pub fn seat_repair_remedy(channel: &str, session_ref: &str, actor: &str) -> Stri
 /// carries no id the answer echoes, so the answer is recognized by *what it
 /// is* — a seated create, for this role, in this umbrella, published after the
 /// request went out.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HiredSeat {
-    /// Event id of the seated create.
-    pub event_id: String,
-    /// Pubkey that signed the seated create.
-    pub create_signer: String,
-    /// Its `commandId` — the key the provider's receipt answers on, and the
-    /// id this command reports back as the hire's own receipt reference.
-    pub command_id: String,
-    /// Pubkey the host chose to seat. Never a key, always a name.
-    pub actor: String,
-    /// Role slug it seated.
-    pub role: String,
-    /// Umbrella it joined.
-    pub session_ref: String,
-    /// Exact genesis the create joined.
-    pub genesis_ref: String,
-    /// Provider authority whose receipt may prove the execution exists.
-    pub provider_authority_pubkey: String,
-    /// Provider instance **alias** the host ran it on — the request's, or the
-    /// policy's.
-    ///
-    /// Typed since batch 2 lane B2. Comparing it with a receipt's
-    /// `cs-target.instanceId` is ledger item 102, and is now a compile error.
-    pub provider_instance_ref: ProviderInstanceAlias,
-    /// Model the host chose, when the create named one.
-    pub model: Option<String>,
-    /// Event `created_at`, Unix seconds.
-    pub at: i64,
-    /// Signed create retained for trust verification before granting a seat.
-    pub raw: Value,
-}
-
-/// What a provider answered a seated create with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SeatReceipt {
-    /// Event id of the provider receipt.
-    pub event_id: String,
-    /// Pubkey that signed the receipt.
-    pub signer: String,
-    /// The receipt's own status word.
-    pub status: ReceiptStatus,
-    /// `cs-target` key of the execution it minted, absent for a failure.
-    pub target_key: Option<String>,
-    /// `error.code`, when the receipt carried one.
-    pub error_code: Option<String>,
-    /// `error.message`, when the receipt carried one.
-    pub error_message: Option<String>,
-    /// Receipt `created_at`, Unix seconds.
-    pub at: i64,
-    /// Signed receipt retained for trust verification before granting a seat.
-    pub raw: Value,
-}
+pub use beekeeper_agent_management::hire_evidence::{HiredSeat, SeatReceipt};
 
 /// A host's refusal of a hire, as it reached the requesting seat.
 #[derive(Debug, Clone, PartialEq, Eq)]

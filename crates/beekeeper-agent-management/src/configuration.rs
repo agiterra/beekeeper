@@ -255,6 +255,8 @@ async fn update_guarded(
                 ))),
             )?;
             let operation = Operation {
+                hire: None,
+                hire_decision: None,
                 request: request.clone(),
                 actor_pubkey: args.agent_pubkey.clone(),
                 events: vec![event],

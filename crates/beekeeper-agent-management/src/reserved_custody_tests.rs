@@ -13,6 +13,8 @@ fn reservation() -> (Keys, Operation) {
         .sign_with_keys(&actor.keys)
         .expect("scoped profile");
     let operation = Operation {
+        hire: None,
+        hire_decision: None,
         request: json!({"type":"create","owner":owner.public_key().to_hex(),"operation":Uuid::new_v4()}),
         actor_pubkey: actor.pubkey,
         events: vec![public, profile],

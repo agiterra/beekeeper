@@ -257,6 +257,8 @@ fn operation_retry_keeps_exact_events_and_reused_id_conflicts() {
         .sign_with_keys(&keys)
         .expect("event");
     let operation = Operation {
+        hire: None,
+        hire_decision: None,
         request: json!({"name":"agent"}),
         actor_pubkey: keys.public_key().to_hex(),
         events: vec![event.clone()],
