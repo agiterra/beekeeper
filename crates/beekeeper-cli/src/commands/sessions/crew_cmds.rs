@@ -1019,6 +1019,7 @@ const HIRE_ANSWER_KINDS: &[u32] = &[
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_COMMAND,
+    beekeeper_core::kind::KIND_STREAM_MESSAGE,
 ];
 
 /// One read of the channel for a hire answer, plus the evidence it discarded.
@@ -1049,6 +1050,7 @@ pub(super) async fn read_hire_answer(
     genesis_ref: &str,
     role: &str,
     since: i64,
+    request: Option<&nostr::Event>,
 ) -> Result<HireAnswer, CliError> {
     let events = fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await?;
     let (receipts, _) = decode_receipts(&events);
@@ -1125,7 +1127,11 @@ pub(super) async fn read_hire_answer(
             chrono::Utc::now().timestamp(),
         );
         let (commands, _) = decode_turn_commands(&events);
-        find_hire_refusal(&commands, &executions, session_ref, since)
+        if let Some(request) = request.filter(|event| super::hire_chat::has_return_address(event)) {
+            super::hire_chat::find_refusal(&events, channel_id, genesis_ref, request)
+        } else {
+            find_hire_refusal(&commands, &executions, session_ref, since)
+        }
     };
     Ok(HireAnswer {
         outcome: fold_hire(seat, receipt, refusal, false),
@@ -1347,6 +1353,7 @@ pub async fn cmd_hire(
     channel_id: &str,
     session_ref: &str,
     genesis: Option<&str>,
+    reply_to: Option<&str>,
     role: &str,
     provider_instance: Option<&str>,
     model: Option<&str>,
@@ -1363,6 +1370,9 @@ pub async fn cmd_hire(
     validate_role_slug(role).map_err(CliError::Usage)?;
     if let Some(genesis) = genesis {
         validate_event_id_hex("--genesis", genesis).map_err(CliError::Usage)?;
+    }
+    if let Some(id) = reply_to {
+        validate_event_id_hex("--reply-to", id).map_err(CliError::Usage)?;
     }
     let brief_text = match (brief, content) {
         (Some(path), None) => read_file_or_stdin(path)?,
@@ -1415,7 +1425,7 @@ pub async fn cmd_hire(
         .map(ProviderInstanceAlias::from_wire)
         .transpose()
         .map_err(|error| CliError::Usage(format!("--provider-instance: {error}")))?;
-    let payload = hire_payload(
+    let mut payload = hire_payload(
         &command_id,
         session_ref,
         &genesis_ref,
@@ -1446,6 +1456,9 @@ pub async fn cmd_hire(
     });
     // Validation is the SDK builder's, exactly as it would be for a real hire
     // — so `--check` can only pass on a payload the relay would accept.
+    if let beekeeper_core::coding_session_lifecycle_command::CodingSessionLifecycleAction::SessionHire { reply_to: destination, .. } = &mut payload.action {
+        *destination = reply_to.map(str::to_owned);
+    }
     let builder = match build_coding_session_lifecycle_command(channel, &payload) {
         Ok(builder) => builder,
         Err(error) => {
@@ -1494,6 +1507,7 @@ pub async fn cmd_hire(
         // the request to somebody else's pubkey.
         "requestedByVerifiedByRelay": false,
     });
+    let submitted_request = event.clone();
     let mut merged = match submit_with(client, event, "hire request already accepted", extra).await
     {
         Ok(merged) => merged,
@@ -1503,7 +1517,11 @@ pub async fn cmd_hire(
                 // was well formed and this relay is old.
                 Some(named) => Err(CliError::Relay {
                     status: 400,
-                    body: named,
+                    body: if reply_to.is_some() {
+                        format!("relay does not accept this hire shape; chat replyTo support is required (no legacy fallback): {message}")
+                    } else {
+                        named
+                    },
                 }),
                 None => Err(CliError::Other(message)),
             };
@@ -1522,7 +1540,16 @@ pub async fn cmd_hire(
             unbound_receipts: 0,
         }
     } else {
-        wait_for_hire(client, channel_id, session_ref, &genesis_ref, role, since).await?
+        wait_for_hire(
+            client,
+            channel_id,
+            session_ref,
+            &genesis_ref,
+            role,
+            since,
+            Some(&submitted_request),
+        )
+        .await?
     };
     let mut seat_grant = None;
     let mut seat_grant_error = None;
@@ -1724,12 +1751,21 @@ async fn wait_for_hire(
     genesis_ref: &str,
     role: &str,
     since: i64,
+    request: Option<&nostr::Event>,
 ) -> Result<HireWaitOutcome, CliError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(HIRE_WAIT_SECONDS);
     let mut wait = HireWait::new();
     loop {
-        if let Ok(answer) =
-            read_hire_answer(client, channel_id, session_ref, genesis_ref, role, since).await
+        if let Ok(answer) = read_hire_answer(
+            client,
+            channel_id,
+            session_ref,
+            genesis_ref,
+            role,
+            since,
+            request,
+        )
+        .await
         {
             wait.note(answer.rejection, answer.unbound_receipts);
             // `read_hire_answer` already ran the full evidence check on the

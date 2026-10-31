@@ -1454,3 +1454,35 @@ line, `crates/beekeeper-session-provider/src/{checkpoint_on_stop.rs,session_stop
 | Presence payload, builder, envelope validation; `turn_interrupted` builder; `MODEL_AUTH_FAILED` | `crates/beekeeper-sdk/src/coding_session.rs` |
 | Presence heartbeats, interrupted turns, credential source | `crates/beekeeper-session-provider/src/{presence.rs,turn_interrupted.rs,credential_source.rs}` |
 | `providerPresence` / `execution` in `status` | `crates/beekeeper-agent-management/src/lifecycle.rs` |
+
+
+### Conversational hire return reference (2026-10-30)
+
+`session.hire` MAY include `replyTo`, a canonical lowercase 64-hex source chat
+event ID. Omit it for the existing seated requester path; explicit null is
+invalid. This is a signed routing claim, not a grant or a claim of human
+authorship. A receiving Host must establish that source as an admitted
+conversation for the hire signer, channel and historically verified project/umbrella.
+A prepared origin alone is insufficient: successful admission, source author and
+accepted execution must be retained; legacy or refused/unverified origins fail closed.
+It must not derive a source from brief prose, select the latest thread, or
+synthesize a role-bearing execution. Missing evidence leaves a durable named
+unresolved-delivery reason while the policy refusal remains terminal.
+
+A verified conversational refusal is an ordinary kind:9 Host-authored notice,
+with NIP-10 original root/source reply tags, a `p` tag for the requester and
+`["hire-ref", "<exact-hire-event-id>"]` plus the existing
+`["buzz-host-answer", "hire"]` classification tag. After verifying the exact
+signed hire and historical source binding, receivers retain Host provenance and
+use the existing record-only `hostAnswer:true` semantics, never person input.
+The tag by itself grants no authority. It begins with the existing
+`hire refused: CODE — reason` form and visibly identifies the Host as its
+author. Sign and save one exact event before publication; uncertain publication
+retries that event. Relay acceptance is not proof of a model turn or assessment.
+Clients recognizing the refusal must verify the founder signature, channel,
+exact hire ID, source reply and recipient, not match arbitrary chat prose.
+Existing hires without `replyTo` keep the kind:44220 refusal behavior.
+
+Relays with the older exact action-key validator reject `replyTo`; clients,
+relay and Host must support this additive contract before using it. There is
+no silent legacy fallback for an explicitly requested chat return.

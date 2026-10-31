@@ -71,6 +71,14 @@ where
             }
         }
     };
+    if matches
+        .subcommand_matches("sessions")
+        .is_some_and(|sessions| sessions.subcommand_name() == Some("found"))
+        && matches.value_source("private_key") == Some(clap::parser::ValueSource::CommandLine)
+    {
+        error::print_error(&CliError::Auth("sessions found takes the owner key from BEEKEEPER_PRIVATE_KEY only; do not put it in --private-key".into()));
+        return 3;
+    }
     let format_explicit =
         matches.value_source("format") == Some(clap::parser::ValueSource::CommandLine);
     let mut cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
@@ -2775,6 +2783,11 @@ pub enum ModerationCmd {
 /// direct-SQL equivalents for questions this surface does not answer.
 #[derive(Subcommand)]
 pub enum SessionsCmd {
+    /// Found an umbrella as its direct owner; no execution or model turn.
+    #[command(
+        after_help = "Requires direct owner credentials in BEEKEEPER_PRIVATE_KEY, without BEEKEEPER_AUTH_TAG. Save both UUIDs once and retry exactly the same arguments on uncertainty. Success includes the signed genesis read back from the relay; it starts no execution.\n\nRecipe:\n  bee sessions found --home /isolated/journal --operation-id 00000000-0000-4000-8000-000000000001 --channel 00000000-0000-4000-8000-000000000002 --session-ref 00000000-0000-4000-8000-000000000003"
+    )]
+    Found(commands::sessions::found::Args),
     /// Canonical one-role installation and an isolated owner-side hire listener.
     #[command(
         subcommand,
@@ -3958,6 +3971,9 @@ pub struct SessionsHireArgs {
     /// the channel when omitted; required when two geneses claim the label.
     #[arg(long)]
     pub genesis: Option<String>,
+    /// Exact source chat event for Host refusal feedback in its admitted thread.
+    #[arg(long)]
+    pub reply_to: Option<String>,
     /// Role slug to seat: `[a-z0-9-]`, 1-64 bytes
     #[arg(long)]
     pub role: String,
@@ -7259,6 +7275,7 @@ mod tests {
                 "doctor",
                 "explain",
                 "export",
+                "found",
                 "grant",
                 "grant-seat",
                 "handover",
@@ -7497,7 +7514,7 @@ mod tests {
             // and both tests re-run green.
             // C3b lane C: `rewind` (SV-29).
             // Owner-authenticated isolated hire responder.
-            ("sessions", 47),
+            ("sessions", 48),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

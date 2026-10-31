@@ -2387,6 +2387,7 @@ pub fn hire_payload(
             model: model.map(str::to_owned),
             brief: brief.to_owned(),
             requested_by: requested_by.map(str::to_owned),
+            reply_to: None,
             routing,
         },
     }

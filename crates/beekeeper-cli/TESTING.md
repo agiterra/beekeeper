@@ -3245,3 +3245,67 @@ shared transition validator forbids correction metadata on a new ID, while
 silently omitting the losing claim would conceal conflict. The CLI refuses both
 omission and invented provenance; `fork_only_claim_remains_refused_until_core_can_express_resolution`
 pins this conservative behavior pending the core owner's protocol decision.
+
+## Direct-owner umbrella foundation (`bee sessions found`)
+
+This publishes only the existing kind 44226 genesis, with the SDK's exact
+canonical content and three tags. It does not create an execution, grant an
+operator, or spend a model turn. Use direct owner credentials in
+`BEEKEEPER_PRIVATE_KEY`; delegated NIP-OA credentials and command-line private
+keys are refused. Channel admission remains the relay's existing policy.
+
+Mint and retain `FOUND_OPERATION` and canonical lowercase `SESSION_REF` once.
+Keep `BEEKEEPER_HOST_INSTANCE` fixed across retries (default `production`). The
+explicit absolute `--home` selects the journal only; no Host needs to be running.
+
+```sh
+bee sessions found --home "$DOGFOOD_ROOT/host-home" \
+  --operation-id "$FOUND_OPERATION" --channel "$CHANNEL" \
+  --session-ref "$SESSION_REF" > "$DOGFOOD_ROOT/evidence/umbrella-found.json"
+GENESIS=$(jq -er '.genesis' "$DOGFOOD_ROOT/evidence/umbrella-found.json")
+```
+
+Require exit 0 and `accepted: true`, `evidence: "exact_signed_readback"`. Output
+includes the signed `event`, founder, operation ID, session reference and journal
+path. The journal at `<home>/.local/state/buzz/host/management/operations/<operation>.json`
+(default production instance) persists the signed event before publication. On
+uncertainty the error names that event and path: repeat the **same** operation,
+relay, signer, home, instance, channel and session reference. Do not mint another
+operation or erase its journal. A retry reads the exact signed event before
+resubmitting the saved event; neither timestamps nor signatures are regenerated.
+An ACK or duplicate response without matching signed readback is insufficient.
+Conflicting operation intent is refused without replacing the original.
+
+Offline regressions (fresh synthetic keys, no production relay/Host/model):
+
+```sh
+cargo test -p beekeeper-agent-management session_found --lib
+cargo test -p beekeeper-cli found --lib
+```
+
+These prove journal-before-publish, lost-ACK readback, exact-event retry,
+conflicting signer/relay/scope, canonical producer bytes and corrupt evidence
+refusal. They do not prove production admission or full project-agent activation.
+
+## Conversational project chat
+
+Use ordinary `bee agents start` Host conversation routes for the canonical
+lead; do not run another ACP subscription or the removed `hire-host chat`
+consumer. The owner service uses `sessions hire-host run --deadline-secs 900`
+with explicit project/umbrella/runner/runtime/model/policy. See
+[`docs/project-agent-chat.md`](../../docs/project-agent-chat.md).
+
+```sh
+CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=4 cargo test -p beekeeper-agent-management --lib
+CARGO_BUILD_JOBS=4 cargo build -p beekeeper-cli -p beekeeper-host -p beekeeper-session-provider
+HEADLESS_CHAT_CHECK=1 python3 scripts/headless-hire-check.py
+```
+
+The isolated scripted ACP fixture exercises ordinary conversation, clarification,
+coordinator-chosen delegation through public hire/assign/report operations,
+qualified evidence, follow-up, distinct threads, unauthorized member and replay.
+This tests protocol, not model intelligence. No production credentials or model
+spend. Retain public signed records selectively; never archive synthetic custody.
+The owner cleanup tests cover unresolved creation, created-awaiting-grants,
+exact stop retry and requester revocation. The provider outbox tests establish
+permanent event refusal versus uncertain delivery without poison starvation.

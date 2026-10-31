@@ -13,6 +13,10 @@ import subprocess
 
 def report_assignment(params, cwd):
     text = "\n".join(item.get("text", "") for item in params.get("prompt", []) if isinstance(item, dict))
+    from chat_conversation import converse
+    conversation = converse(params, cwd)
+    if conversation:
+        return conversation
     if "ACME_HIRE_PROOF_V1" not in text:
         return None
     scope = re.search(r"--channel ([0-9a-f-]{36}) --session-ref ([0-9a-f-]{36}) --genesis ([0-9a-f]{64})", text)

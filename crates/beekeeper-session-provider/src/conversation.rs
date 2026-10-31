@@ -63,10 +63,18 @@ struct Origin {
     private_definition_event_id: Option<String>,
     #[serde(default)]
     instructions: Option<String>,
+    #[serde(default)]
+    signed_source: Option<Event>,
+    #[serde(default)]
+    admission: Option<verified::Admission>,
+    #[serde(default)]
+    host_notice: Option<verified::HostNotice>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
 struct Origins {
+    #[serde(default)]
+    pending_notices: BTreeMap<String, recovery::PendingNotice>,
     #[serde(default)]
     legacy_answers: BTreeMap<String, String>,
     requests: BTreeMap<String, Origin>,
@@ -414,6 +422,9 @@ impl Provider {
                 linked_definition_event_id: None,
                 private_definition_event_id: None,
                 instructions: None,
+                signed_source: Some(event.clone()),
+                admission: None,
+                host_notice: None,
             };
             self.conversation_reply(&origin, &format!("{event_id}:ambiguous"),
                 "This host cannot admit work while its ownership fence is busy or unavailable. This host has not executed this request; send a new request when it is available.")?;
@@ -453,6 +464,9 @@ impl Provider {
                 linked_definition_event_id: None,
                 private_definition_event_id: None,
                 instructions: None,
+                signed_source: Some(event.clone()),
+                admission: None,
+                host_notice: None,
             };
             let text = if active.is_empty() {
                 "This participant has no active responsibility available. This request has not executed."
@@ -474,6 +488,9 @@ impl Provider {
             linked_definition_event_id: None,
             private_definition_event_id: None,
             instructions: None,
+            signed_source: Some(event.clone()),
+            admission: None,
+            host_notice: None,
         };
         // Persist origin and binding before mailbox admission; retries reconstruct
         // identical command bytes and use the provider's existing consumed ledger.
@@ -520,7 +537,11 @@ impl Provider {
         command_id: &str,
         receipt: &crate::payload::LifecycleReceipt,
     ) -> anyhow::Result<()> {
-        let origins = self.conversation_origins()?;
+        let mut origins = self.conversation_origins()?;
+        if let Some(origin) = origins.requests.get_mut(command_id) {
+            verified::record_admission_receipt(origin, receipt);
+            self.save_conversation_origins(&origins)?;
+        }
         if let Some(origin) = origins.requests.get(command_id) {
             // Refusal details may include host paths. Publish only the public code.
             let status = serde_json::to_value(receipt.status)?;
@@ -676,3 +697,11 @@ impl crate::publish::EventSink for ConversationPublisher {
         }
     }
 }
+
+#[path = "conversation_verified.rs"]
+mod verified;
+
+pub(crate) use verified::admitted_reply_origin;
+
+#[path = "conversation_notice_recovery.rs"]
+mod recovery;

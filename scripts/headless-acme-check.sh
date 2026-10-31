@@ -496,9 +496,11 @@ run_step 1 "commission a fresh host home with the acme descriptor and a 0600 cre
 run_step 2 "run the host in the foreground; it spawns and supervises the provider" step_host_run
 if [[ "${HEADLESS_HIRE_CHECK:-0}" == 1 ]]; then
   step_hire() {
+    local acceptance=hire_acceptance.py
+    [[ "${HEADLESS_CHAT_CHECK:-0}" == 1 ]] && acceptance=chat_acceptance.py
     BEEKEEPER_RELAY_URL="${RELAY_HTTP}" BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" \
       BEEKEEPER_HOST_HOME="${HOST_HOME}" BEEKEEPER_HOST_SOCK="${SOCK}" BEEKEEPER_HOST_INSTANCE=production \
-      python3 "${REPO_ROOT}/conformance/acme-acp/hire_acceptance.py" "${WORKDIR}" "${CHANNEL}" "${OWNER_PUBKEY}" "${BEE_BIN}" || return $?
+      python3 "${REPO_ROOT}/conformance/acme-acp/${acceptance}" "${WORKDIR}" "${CHANNEL}" "${OWNER_PUBKEY}" "${BEE_BIN}" || return $?
     pass 3 "canonical role install, headless hire, signed authority and actor-authored assignment report"
   }
   run_step 3 "deterministic headless hire vertical path" step_hire

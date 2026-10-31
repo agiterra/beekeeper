@@ -129,6 +129,9 @@ impl Provider {
                     linked_definition_event_id: None,
                     private_definition_event_id: None,
                     instructions: None,
+                    signed_source: Some(event.clone()),
+                    admission: None,
+                    host_notice: None,
                 };
                 let command_id = event.id.to_hex();
                 let mut origins = self.conversation_origins()?;
@@ -162,6 +165,9 @@ impl Provider {
                     linked_definition_event_id: None,
                     private_definition_event_id: None,
                     instructions: None,
+                    signed_source: Some(event.clone()),
+                    admission: None,
+                    host_notice: None,
                 };
                 let message = if event.created_at.as_secs() < floor {
                     "This request predates the responsibility replay boundary. Its earlier outcome is uncertain. This host has not replayed it; send a new request if work is still needed."
@@ -178,13 +184,33 @@ impl Provider {
                 return Ok(None);
             }
         }
-        self.conversation_command_authorized_at(
+        let host_notice = match verified::verify_host_notice(self, channel, event, &actor).await {
+            Ok(notice) => notice,
+            Err(error) if error.is::<verified::NoticeLookupPending>() => return Err(error),
+            Err(error) => {
+                tracing::warn!(source = %event.id, %error, "Host notice rejected; not human input");
+                self.state
+                    .record_refusal(&event.id.to_hex(), crate::now_secs())?;
+                return Ok(None);
+            }
+        };
+        let command = self.conversation_command_authorized_at(
             channel,
             event,
             context
                 .as_ref()
                 .map(|(home, instance)| (home.as_path(), *instance)),
             Some(&actor),
-        )
+        )?;
+        if command.is_some() {
+            if let Some(notice) = host_notice {
+                let mut origins = self.conversation_origins()?;
+                if let Some(origin) = origins.requests.get_mut(&event.id.to_hex()) {
+                    origin.host_notice = Some(notice);
+                }
+                self.save_conversation_origins(&origins)?;
+            }
+        }
+        Ok(command)
     }
 }

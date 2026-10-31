@@ -102,6 +102,7 @@ pub mod explain;
 // Lane C: absent-participant handover (`docs/HANDOVER_IMPL.md` §4). Split by
 // topic so no file passes 1,000 lines: the four verbs, the git half, and the
 // rendering.
+pub mod found;
 pub mod handover;
 pub mod handover_blob;
 pub(crate) mod handover_checkpoint;
@@ -3005,11 +3006,13 @@ pub async fn dispatch(
             )
             .await
         }
+        SessionsCmd::Found(args) => found::run(args, client).await,
         SessionsCmd::HireHost(command) => hire_host::dispatch(command, client).await,
         SessionsCmd::Hire(crate::SessionsHireArgs {
             channel,
             session_ref,
             genesis,
+            reply_to,
             role,
             provider_instance,
             model,
@@ -3030,6 +3033,7 @@ pub async fn dispatch(
                 &channel,
                 &session_ref,
                 genesis.as_deref(),
+                reply_to.as_deref(),
                 &role,
                 provider_instance.as_deref(),
                 model.as_deref(),
@@ -5239,3 +5243,5 @@ mod tests {
         assert!(agent_pubkeys_in_channel(&events).is_empty());
     }
 }
+
+mod hire_chat;

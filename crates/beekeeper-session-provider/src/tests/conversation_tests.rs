@@ -7,9 +7,21 @@ async fn routed_provider(
     channel: Uuid,
     actor: &Keys,
 ) -> (Provider, CodingSessionTarget) {
+    routed_provider_for_project(dir, channel, actor, None).await
+}
+
+async fn routed_provider_for_project(
+    dir: &Path,
+    channel: Uuid,
+    actor: &Keys,
+    project: Option<&str>,
+) -> (Provider, CodingSessionTarget) {
     let cwd = dir.join("checkout");
     std::fs::create_dir_all(&cwd).expect("checkout");
-    let projects = write_projects(dir, channel, &cwd);
+    let projects = match project {
+        Some(project) => write_project_checkout(dir, channel, &cwd, project),
+        None => write_projects(dir, channel, &cwd),
+    };
     let mut host = provider(&dir.join("state"), Some(&projects));
     // Actor startup now verifies current relay-signed retirement before opening.
     // Establish the mock transport/authority before create, just as run_with does.
@@ -23,6 +35,7 @@ async fn routed_provider(
     let mut content: serde_json::Value =
         serde_json::from_str(&create.content).expect("create payload");
     content["action"]["actor"] = serde_json::json!(actor.public_key().to_hex());
+    content["action"]["projectRef"] = serde_json::json!(project);
     let create = nostr::EventBuilder::new(create.kind, content.to_string())
         .tags(create.tags)
         .sign_with_keys(test_operator_keys())
@@ -1019,3 +1032,9 @@ mod policy_replay;
 
 #[path = "conversation_steer_notice_tests.rs"]
 mod steer_notice;
+
+#[path = "conversation_refusal_tests.rs"]
+mod refusal;
+
+#[path = "conversation_verified_tests.rs"]
+mod verified_admission;

@@ -47,6 +47,9 @@ pub struct Install {
 /// One owner/project/host, with an explicit legacy-responder cutover boundary.
 #[derive(Args)]
 pub struct Run {
+    /// Configure this installed lead with public project/umbrella context; no second chat consumer.
+    #[arg(long)]
+    lead: Option<String>,
     #[arg(long)]
     home: PathBuf,
     #[arg(long)]
@@ -73,6 +76,9 @@ pub struct Run {
     once: bool,
     #[arg(long,default_value_t=5,value_parser=clap::value_parser!(u64).range(1..=300))]
     wait_secs: u64,
+    /// Maximum worker lifetime from admission; owner cleanup continues after lead revocation.
+    #[arg(long, default_value_t=900, value_parser=clap::value_parser!(u64).range(30..=3600))]
+    deadline_secs: u64,
 }
 fn context(home: &Path) -> Result<Context, CliError> {
     if !home.is_absolute() {
@@ -171,6 +177,26 @@ async fn run(args: Run, client: &BeekeeperClient) -> Result<(), CliError> {
         model: args.model,
         policy,
     };
+    let mut readiness_error = None;
+    if let Some(lead) = &args.lead {
+        let selection = match adapter.conversation_selection(&scope).await {
+            Ok(selection) => Some(selection),
+            Err(error) => {
+                readiness_error = Some(format!("HIRE_SELECTION_UNAVAILABLE: {error}"));
+                None
+            }
+        };
+        if let Err(error) = beekeeper_agent_management::conversation_project::configure(
+            &context, client, &scope, lead, selection,
+        )
+        .await
+        {
+            readiness_error = Some(format!("HIRE_CONTEXT_PUBLICATION_FAILED: {error}"));
+        }
+    }
+    if let Some(reason) = &readiness_error {
+        eprintln!("{reason}; fresh work fenced, saved owner obligations still reconciled");
+    }
     let mut settled = std::collections::BTreeSet::new();
     loop {
         // Durable pending requests lead discovery. Full signed history follows;
@@ -186,13 +212,22 @@ async fn run(args: Run, client: &BeekeeperClient) -> Result<(), CliError> {
             if settled.contains(&request.id) {
                 continue;
             }
-            let result =
-                hire::answer(&context, client, &adapter, &scope, &request, args.wait_secs).await;
+            let result = hire::answer_bounded_with_readiness(
+                &context,
+                client,
+                &adapter,
+                &scope,
+                &request,
+                args.wait_secs,
+                args.deadline_secs,
+                readiness_error.as_deref(),
+            )
+            .await;
             match result {
                 Ok(disposition) => {
                     if matches!(
                         disposition,
-                        hire::Disposition::Ready { .. }
+                        hire::Disposition::Stopped { .. }
                             | hire::Disposition::Refused { .. }
                             | hire::Disposition::PolicyRefused {
                                 disclosure_confirmed: true,

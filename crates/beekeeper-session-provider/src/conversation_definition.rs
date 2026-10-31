@@ -341,8 +341,38 @@ impl Provider {
                 return Err(fail("AGENT_DEFINITION_UPDATE_PENDING"));
             }
         }
+        let project_path = self
+            .config
+            .state_dir
+            .join("conversation-projects")
+            .join(format!("{}.json", origin.actor));
+        let mut historical_scope = None;
+        let project_context = match fs::read(&project_path) {
+            Ok(bytes) => {
+                let configured: crate::conversation_project::ProjectContext =
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| fail("PROJECT_CONVERSATION_CONTEXT_INVALID"))?;
+                if record.actor.as_deref() != Some(origin.actor.as_str())
+                    || self.target_for(record) != origin.target
+                {
+                    return Err(fail("PROJECT_CONVERSATION_ADMISSION_SCOPE_CHANGED"));
+                }
+                historical_scope = Some(configured.clone());
+                configured
+                    .instructions(
+                        &owner.to_hex(),
+                        &origin.actor,
+                        origin.channel,
+                        record.project_ref.as_deref(),
+                    )
+                    .map_err(|_| fail("PROJECT_CONVERSATION_CONTEXT_INVALID"))?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_) => return Err(fail("PROJECT_CONVERSATION_CONTEXT_UNAVAILABLE")),
+        };
         let instructions = format!(
-            "Participant definition {} (linked {}, private pin {}, owner {}, actor {}):\n{}",
+            "{project_context}\nProject conversation source {} by {} in channel {} thread {}. Retain these references in delegated work. Converse normally; choose whether delegation is useful. Use existing sessions hire/assign/report/verdict/decide/work operations under your accepted grants. Worker reports and successful provider terminals are not independent correctness evidence: name artifacts, checks actually run, review and uncertainty. Never infer owner authority from channel membership.\nParticipant definition {} (linked {}, private pin {}, owner {}, actor {}):\n{}",
+            origin.event, origin.author.as_deref().unwrap_or("unknown"), origin.channel, origin.root,
             event.id.to_hex(),
             linked_id.as_deref().unwrap_or("none"),
             private_id.as_deref().unwrap_or("none"),
@@ -351,6 +381,10 @@ impl Provider {
             prompt
         );
         if let Some(request) = origins.requests.get_mut(command_id) {
+            if let Some(scope) = historical_scope {
+                verified::prepare_admission(request, &scope, &owner.to_hex())
+                    .map_err(|_| fail("PROJECT_CONVERSATION_ADMISSION_SCOPE_CHANGED"))?;
+            }
             request.definition_event_id = Some(event.id.to_hex());
             request.linked_definition_event_id = linked_id;
             request.private_definition_event_id = private_id;

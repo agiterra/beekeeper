@@ -6247,6 +6247,7 @@ mod tests {
                 model: None,
                 brief: "Rebase the lane and run the gate.".into(),
                 requested_by: None,
+                reply_to: None,
                 routing: None,
             },
         };

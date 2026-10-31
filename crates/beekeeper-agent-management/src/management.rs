@@ -438,10 +438,11 @@ pub async fn create(
                 &actor.pubkey,
                 args.agent_pubkey.is_some(),
             )?)?;
-            let provider_member = client.sign_event_unchecked(
-                beekeeper_sdk::build_add_member(args.channel, &config.provider_pubkey, None)
-                    .map_err(fail)?,
-            )?;
+            let provider_member = client.sign_event_unchecked(provider_membership(
+                args.channel,
+                &config.provider_pubkey,
+                args.operation_id,
+            )?)?;
             let mut events = vec![public, profile, member, provider_member];
             if let Some(project) = project.as_deref() {
                 let roster = crate::project_roster(client, project).await?;
@@ -641,6 +642,19 @@ pub async fn create(
         "revision":operation.events.first().ok_or_else(|| fail("operation has no configuration event"))?.id.to_hex(),"host_admitted":true,"receipt_event_id":operation.receipt_event_id,
         "target":target,"conversation_route":"installed","runtime_account":"unconfirmed"}),
     )
+}
+
+fn provider_membership(
+    channel: Uuid,
+    provider: &str,
+    operation: Uuid,
+) -> Result<nostr::EventBuilder, CliError> {
+    // NIP-29 control commands are consumed, not retained for exact readback.
+    // Separate installs in one second must not mint one identical command.
+    // This tag confers no authority; retries retain the journaled signed bytes.
+    Ok(beekeeper_sdk::build_add_member(channel, provider, None)
+        .map_err(fail)?
+        .tags([Tag::parse(["management-operation", &operation.to_string()]).map_err(fail)?]))
 }
 
 fn actor_membership(

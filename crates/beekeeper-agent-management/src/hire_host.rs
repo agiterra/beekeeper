@@ -61,6 +61,36 @@ mod read;
 mod staging;
 
 impl<T: RelayTransport> LocalHost<'_, T> {
+    /// Validate and expose this listener's exact permitted selection for chat.
+    pub async fn conversation_selection(
+        &self,
+        scope: &Scope,
+    ) -> Result<beekeeper_session_provider::conversation_project::HireSelection, Error> {
+        let (_, material) = self.material(scope).await?;
+        if !self.policy.enabled
+            || self
+                .policy
+                .allowed_roles
+                .as_ref()
+                .is_some_and(|roles| !roles.contains(&material.pack_ref.role))
+            || self
+                .policy
+                .allowed_provider_instance_refs
+                .as_ref()
+                .is_some_and(|providers| !providers.contains(&self.provider_instance))
+        {
+            return Err(Error::Refused("HIRE_SELECTION_NOT_PERMITTED".into()));
+        }
+        self.runtime(scope).await?;
+        Ok(
+            beekeeper_session_provider::conversation_project::HireSelection {
+                actor: self.actor.clone(),
+                role: material.pack_ref.role,
+                provider_instance: self.provider_instance.clone(),
+                model: self.model.clone(),
+            },
+        )
+    }
     async fn material(
         &self,
         scope: &Scope,
@@ -174,6 +204,53 @@ impl<T: RelayTransport> Adapter for LocalHost<'_, T> {
             ));
         }
         self.verify_umbrella(scope).await
+    }
+    async fn refusal_conversation(
+        &self,
+        scope: &Scope,
+        request: &Event,
+    ) -> Result<Option<beekeeper_sdk::ThreadRef>, Error> {
+        let payload = decode_coding_session_lifecycle_command(&request.content).map_err(fail)?;
+        let Action::SessionHire {
+            reply_to: Some(source),
+            ..
+        } = payload.action
+        else {
+            return Ok(None);
+        };
+        let config = host(self.context, self.client)?;
+        let actor = request.pubkey.to_hex();
+        let path = config
+            .provider_state_dir
+            .join("conversation-projects")
+            .join(format!("{actor}.json"));
+        let value = crate::management::local::read_operation_value(&path)?.ok_or_else(|| {
+            Error::Unconfirmed(
+                "HIRE_CHAT_SCOPE_UNRESOLVED: requester has no configured project conversation"
+                    .into(),
+            )
+        })?;
+        let configured: beekeeper_session_provider::conversation_project::ProjectContext =
+            serde_json::from_value(value).map_err(fail)?;
+        if configured.project != scope.project
+            || configured.channel != scope.channel
+            || configured.actor != actor
+            || configured.genesis != scope.genesis
+        {
+            return Err(Error::Unconfirmed(
+                "HIRE_CHAT_SCOPE_MISMATCH: refusing cross-project return routing".into(),
+            ));
+        }
+        beekeeper_session_provider::conversation_project::admitted_reply_origin(
+            &config.provider_state_dir,
+            &actor,
+            scope.channel,
+            &source,
+            &scope.project,
+            &scope.genesis.id.to_hex(),
+        )
+        .map(Some)
+        .map_err(|error| Error::Unconfirmed(error.to_string()))
     }
     async fn refusal_target(
         &self,

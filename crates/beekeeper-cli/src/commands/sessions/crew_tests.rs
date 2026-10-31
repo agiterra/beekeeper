@@ -3911,6 +3911,7 @@ async fn run_hire_check(
         CHANNEL,
         "6a8f1b2c-0000-4000-8000-000000000001",
         Some(genesis),
+        None,
         "builder",
         Some("claude-primary"),
         Some("sonnet"),
@@ -4979,6 +4980,7 @@ async fn the_hire_seam_aggregates_across_candidates_without_misattributing_them(
         &hire.genesis,
         "builder",
         0,
+        None,
     )
     .await
     .expect("the seam reads the channel");
@@ -5039,6 +5041,7 @@ async fn one_candidate_still_reports_its_own_evidence_error() {
         &hire.genesis,
         "builder",
         0,
+        None,
     )
     .await
     .expect("the seam reads the channel");

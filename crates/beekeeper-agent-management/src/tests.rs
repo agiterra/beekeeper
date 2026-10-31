@@ -405,3 +405,27 @@ fn route_replay_boundary_is_immutable_for_the_same_accepted_target() {
     assert_eq!(value["routes"].as_array().expect("routes").len(), 1);
     assert_eq!(value["routes"][0]["replayFloorUnix"], 123);
 }
+
+#[test]
+fn separate_installs_do_not_collide_on_consumed_provider_admission() {
+    let owner = Keys::generate();
+    let provider = Keys::generate().public_key().to_hex();
+    let channel = Uuid::new_v4();
+    let timestamp = nostr::Timestamp::from(1_700_000_000);
+    let first = provider_membership(channel, &provider, Uuid::new_v4())
+        .unwrap()
+        .custom_created_at(timestamp)
+        .sign_with_keys(&owner)
+        .unwrap();
+    let second = provider_membership(channel, &provider, Uuid::new_v4())
+        .unwrap()
+        .custom_created_at(timestamp)
+        .sign_with_keys(&owner)
+        .unwrap();
+    assert_ne!(
+        first.id, second.id,
+        "distinct installations cannot share a consumed control command"
+    );
+    assert_eq!(first.pubkey, second.pubkey);
+    assert!(first.verify().is_ok() && second.verify().is_ok());
+}

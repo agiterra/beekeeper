@@ -7,8 +7,12 @@ use std::time::Duration;
 pub(crate) struct Backfill {
     pub(crate) slot: OffLoopSlot<Fetched>,
     checked: BTreeSet<String>,
+    prefer_notices: bool,
+    #[cfg(test)]
+    pub(crate) notice_write_fault: Option<u8>,
 }
 pub(crate) struct Fetched {
+    notice: Option<recovery::PendingNotice>,
     key: String,
     channel: Uuid,
     result: Result<Vec<Event>, String>,
@@ -18,6 +22,9 @@ impl Default for Backfill {
         Self {
             slot: OffLoopSlot::new(Duration::from_secs(15)),
             checked: BTreeSet::new(),
+            prefer_notices: true,
+            #[cfg(test)]
+            notice_write_fault: None,
         }
     }
 }
@@ -55,6 +62,9 @@ impl Provider {
             .min()
     }
     pub(crate) fn start_conversation_backfill(&mut self) -> anyhow::Result<()> {
+        self.start_conversation_backfill_at(crate::now_secs())
+    }
+    pub(crate) fn start_conversation_backfill_at(&mut self, now: u64) -> anyhow::Result<()> {
         if self.conversation_backfill.slot.busy() {
             return Ok(());
         }
@@ -84,9 +94,47 @@ impl Provider {
                 break;
             }
         }
+        if self.conversation_backfill.prefer_notices || selected.is_none() {
+            if let Some(pending) = self.due_host_notice(now)? {
+                self.conversation_backfill.prefer_notices = false;
+                let timeout = self.conversation_backfill.slot.timeout;
+                self.conversation_backfill.slot.spawn(async move {
+                    let result = if let Some(hire) = pending.hire.clone() {
+                        Ok(vec![hire])
+                    } else {
+                        tokio::time::timeout(
+                            timeout,
+                            rest.query_event_by_id(
+                                &pending.hire_id,
+                                Kind::Custom(
+                                    beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND
+                                        as u16,
+                                ),
+                            ),
+                        )
+                        .await
+                        .map_err(|_| "HOST_NOTICE_LOOKUP_TIMEOUT".to_string())
+                        .and_then(|result| result.map_err(|error| error.to_string()))
+                        .and_then(|event| {
+                            event.map(|event| vec![event]).ok_or_else(|| {
+                                "HOST_NOTICE_LOOKUP_PENDING: exact hire missing".into()
+                            })
+                        })
+                    };
+                    Fetched {
+                        channel: pending.channel,
+                        key: pending.event.id.to_hex(),
+                        notice: Some(pending),
+                        result,
+                    }
+                });
+                return Ok(());
+            }
+        }
         let Some((route, key, since)) = selected else {
             return Ok(());
         };
+        self.conversation_backfill.prefer_notices = true;
         let channel = route.channel_id;
         let until = crate::now_secs();
         // Protect ordering against live inputs while the scoped snapshot is read.
@@ -111,7 +159,7 @@ impl Provider {
                 events.sort_by(|a,b|a.created_at.cmp(&b.created_at).then_with(||a.id.cmp(&b.id)));
                 Ok(events)
             }).await.unwrap_or_else(|_|Err("RESPONSIBILITY_REPLAY_TIMEOUT: bounded relay read timed out".into()));
-            Fetched {key,channel,result}
+            Fetched {key,channel,result,notice:None}
         });
         Ok(())
     }
@@ -120,6 +168,9 @@ impl Provider {
         fetched: Fetched,
     ) -> anyhow::Result<()> {
         self.conversation_backfill.slot.settle();
+        if let Some(pending) = fetched.notice {
+            return self.finish_host_notice_retry(pending, fetched.result).await;
+        }
         let events = match fetched.result {
             Ok(events) => events,
             Err(error) => {

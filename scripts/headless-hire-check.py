@@ -54,7 +54,7 @@ def main():
                     "BEEKEEPER_DEV_REDIS_CONTAINER": names["redis"], "BEEKEEPER_DEV_REDIS_PORT": str(ports["redis"]), "BEEKEEPER_DEV_S3_CONTAINER": names["s3"],
                     "BEEKEEPER_S3_ENDPOINT": f"http://127.0.0.1:{ports['s3']}", "BEEKEEPER_S3_ACCESS_KEY": "buzz_dev", "BEEKEEPER_S3_SECRET_KEY": "buzz_dev_secret",
                     "BEEKEEPER_S3_BUCKET": bucket, "BEEKEEPER_S3_REGION": "us-east-1", "BEEKEEPER_S3_ADDRESSING_STYLE": "path",
-                    "HEADLESS_HIRE_CHECK": "1", "HEADLESS_ACME_KEEP": "1", "HEADLESS_ACME_WORKDIR": str(work / "run")})
+                    "HEADLESS_CHAT_CHECK": os.environ.get("HEADLESS_CHAT_CHECK", "0"), "HEADLESS_HIRE_CHECK": "1", "HEADLESS_ACME_KEEP": "1", "HEADLESS_ACME_WORKDIR": str(work / "run")})
         print("isolated hire evidence: " + str(work), flush=True)
         process = subprocess.Popen(["bash", "scripts/headless-acme-check.sh"], cwd=ROOT, env=env, start_new_session=True)
         try:

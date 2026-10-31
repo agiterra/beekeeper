@@ -62,6 +62,8 @@ pub(crate) struct Progress {
     grant_cursor: usize,
     #[serde(default)]
     completed: bool,
+    #[serde(default)]
+    cleanup: cleanup::Cleanup,
 }
 
 fn initial_grant_cursor() -> usize {
@@ -104,6 +106,18 @@ pub fn journal_path(
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Disposition {
+    /// Owner cleanup retains the reservation until exact quiescence is observed.
+    CleanupPending {
+        /// Known execution, including created-awaiting-grants.
+        target: Option<CodingSessionTarget>,
+        /// Durable reason cleanup began.
+        reason: String,
+    },
+    /// Exact owner stop was confirmed, or creation was never attempted.
+    Stopped {
+        /// Execution stopped, if any.
+        target: Option<CodingSessionTarget>,
+    },
     /// Durable terminal owner decision; never becomes a create on later replay.
     PolicyRefused {
         /// Stable public refusal code.
@@ -114,6 +128,8 @@ pub enum Disposition {
         disclosure_event_id: Option<String>,
         /// Whether relay acceptance of that exact disclosure was established.
         disclosure_confirmed: bool,
+        /// Named durable routing/publication uncertainty, independent of refusal.
+        disclosure_error: Option<String>,
     },
     /// Provider conclusively refused this create; the old request remains answered.
     Refused {
@@ -157,6 +173,15 @@ pub trait Adapter {
         _request: &Event,
     ) -> Result<CodingSessionTarget, Error> {
         Err(Error::Unconfirmed("requester target unavailable".into()))
+    }
+    /// An explicit chat return address verified against admitted Host origin.
+    /// None retains the existing seated-execution delivery contract.
+    async fn refusal_conversation(
+        &self,
+        _scope: &Scope,
+        _request: &Event,
+    ) -> Result<Option<beekeeper_sdk::ThreadRef>, Error> {
+        Ok(None)
     }
     /// Select once, including policy, catalog/runtime, role and trusted checkout.
     /// Must count `pending` reservations as live selections and be read-only
@@ -233,6 +258,79 @@ pub async fn answer(
     request: &Event,
     wait_secs: u64,
 ) -> Result<Disposition, Error> {
+    reconcile(
+        context, client, adapter, scope, request, wait_secs, None, None,
+    )
+    .await
+}
+
+/// Answer and supervise a bounded worker. Existing cleanup uses only current
+/// owner authority; revoking the requester cannot disable cleanup.
+pub async fn answer_bounded(
+    context: &Context,
+    client: &impl RelayTransport,
+    adapter: &impl Adapter,
+    scope: &Scope,
+    request: &Event,
+    wait_secs: u64,
+    deadline_secs: u64,
+) -> Result<Disposition, Error> {
+    answer_bounded_with_readiness(
+        context,
+        client,
+        adapter,
+        scope,
+        request,
+        wait_secs,
+        deadline_secs,
+        None,
+    )
+    .await
+}
+
+/// Reconcile saved owner obligations even when optional lead context failed.
+/// A readiness error fences fresh work and stops saved bounded work through
+/// its original journal; it does not impersonate an authority revocation.
+#[allow(clippy::too_many_arguments)]
+pub async fn answer_bounded_with_readiness(
+    context: &Context,
+    client: &impl RelayTransport,
+    adapter: &impl Adapter,
+    scope: &Scope,
+    request: &Event,
+    wait_secs: u64,
+    deadline_secs: u64,
+    readiness_error: Option<&str>,
+) -> Result<Disposition, Error> {
+    if !(30..=3600).contains(&deadline_secs) {
+        return Err(Error::Usage(
+            "hire deadline must be 30..3600 seconds".into(),
+        ));
+    }
+    reconcile(
+        context,
+        client,
+        adapter,
+        scope,
+        request,
+        wait_secs,
+        Some(deadline_secs),
+        readiness_error,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn reconcile(
+    context: &Context,
+    client: &impl RelayTransport,
+    adapter: &impl Adapter,
+    scope: &Scope,
+    request: &Event,
+    wait_secs: u64,
+    deadline_secs: Option<u64>,
+    readiness_error: Option<&str>,
+) -> Result<Disposition, Error> {
     let owner = owner(client)?;
     let payload = validate_scope(scope, request, &owner)?;
     if !(1..=300).contains(&wait_secs) {
@@ -240,7 +338,6 @@ pub async fn answer(
             "hire receipt wait must be 1..300 seconds".into(),
         ));
     }
-    adapter.authorize(scope, request).await?;
     let relay =
         beekeeper_host_core::record::canonical_relay_key(&crate::to_ws_url(client.relay_url()));
     let umbrella_binding = format!("{relay}:{owner}:{}:{}", scope.channel, scope.genesis.id);
@@ -255,6 +352,12 @@ pub async fn answer(
     let mut operation = match read_operation(&path, &binding)? {
         Some(held) => held,
         None => {
+            if let Some(reason) = readiness_error {
+                return Err(Error::Unconfirmed(format!(
+                    "HIRE_CONTEXT_NOT_READY: fresh work fenced: {reason}"
+                )));
+            }
+            adapter.authorize(scope, request).await?;
             let pending = pending_plans(&path, &binding)?;
             let plan = match adapter.plan(scope, request, &pending).await {
                 Ok(plan) => plan,
@@ -312,6 +415,7 @@ pub async fn answer(
                     refusal: None,
                     grant_cursor: 1,
                     completed: false,
+                    cleanup: cleanup::Cleanup::new(deadline_secs),
                 }),
             };
             // Interoperate with existing management operations sharing UUIDs.
@@ -338,6 +442,32 @@ pub async fn answer(
         )
         .await;
     }
+    if let Some(reason) = readiness_error {
+        if let Some(progress) = operation.hire.as_mut() {
+            if progress.cleanup.reason.is_none() {
+                progress.cleanup.reason = Some(format!(
+                    "lead context unavailable; owner cleanup only: {}",
+                    reason.chars().take(512).collect::<String>()
+                ));
+                save(&path, &operation)?;
+            }
+        }
+    }
+    let authorization = adapter.authorize(scope, request).await;
+    if let Some(disposition) = cleanup::reconcile(
+        &path,
+        &mut operation,
+        client,
+        scope,
+        request,
+        deadline_secs,
+        &authorization,
+    )
+    .await?
+    {
+        return Ok(disposition);
+    }
+    authorization?;
     let progress = operation
         .hire
         .clone()
@@ -530,6 +660,9 @@ fn ready(operation: &Operation, target: CodingSessionTarget) -> Result<Dispositi
     })
 }
 
+#[path = "hire_cleanup.rs"]
+mod cleanup;
+
 #[path = "hire_validation.rs"]
 mod validation;
 use validation::{validate_plan, validate_scope};
@@ -576,13 +709,17 @@ fn pending_plans(
         let operation: Operation =
             serde_json::from_value(value).map_err(|_| fail("hire reservation is malformed"))?;
         if operation.hire_decision.is_none()
-            && operation.target.is_none()
+            && (operation.target.is_none()
+                || operation
+                    .hire
+                    .as_ref()
+                    .is_some_and(|p| p.cleanup.reason.is_some() && !p.cleanup.settled()))
             && ["type", "owner", "relay", "scope"]
                 .iter()
                 .all(|key| operation.request[key] == binding[key])
         {
             if let Some(progress) = operation.hire {
-                if progress.refusal.is_none() {
+                if progress.refusal.is_none() && !progress.cleanup.settled() {
                     pending.push(progress.plan);
                 }
             }
@@ -671,10 +808,11 @@ pub fn pending_requests(
             .as_ref()
             .is_some_and(|d| !d.acknowledged)
             || (operation.hire_decision.is_none()
-                && operation
-                    .hire
-                    .as_ref()
-                    .is_some_and(|p| !p.completed && p.refusal.is_none()))
+                && operation.hire.as_ref().is_some_and(|p| {
+                    (!p.completed || p.cleanup.deadline.is_some())
+                        && p.refusal.is_none()
+                        && !p.cleanup.settled()
+                }))
         {
             let event: Event =
                 serde_json::from_value(operation.request["request"].clone()).map_err(fail)?;

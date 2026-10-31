@@ -75,6 +75,7 @@ mod claim_reverify_fetch;
 pub mod commands;
 pub mod config;
 pub mod conversation;
+pub mod conversation_project;
 mod host_ownership;
 mod runtime_credentials;
 mod runtime_installations;
@@ -2123,6 +2124,7 @@ impl Provider {
                 let Some(content) = self.admit_conversation_event(channel_id, event).await? else {
                     return Ok(());
                 };
+                let host_answer = self.conversation_is_host_answer(&event.id.to_hex())?;
                 if self.replay.open_until.contains_key(&channel_id) {
                     self.replay.held.push(HeldCommand {
                         channel_id,
@@ -2130,7 +2132,7 @@ impl Provider {
                         event_id: event.id.to_hex(),
                         operator_pubkey,
                         content,
-                        host_answer: false,
+                        host_answer,
                     });
                     return Ok(());
                 }
@@ -2141,7 +2143,7 @@ impl Provider {
                         &operator_pubkey,
                         &event.id.to_hex(),
                         &content,
-                        false,
+                        host_answer,
                     )
                     .await?
                     == TurnDisposition::Undecided
@@ -4658,6 +4660,11 @@ impl Provider {
         text: &str,
         operator_pubkey: &str,
     ) -> anyhow::Result<TurnDisposition> {
+        if self.record_conversation_host_answer(command_id, text)? {
+            return Ok(TurnDisposition::Answered(
+                payload::HOST_ANSWER_RECORDED.to_owned(),
+            ));
+        }
         let item =
             payload::host_answer_prompt_item(text, Some(operator_pubkey), Some(command_id), None);
         self.enqueue_transcript(channel_id, target, None, item, Priority::Normal)?;

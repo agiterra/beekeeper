@@ -176,6 +176,7 @@ pub fn build_hire_event(
             brief,
             // The signer is the requester: this host's own key.
             requested_by: None,
+            reply_to: None,
             // No routing request: the seat runs where the desktop's policy puts it.
             routing: None,
         },

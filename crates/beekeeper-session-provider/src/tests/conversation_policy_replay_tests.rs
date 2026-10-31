@@ -1,6 +1,6 @@
 use super::*;
 
-fn policy_definition(actor: &Keys, mode: &str, allowlist: Vec<String>) -> Event {
+pub(super) fn policy_definition(actor: &Keys, mode: &str, allowlist: Vec<String>) -> Event {
     nostr::EventBuilder::new(Kind::Custom(30177),serde_json::json!({"name":"Conversation worker","system_prompt":"Answer ordinary requests plainly.","parallelism":1,"respond_to":mode,"respond_to_allowlist":allowlist}).to_string())
         .tags([Tag::parse(["d",&actor.public_key().to_hex()]).unwrap()]).sign_with_keys(test_operator_keys()).unwrap()
 }
@@ -495,4 +495,72 @@ async fn expired_sibling_attestation_is_refused_with_a_receipt_not_dropped() {
         "{}",
         replies[0].content
     );
+}
+
+#[tokio::test]
+async fn report_notification_from_owner_sibling_returns_to_original_thread_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let channel = Uuid::new_v4();
+    let lead = Keys::generate();
+    let runner = Keys::generate();
+    let (mut host, target) = routed_provider(dir.path(), channel, &lead).await;
+    let original = message(channel, &lead, None, test_operator_keys());
+    host.handle_command_event(channel, &original).await.unwrap();
+    pump_until_turn_finished(&mut host).await;
+    let sink = CollectingSink::new();
+    host.flush(&sink).await.unwrap();
+    let auth =
+        beekeeper_sdk::nip_oa::compute_auth_tag(test_operator_keys(), &runner.public_key(), "")
+            .unwrap();
+    let profile = nostr::EventBuilder::new(Kind::Metadata, "{}")
+        .tags([beekeeper_sdk::nip_oa::parse_auth_tag(&auth).unwrap()])
+        .sign_with_keys(&runner)
+        .unwrap();
+    let (relay, _, _server) = spawn_test_relay_with_events(
+        &host.config.keys,
+        vec![policy_definition(&lead, "owner-only", vec![]), profile],
+    )
+    .await;
+    host.set_rest_client(relay.rest_client());
+    // A report reference is data for the model, not a claim verified by routing.
+    let report_notice = nostr::EventBuilder::new(
+        Kind::Custom(9),
+        "Report published: report-id; assignment: assignment-id. Please assess its evidence.",
+    )
+    .tags([
+        Tag::parse(["h", &channel.to_string()]).unwrap(),
+        Tag::parse(["p", &lead.public_key().to_hex()]).unwrap(),
+        Tag::parse(["e", &original.id.to_hex(), "", "root"]).unwrap(),
+    ])
+    .sign_with_keys(&runner)
+    .unwrap();
+    host.handle_command_event(channel, &report_notice)
+        .await
+        .unwrap();
+    pump_until_turn_finished(&mut host).await;
+    assert!(host.state.is_command_consumed(&report_notice.id.to_hex()));
+    let origins: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(host.config.state_dir.join("conversation-origins.json")).unwrap(),
+    )
+    .unwrap();
+    let origin = &origins["requests"][report_notice.id.to_hex()];
+    assert_eq!(origin["author"], runner.public_key().to_hex());
+    assert_eq!(origin["root"], original.id.to_hex());
+    assert_eq!(origin["target"], serde_json::to_value(target).unwrap());
+    let replies = CollectingSink::new();
+    host.flush(&replies).await.unwrap();
+    assert!(replies
+        .all()
+        .iter()
+        .any(|event| event.kind == Kind::Custom(9)
+            && event.pubkey == lead.public_key()
+            && event
+                .tags
+                .iter()
+                .any(|tag| tag.as_slice().get(1) == Some(&original.id.to_hex()))
+            && !event.content.starts_with("Request ")));
+    host.handle_command_event(channel, &report_notice)
+        .await
+        .unwrap();
+    assert!(host.in_flight.is_empty());
 }

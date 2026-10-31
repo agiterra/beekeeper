@@ -284,6 +284,10 @@ pub enum CodingSessionLifecycleAction {
         /// key that does not belong*.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         routing: Option<HireRoutingRequest>,
+        /// Exact admitted chat source event for refusal feedback. A routing
+        /// claim only; the Host verifies its requester/channel/project origin.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
     },
     /// Reattach a disconnected, non-stopped execution as a new generation.
     #[serde(rename = "session.resume")]
@@ -557,6 +561,7 @@ impl CodingSessionLifecycleCommandPayload {
                 brief,
                 requested_by,
                 routing,
+                reply_to,
             } => {
                 validate_session_ref(session_ref)?;
                 validate_event_id_hex("action.genesisRef", genesis_ref)?;
@@ -570,6 +575,9 @@ impl CodingSessionLifecycleCommandPayload {
                 }
                 validate_optional(model, "action.model", MAX_LIFECYCLE_REFERENCE_BYTES)?;
                 validate_hire_brief(brief)?;
+                if let Some(reply_to) = reply_to {
+                    validate_event_id_hex("action.replyTo", reply_to)?;
+                }
                 if let Some(requested_by) = requested_by {
                     validate_pubkey_hex("action.requestedBy", requested_by)?;
                 }
@@ -701,6 +709,7 @@ pub fn decode_coding_session_lifecycle_command(
         Some("session.hire") => {
             // Same rule as the create's `hireRef`: omitted, never null.
             reject_explicit_null(action, "requestedBy")?;
+            reject_explicit_null(action, "replyTo")?;
             reject_foreign_additive_key(
                 action,
                 "hireRef",
@@ -709,8 +718,9 @@ pub fn decode_coding_session_lifecycle_command(
                 "a hire cannot answer itself; the founder's host writes hireRef on the create it \
                  publishes in reply",
             )?;
-            // `requestedBy` and `routing` are independent axes, so the four
-            // accepted hire shapes are built from the base form rather than
+            // `requestedBy` and `routing` are independent axes; `replyTo` is
+            // another optional routing claim. The four base
+            // hire shapes are built from the base form rather than
             // listed — the same discipline the create above uses, and for
             // the same reason.
             let requested = action.get("requestedBy").is_some();
@@ -725,6 +735,11 @@ pub fn decode_coding_session_lifecycle_command(
                 routed_form.push("routing");
                 forms.push(form);
                 forms.push(routed_form);
+            }
+            if action.get("replyTo").is_some() {
+                for form in &mut forms {
+                    form.push("replyTo");
+                }
             }
             let forms: Vec<&[&str]> = forms
                 .iter()
@@ -2173,11 +2188,13 @@ mod tests {
             brief,
             requested_by,
             routing,
+            reply_to,
         } = &decoded.action
         else {
             panic!("expected a hire action")
         };
         assert_eq!(*routing, None);
+        assert_eq!(*reply_to, None);
         assert_eq!(*requested_by, None);
         assert_eq!(session_ref, &session_reference());
         assert_eq!(genesis_ref, &"12".repeat(32));
@@ -2856,5 +2873,29 @@ mod tests {
             HIRE_REFUSAL_CODES.contains(&"HIRE_MALFORMED"),
             "codes: {HIRE_REFUSAL_CODES:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod chat_return_tests {
+    use super::*;
+    #[test]
+    fn hire_chat_return_is_optional_exact_hex_and_never_explicit_null() {
+        let base = serde_json::json!({"schema":CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
+            "commandId":uuid::Uuid::new_v4().to_string(), "action":{"type":"session.hire",
+            "sessionRef":uuid::Uuid::new_v4().to_string(),"genesisRef":"a".repeat(64),
+            "role":"runner","providerInstanceRef":null,"model":null,"brief":"bounded work"}});
+        assert!(decode_coding_session_lifecycle_command(&base.to_string()).is_ok());
+        let mut with_source = base.clone();
+        with_source["action"]["replyTo"] = serde_json::json!("b".repeat(64));
+        assert!(decode_coding_session_lifecycle_command(&with_source.to_string()).is_ok());
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!("latest"),
+            serde_json::json!("B".repeat(64)),
+        ] {
+            with_source["action"]["replyTo"] = invalid;
+            assert!(decode_coding_session_lifecycle_command(&with_source.to_string()).is_err());
+        }
     }
 }

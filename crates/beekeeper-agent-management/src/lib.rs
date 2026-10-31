@@ -151,6 +151,7 @@ impl std::fmt::Debug for PrivateConfiguration {
 
 pub mod seat_materialization;
 
+pub mod conversation_project;
 pub mod hire;
 
 pub mod authority;
@@ -166,3 +167,5 @@ mod hire_pack_integrity;
 mod hire_preparation;
 
 mod hire_refusal;
+
+pub mod session_found;

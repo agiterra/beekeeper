@@ -19,6 +19,7 @@ struct Relay {
     ack_lost: AtomicBool,
     unavailable: AtomicBool,
     delegated: bool,
+    refuse_stop: AtomicBool,
 }
 impl RelayTransport for Relay {
     fn keys(&self) -> &Keys {
@@ -56,6 +57,12 @@ impl RelayTransport for Relay {
     }
     async fn submit_event(&self, event: Event) -> Result<Value, Error> {
         self.writes.lock().unwrap().push(event.clone());
+        if self.refuse_stop.load(Ordering::SeqCst)
+            && decode_coding_session_lifecycle_command(&event.content)
+                .is_ok_and(|p| matches!(p.action, CodingSessionLifecycleAction::SessionStop { .. }))
+        {
+            return Ok(json!({"accepted":false,"message":"blocked: fixture stop refusal"}));
+        }
         self.rows.lock().unwrap().push(event);
         if self.ack_lost.load(Ordering::SeqCst) {
             Err(Error::Other("ACK lost".into()))
@@ -68,6 +75,7 @@ struct Effects {
     catalog_probe: Option<(Context, Relay)>,
     decision: Mutex<Option<String>>,
     disclose: AtomicBool,
+    chat: Mutex<Option<beekeeper_sdk::ThreadRef>>,
     planning_unavailable: AtomicBool,
     plan: SeatPlan,
     plans: AtomicUsize,
@@ -107,6 +115,21 @@ impl Adapter for Effects {
             return Err(Error::Refused(reason));
         }
         Ok(self.plan.clone())
+    }
+    async fn refusal_conversation(
+        &self,
+        _: &Scope,
+        _: &Event,
+    ) -> Result<Option<beekeeper_sdk::ThreadRef>, Error> {
+        Ok(self
+            .chat
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|thread| beekeeper_sdk::ThreadRef {
+                root_event_id: thread.root_event_id,
+                parent_event_id: thread.parent_event_id,
+            }))
     }
     async fn refusal_target(&self, _: &Scope, _: &Event) -> Result<CodingSessionTarget, Error> {
         if !self.disclose.load(Ordering::SeqCst) {
@@ -275,11 +298,13 @@ fn fixture() -> Fixture {
             ack_lost: AtomicBool::new(false),
             unavailable: AtomicBool::new(false),
             delegated: false,
+            refuse_stop: AtomicBool::new(false),
         },
         effects: Effects {
             catalog_probe: None,
             decision: Mutex::new(None),
             disclose: AtomicBool::new(false),
+            chat: Mutex::new(None),
             planning_unavailable: AtomicBool::new(false),
             plan,
             plans: AtomicUsize::new(0),
@@ -742,3 +767,86 @@ async fn possibly_published_incomplete_preparation_is_never_restarted() {
 
 #[path = "hire_catalog_tests.rs"]
 mod catalog_tests;
+
+#[path = "hire_cleanup_tests.rs"]
+mod cleanup_tests;
+
+#[tokio::test]
+async fn chat_policy_refusal_retries_exact_notice_after_ack_loss_and_never_replans() {
+    let f = fixture();
+    *f.effects.decision.lock().unwrap() =
+        Some("HIRE_MODEL_NOT_OFFERED: exact effort required".into());
+    let root = nostr::EventId::from_hex(&"a".repeat(64)).unwrap();
+    let parent = nostr::EventId::from_hex(&"b".repeat(64)).unwrap();
+    *f.effects.chat.lock().unwrap() = Some(beekeeper_sdk::ThreadRef {
+        root_event_id: root,
+        parent_event_id: parent,
+    });
+    f.relay.ack_lost.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        run(&f).await.unwrap(),
+        Disposition::PolicyRefused {
+            disclosure_event_id: Some(_),
+            disclosure_confirmed: false,
+            disclosure_error: Some(_),
+            ..
+        }
+    ));
+    let first = f.relay.writes.lock().unwrap()[0].clone();
+    assert_eq!(first.kind.as_u16(), 9);
+    assert!(first
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice() == ["buzz-host-answer", "hire"]));
+    assert!(first.verify().is_ok());
+    assert_eq!(first.pubkey, f.relay.keys.public_key());
+    for value in [
+        root.to_hex(),
+        parent.to_hex(),
+        f.request.id.to_hex(),
+        f.request.pubkey.to_hex(),
+    ] {
+        assert!(first
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice().get(1) == Some(&value)));
+    }
+    f.relay.rows.lock().unwrap().clear(); // Lose readback too: force exact retransmission.
+    *f.effects.decision.lock().unwrap() = None;
+    f.relay.ack_lost.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        run(&f).await.unwrap(),
+        Disposition::PolicyRefused {
+            disclosure_confirmed: true,
+            disclosure_error: None,
+            ..
+        }
+    ));
+    run(&f).await.unwrap();
+    assert_eq!(*f.relay.writes.lock().unwrap(), vec![first.clone(), first]);
+    assert_eq!(f.effects.plans.load(Ordering::SeqCst), 1);
+    assert_eq!(f.effects.stages.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn unresolved_refusal_route_is_named_and_durable() {
+    let f = fixture();
+    *f.effects.decision.lock().unwrap() = Some("HIRE_OFF".into());
+    assert!(
+        matches!(run(&f).await.unwrap(), Disposition::PolicyRefused {disclosure_event_id: None, disclosure_error: Some(reason), ..} if reason.starts_with("HIRE_DISCLOSURE_ROUTING_UNRESOLVED"))
+    );
+    let path = journal_path(
+        &f.context,
+        f.relay.relay_url(),
+        &f.relay.keys.public_key().to_hex(),
+        &f.scope,
+        &decode_coding_session_lifecycle_command(&f.request.content)
+            .unwrap()
+            .command_id,
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(path)
+        .unwrap()
+        .contains("HIRE_DISCLOSURE_ROUTING_UNRESOLVED"));
+    assert!(f.relay.writes.lock().unwrap().is_empty());
+}

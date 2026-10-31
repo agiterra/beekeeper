@@ -326,6 +326,7 @@ fn the_accessors_type_the_reads_on_every_carrier() {
             model: None,
             brief: "Rebase the lane and run the gate.".to_owned(),
             requested_by: None,
+            reply_to: None,
             routing: None,
         },
     };
