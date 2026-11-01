@@ -183,6 +183,11 @@ async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed
         .next()
         .expect("the create minted a session")
         .clone();
+    // The fixture models a prompted conversation with native history; an
+    // unprompted generation reopens Fresh (native_restore_fresh_tests.rs).
+    provider
+        .mark_native_history_started(&record.session_id)
+        .expect("a prompted generation");
     let target = record.target("instance-1");
     provider
         .handle_command_event(

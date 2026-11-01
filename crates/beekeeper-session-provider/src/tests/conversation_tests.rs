@@ -49,6 +49,11 @@ async fn routed_provider_for_project(
         .next()
         .expect("accepted session")
         .clone();
+    // These fixtures model a conversation that already has native history to
+    // reattach; an unprompted generation reopens Fresh instead
+    // (native_restore_fresh_tests.rs).
+    host.mark_native_history_started(&record.session_id)
+        .expect("a prompted generation");
     let target = host.target_for(host.state.session(&record.session_id).expect("session"));
     install_routes(&host, channel, actor, vec![target.clone()]);
     let tag =
@@ -470,6 +475,74 @@ async fn conversation_after_worker_restart_loads_native_cursor_once_without_new_
         .expect("replay");
     assert_eq!(
         std::fs::read_to_string(log).expect("methods after replay"),
+        methods
+    );
+}
+
+/// Acceptance 5 (R6) and 6 (R5): an unprompted generation, after a provider
+/// restart, reopens Fresh in the same generation on the first request, and a
+/// replay of that same request id starts no second turn and no second
+/// `session/new`.
+#[tokio::test]
+async fn unprompted_conversation_after_worker_restart_goes_fresh_once_and_replay_starts_no_second_turn(
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let actor = Keys::generate();
+    let (mut host, target) = routed_provider(dir.path(), channel, &actor).await;
+    host.state
+        .update_session(&target.session_id, |record| {
+            record.native_history_started = false;
+        })
+        .expect("an unprompted generation");
+    let rest = host.rest_client.clone();
+    let mut config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
+    drop(host);
+    let log = dir.path().join("checkout").join("fresh-methods.log");
+    config.runtimes[0].agent_command = fake_agent(
+        dir.path(),
+        "native-rejecter",
+        &crate::session::testing::load_rejecting_agent(&log.to_string_lossy()),
+    );
+    let mut host = Provider::new(config).expect("restart");
+    host.rest_client = rest;
+    host.set_relay_self(host.config.keys.public_key().to_hex());
+    host.recover().await.expect("existing crash reconciliation");
+    let request = message(channel, &actor, None, test_operator_keys());
+    host.handle_command_event(channel, &request)
+        .await
+        .expect("ordinary request lazy restore");
+    pump_until_turn_finished(&mut host).await;
+    let record = host
+        .state
+        .session(&target.session_id)
+        .expect("same responsibility");
+    assert_eq!(record.generation, target.generation);
+    assert_eq!(
+        record.resume_cursor.as_deref(),
+        Some("a-brand-new-conversation")
+    );
+    assert!(record.native_history_started, "the turn marked it prompted");
+    let methods = std::fs::read_to_string(&log).expect("methods");
+    let count = |name: &str| methods.lines().filter(|method| *method == name).count();
+    assert_eq!(count("session/new"), 1);
+    assert_eq!(count("session/prompt"), 1);
+    assert_eq!(count("session/load"), 0);
+    host.handle_command_event(channel, &request)
+        .await
+        .expect("replay");
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("after replay"),
         methods
     );
 }
