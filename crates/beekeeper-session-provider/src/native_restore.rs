@@ -637,10 +637,11 @@ impl Provider {
             record.channel_id,
             &target,
             None,
-            payload::status_item(if record.native_history_started {
-                SESSION_RESTORED_NATIVE
-            } else {
-                SESSION_RESTARTED_FRESH
+            // What the open produced, not what was intended. `session_fresh` is
+            // the row every client already renders for a new conversation.
+            payload::status_item(match startup.continuity {
+                session::SessionContinuity::Fresh => "session_fresh",
+                _ => SESSION_RESTORED_NATIVE,
             }),
             Priority::High,
         )?;
@@ -882,7 +883,10 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     }
 
     let execution_state = execution.state();
-    let native_history_started = record.native_history_started;
+    // Fresh only when nothing can exist to lose. A private continuity archive
+    // proves native history whatever the fact says, so that generation stays
+    // strict and names what the adapter actually answered.
+    let opens_fresh = !record.native_history_started && private_fragments.is_empty();
     let request = CreateRequest {
         execution,
         media,
@@ -895,12 +899,12 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         // there is nothing to reattach to: open `session/new` in the same
         // generation. Anything that ever had (or may have had) a prompt stays
         // strict and refuses rather than start over.
-        resume_cursor: native_history_started.then_some(resume_cursor),
+        resume_cursor: (!opens_fresh).then_some(resume_cursor),
         // A native reattachment carries its own history. Building a
         // verified-context package for it would spend the work and then
         // brief the agent about a past it already remembers.
         rehydration_mcp: None,
-        strict_native: native_history_started,
+        strict_native: !opens_fresh,
         agent_command: descriptor.agent_command.clone(),
         agent_args: descriptor.agent_args.clone(),
         agent_env,
@@ -952,11 +956,6 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
 /// reader who saw it here would look for a lifecycle receipt and a generation
 /// bump that never happened.
 pub(crate) const SESSION_RESTORED_NATIVE: &str = "session_restored_native";
-
-/// Transcript status for a generation reopened with a new native conversation
-/// because it never sent a prompt: continuity is Fresh, and no history was
-/// reattached because none existed.
-pub(crate) const SESSION_RESTARTED_FRESH: &str = "session_restarted_fresh";
 
 #[cfg(all(test, unix))]
 #[path = "native_restore_cleanup_tests.rs"]

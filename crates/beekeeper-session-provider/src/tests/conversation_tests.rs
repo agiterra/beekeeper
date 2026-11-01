@@ -541,9 +541,112 @@ async fn unprompted_conversation_after_worker_restart_goes_fresh_once_and_replay
     host.handle_command_event(channel, &request)
         .await
         .expect("replay");
+    // A different request then runs through the same single-turn actor. Whatever
+    // the replay had queued runs first, so once *this* request has finished the
+    // log holds both: exactly one more prompt means the replay started nothing.
+    // It is also the control that this log can see a second turn at all.
+    let next = nostr::EventBuilder::new(nostr::Kind::Custom(9), "a different request")
+        .tags([
+            Tag::parse(["h", &channel.to_string()]).expect("channel"),
+            Tag::parse(["p", &actor.public_key().to_hex()]).expect("mention"),
+        ])
+        .sign_with_keys(test_operator_keys())
+        .expect("signed input");
+    host.handle_command_event(channel, &next)
+        .await
+        .expect("next request");
+    let next_id = next.id.to_hex();
+    pump_until(&mut host, |event| {
+        matches!(event, session::SessionEvent::TurnStarted { command_id, .. } if command_id == &next_id)
+    })
+    .await;
+    pump_until_turn_finished(&mut host).await;
+    let methods = std::fs::read_to_string(&log).expect("after replay");
+    let count = |name: &str| methods.lines().filter(|method| *method == name).count();
+    assert_eq!(count("session/prompt"), 2, "{methods}");
+    assert_eq!(count("session/new"), 1, "{methods}");
+    assert_eq!(count("session/load"), 0, "{methods}");
+    let sink = CollectingSink::new();
+    host.flush(&sink).await.expect("flush");
+    let started = sink
+        .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+        .into_iter()
+        .filter(|receipt| {
+            receipt["status"] == "turn_started" && receipt["commandId"] == request.id.to_hex()
+        })
+        .count();
+    assert_eq!(started, 1, "the replayed request has one started receipt");
+}
+
+/// A private continuity archive proves native history even when the fact says
+/// otherwise, so the restore asks the adapter and reports its real answer.
+#[tokio::test]
+async fn unprompted_generation_with_a_private_archive_stays_strict() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let actor = Keys::generate();
+    let (mut host, target) = routed_provider(dir.path(), channel, &actor).await;
+    host.state
+        .update_session(&target.session_id, |record| {
+            record.native_history_started = false;
+        })
+        .expect("an unprompted generation");
+    let record = host.state.session(&target.session_id).unwrap().clone();
+    let binding = crate::continuity_archive::Binding::for_record(
+        &record,
+        &host.config.instance_id,
+        &host.config.relay_url,
+        &test_operator_keys().public_key().to_hex(),
+    )
+    .expect("binding");
+    crate::context_store::write_continuity_archive(
+        &host.config.state_dir,
+        &crate::continuity_archive::Archive {
+            binding,
+            fragments: vec!["PRIVATE_RESTORE_CANARY".into()],
+        },
+    )
+    .expect("archive");
+    let rest = host.rest_client.clone();
+    let mut config = host.config.clone();
+    host.sessions
+        .shutdown_and_join(&target.session_id, crate::session::ACTOR_RETIRE_GRACE)
+        .await;
+    drop(host);
+    let log = dir.path().join("checkout").join("archive-methods.log");
+    config.runtimes[0].agent_command = fake_agent(
+        dir.path(),
+        "archive-rejecter",
+        &crate::session::testing::load_rejecting_agent(&log.to_string_lossy()),
+    );
+    let mut host = Provider::new(config).expect("restart");
+    host.rest_client = rest;
+    host.set_relay_self(host.config.keys.public_key().to_hex());
+    host.recover().await.expect("existing crash reconciliation");
+    let refused = host
+        .restore_generation(&target.session_id, None)
+        .await
+        .expect("restore")
+        .expect_err("refused");
     assert_eq!(
-        std::fs::read_to_string(&log).expect("after replay"),
-        methods
+        refused.code(),
+        crate::native_restore::NATIVE_RESTORE_REJECTED
+    );
+    let methods = std::fs::read_to_string(&log).expect("methods");
+    assert!(
+        methods.lines().any(|method| method == "session/load"),
+        "{methods}"
+    );
+    assert!(
+        !methods.lines().any(|method| method == "session/new"),
+        "{methods}"
+    );
+    assert_eq!(
+        host.state
+            .session(&target.session_id)
+            .unwrap()
+            .resume_cursor,
+        record.resume_cursor
     );
 }
 

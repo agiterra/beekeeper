@@ -628,6 +628,14 @@ impl Provider {
             record.open_turn = None;
             record.closed = false;
             record.resume_cursor = Some(startup.acp_session_id.clone());
+            // A new native conversation holds no prompt yet, whatever the last
+            // one held. Only a reattachment keeps the earlier fact.
+            if !matches!(
+                startup.continuity,
+                SessionContinuity::Resumed | SessionContinuity::Loaded
+            ) {
+                record.native_history_started = false;
+            }
             record.execution_binding = execution_binding.clone();
             record.execution_boundary = crate::execution_scope::recorded_state(&execution_state);
             // This generation's pack, not the previous one's: a seat restaged

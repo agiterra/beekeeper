@@ -9641,6 +9641,8 @@ impl Provider {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
+                // The adapter now has a conversation nobody prompted into being.
+                self.mark_native_history_started(&session_id)?;
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = Some(OpenTurn {
                         turn_id: turn_id.clone(),
