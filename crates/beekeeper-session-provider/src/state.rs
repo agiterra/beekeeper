@@ -293,6 +293,16 @@ pub struct SessionRecord {
     /// records.
     #[serde(default)]
     pub granted_viewers: BTreeSet<String>,
+    /// Whether a `session/prompt` has ever been dispatched (or may have been)
+    /// in this generation's native conversation. Recorded durably *before* the
+    /// prompt is delivered, so a crash between the two leaves `true`: a
+    /// restore then refuses rather than silently starting a fresh
+    /// conversation. A conversation that never had a prompt has no adapter
+    /// transcript to reattach to, so its restore opens `session/new` in the
+    /// same generation and says so. Absent in records written before this
+    /// field existed, which therefore read as prompted.
+    #[serde(default = "default_native_history_started")]
+    pub native_history_started: bool,
     /// Highest accepted authority-chain `seq` whose grant has been applied to
     /// `granted_operators`. `0` means no transition has been applied. Grants
     /// apply strictly contiguously (`seq == authority_seq + 1`); a gap
@@ -389,6 +399,10 @@ pub struct Retirement {
     /// When this provider recorded the retirement, milliseconds since the
     /// Unix epoch. The provider's own observation time, never the deletion's.
     pub at: i64,
+}
+
+fn default_native_history_started() -> bool {
+    true
 }
 
 /// Whether a claim state is the one that writes no key at all.
@@ -1813,6 +1827,24 @@ pub fn index_by_target(
 mod tests {
     use super::*;
 
+    /// Acceptance 4 and R3: a record persisted before the field existed reads
+    /// as prompted, so a restore of it stays strict.
+    #[test]
+    fn legacy_record_without_the_fact_reads_as_prompted() {
+        let mut fresh = record("legacy");
+        fresh.native_history_started = false;
+        let mut json = serde_json::to_value(&fresh).unwrap();
+        let object = json.as_object_mut().unwrap();
+        let removed = object
+            .keys()
+            .find(|key| key.to_lowercase().replace('_', "") == "nativehistorystarted")
+            .cloned()
+            .expect("the field is serialized");
+        object.remove(&removed);
+        let decoded: SessionRecord = serde_json::from_value(json).unwrap();
+        assert!(decoded.native_history_started);
+    }
+
     fn record(session_id: &str) -> SessionRecord {
         SessionRecord {
             execution_binding: None,
@@ -1838,6 +1870,7 @@ mod tests {
             founder_pubkey: Some("ab".repeat(32)),
             granted_operators: BTreeSet::new(),
             granted_viewers: BTreeSet::new(),
+            native_history_started: true,
             authority_seq: 0,
             model: None,
             model_requested: None,

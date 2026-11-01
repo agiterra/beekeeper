@@ -558,6 +558,7 @@ impl Provider {
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
+            native_history_started: plan.initial_turn.is_some(),
             authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
             model_requested: plan.model.clone(),

@@ -219,6 +219,21 @@ impl Provider {
         self.finish_restore(run).await
     }
 
+    /// Durably record that a prompt is about to be dispatched in this
+    /// generation. Written before delivery so a crash in between fails closed
+    /// (the restore refuses) rather than opening a fresh conversation.
+    pub(crate) fn mark_native_history_started(&mut self, session_id: &str) -> anyhow::Result<()> {
+        if self
+            .state
+            .session(session_id)
+            .is_some_and(|record| !record.native_history_started)
+        {
+            self.state
+                .update_session(session_id, |record| record.native_history_started = true)?;
+        }
+        Ok(())
+    }
+
     /// Everything a restore decides before it waits on anything: steps 1–5,
     /// each a named obstacle, and the inputs the slow half needs, owned.
     ///
@@ -622,7 +637,11 @@ impl Provider {
             record.channel_id,
             &target,
             None,
-            payload::status_item(SESSION_RESTORED_NATIVE),
+            payload::status_item(if record.native_history_started {
+                SESSION_RESTORED_NATIVE
+            } else {
+                SESSION_RESTARTED_FRESH
+            }),
             Priority::High,
         )?;
         // What the provider's isolation settings withheld, when any did; for
@@ -863,6 +882,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     }
 
     let execution_state = execution.state();
+    let native_history_started = record.native_history_started;
     let request = CreateRequest {
         execution,
         media,
@@ -871,12 +891,16 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         cwd: record.cwd.clone(),
         title: record.title.clone(),
         model: record.model.clone(),
-        resume_cursor: Some(resume_cursor),
+        // A generation that never sent a prompt has no adapter transcript, so
+        // there is nothing to reattach to: open `session/new` in the same
+        // generation. Anything that ever had (or may have had) a prompt stays
+        // strict and refuses rather than start over.
+        resume_cursor: native_history_started.then_some(resume_cursor),
         // A native reattachment carries its own history. Building a
         // verified-context package for it would spend the work and then
         // brief the agent about a past it already remembers.
         rehydration_mcp: None,
-        strict_native: true,
+        strict_native: native_history_started,
         agent_command: descriptor.agent_command.clone(),
         agent_args: descriptor.agent_args.clone(),
         agent_env,
@@ -929,6 +953,15 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
 /// bump that never happened.
 pub(crate) const SESSION_RESTORED_NATIVE: &str = "session_restored_native";
 
+/// Transcript status for a generation reopened with a new native conversation
+/// because it never sent a prompt: continuity is Fresh, and no history was
+/// reattached because none existed.
+pub(crate) const SESSION_RESTARTED_FRESH: &str = "session_restarted_fresh";
+
 #[cfg(all(test, unix))]
 #[path = "native_restore_cleanup_tests.rs"]
 mod cleanup_tests;
+
+#[cfg(all(test, unix))]
+#[path = "native_restore_fresh_tests.rs"]
+mod fresh_tests;

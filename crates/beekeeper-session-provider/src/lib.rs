@@ -5221,6 +5221,9 @@ impl Provider {
                 turn: Box::new(message),
             };
         }
+        if is_turn {
+            self.mark_native_history_started(&session_id)?;
+        }
         let disposition = match self.sessions.handle(&session_id) {
             Some(handle) => match handle.deliver(message) {
                 // Custody, not execution: the provider has the turn, and the
@@ -5945,6 +5948,7 @@ impl Provider {
             operator_pubkey: Some(attempt.operator_pubkey.clone()),
             framing,
         };
+        self.mark_native_history_started(&attempt.session_id)?;
         let delivered = match self.sessions.handle(&attempt.session_id) {
             Some(handle) => handle.deliver(turn),
             None => Err(DeliverError::Gone),
@@ -14053,6 +14057,7 @@ mod tests {
             founder_pubkey: Some(test_operator_keys().public_key().to_hex()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
+            native_history_started: true,
             authority_seq: 0,
             model: None,
             model_requested: None,
@@ -18856,6 +18861,7 @@ mod tests {
                     founder_pubkey: Some("ab".repeat(32)),
                     granted_operators: std::collections::BTreeSet::new(),
                     granted_viewers: std::collections::BTreeSet::new(),
+                    native_history_started: true,
                     authority_seq: 0,
                     model: None,
                     model_requested: None,

@@ -25,6 +25,10 @@ async fn fixture(root: &std::path::Path) -> (crate::Provider, SessionRecord) {
         session::ActorQuiescence::Unproven
     );
     provider.record_quiesced(&target).unwrap();
+    // These tests cover a generation that has a conversation to lose.
+    provider
+        .mark_native_history_started(&record.session_id)
+        .unwrap();
     let record = provider.state.session(&record.session_id).unwrap().clone();
     (provider, record)
 }

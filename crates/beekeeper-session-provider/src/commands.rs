@@ -2239,6 +2239,7 @@ mod tests {
             founder_pubkey: Some(AUTHORITY.into()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
+            native_history_started: true,
             authority_seq: 0,
             model: None,
             model_requested: None,

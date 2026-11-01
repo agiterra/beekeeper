@@ -40,6 +40,7 @@ fn record(session_id: &str, command_id: &str) -> SessionRecord {
         founder_pubkey: None,
         granted_operators: BTreeSet::new(),
         granted_viewers: BTreeSet::new(),
+        native_history_started: true,
         authority_seq: 0,
         model: None,
         model_requested: None,

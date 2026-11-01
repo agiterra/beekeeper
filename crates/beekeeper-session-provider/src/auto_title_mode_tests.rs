@@ -264,6 +264,7 @@ fn record(founder: &str) -> crate::state::SessionRecord {
         founder_pubkey: Some(founder.to_owned()),
         granted_operators: Default::default(),
         granted_viewers: Default::default(),
+        native_history_started: true,
         authority_seq: 0,
         model: None,
         model_requested: None,
