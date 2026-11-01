@@ -6638,10 +6638,11 @@ done
                 framing: None,
             })
             .expect("turn");
-        assert!(matches!(
-            next_lifecycle_event(&mut rx).await,
-            SessionEvent::TurnStarted { .. }
-        ));
+        let started = next_lifecycle_event(&mut rx).await;
+        assert!(
+            matches!(started, SessionEvent::TurnStarted { .. }),
+            "{started:?}"
+        );
         handle
             .deliver(SessionCommand::Interrupt {
                 command_id: "stop".into(),

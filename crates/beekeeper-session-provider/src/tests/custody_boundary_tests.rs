@@ -543,26 +543,60 @@ async fn a_dequeue_observation_is_written_when_the_row_is_the_one_it_saw() {
 
 // ------------------- one custody identity per seat (lane 227, third look R2)
 
-/// The compressed dequeue wait is process-global, so the two cases that use
-/// it take turns. Without this they can unset each other's bound and one of
-/// them waits the production five minutes — a flake that would look like a
-/// custody bug.
-static WAIT_BOUND: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Hold the compressed wait for the length of one case.
-fn compressed_wait(bound: Duration) -> impl Drop {
-    struct Restore(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+/// Hold the compressed wait on one seat for the length of one case.
+fn compressed_wait(seat: &str, bound: Duration) -> impl Drop {
+    struct Restore(String);
     impl Drop for Restore {
         fn drop(&mut self) {
-            crate::assignment_custody::set_wait_bound_for_tests(None);
+            crate::assignment_custody::set_wait_bound_for_tests(&self.0, None);
         }
     }
-    let guard = match WAIT_BOUND.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    crate::assignment_custody::set_wait_bound_for_tests(Some(bound));
-    Restore(guard)
+    crate::assignment_custody::set_wait_bound_for_tests(seat, Some(bound));
+    Restore(seat.to_owned())
+}
+
+/// CI 370 and 378: another test's compressed wait must not reach this seat.
+/// Its turn waits for custody rather than being refused `SeatBusy`.
+#[tokio::test]
+async fn a_compressed_wait_on_one_seat_does_not_reach_another_held_seat() {
+    let held = format!("seat-{}", Uuid::new_v4());
+    let other = format!("seat-{}", Uuid::new_v4());
+    let guard = crate::assignment_custody::hold(&held).await;
+    let _compressed = compressed_wait(&other, Duration::from_millis(1));
+    let mut waiting = Box::pin(crate::assignment_custody::verify_for_turn(&held, "turn"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), &mut waiting)
+            .await
+            .is_err(),
+        "the held seat's turn answered instead of waiting for custody"
+    );
+    drop(guard);
+    let answered = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .expect("answers once custody is free");
+    assert!(matches!(
+        answered,
+        crate::assignment_custody::TurnCustody::Unmanaged(_)
+    ));
+}
+
+/// The same bound on the seat itself does answer `SeatBusy`: the control that
+/// the wait above was the bound's doing, and that per-seat compression works.
+#[tokio::test]
+async fn a_compressed_wait_on_the_held_seat_answers_seat_busy() {
+    let held = format!("seat-{}", Uuid::new_v4());
+    let _guard = crate::assignment_custody::hold(&held).await;
+    let _compressed = compressed_wait(&held, Duration::from_millis(1));
+    let answered = tokio::time::timeout(
+        Duration::from_secs(5),
+        crate::assignment_custody::verify_for_turn(&held, "turn"),
+    )
+    .await
+    .expect("answers within the compressed bound");
+    assert!(matches!(
+        answered,
+        crate::assignment_custody::TurnCustody::SeatBusy
+    ));
 }
 
 /// Astra's probe, as a test: with one custody identity per seat, no public
@@ -628,7 +662,7 @@ async fn a_turn_that_cannot_get_custody_is_discharged_and_never_prompted() {
     // not finished. Compress the dequeue's wait so the answer arrives in test
     // time; production waits `CUSTODY_WAIT_BOUND`.
     let squatter = crate::assignment_custody::hold(&session_id).await;
-    let _compressed = compressed_wait(Duration::from_millis(100));
+    let _compressed = compressed_wait(&session_id, Duration::from_millis(100));
 
     provider
         .handle_command_event(channel_id, &turn_event(channel_id, "wake-1", &target))
@@ -734,7 +768,7 @@ async fn an_establishment_that_outlives_the_wait_keeps_the_tree() {
     let assignment = "56".repeat(32);
     let store = queued_store(&state, dir.path(), &seat, &assignment, &second);
     let establishing = crate::assignment_custody::hold(&session_id).await;
-    let _compressed = compressed_wait(Duration::from_millis(100));
+    let _compressed = compressed_wait(&session_id, Duration::from_millis(100));
 
     // The ordinary follow-up arrives while that establishment still runs.
     provider

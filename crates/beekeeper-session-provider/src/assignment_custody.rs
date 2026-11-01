@@ -108,10 +108,12 @@ struct Registry {
     /// Terminal records whose write failed, kept so the next pass can write
     /// them instead of doing the git work again (finding 12).
     unrecorded: HashMap<String, (String, AssignmentInputRecord)>,
-    /// A shorter dequeue wait, for tests that have to observe the
-    /// custody-unavailable answer without waiting minutes for it.
+    /// A shorter dequeue wait per seat, for tests that have to observe the
+    /// custody-unavailable answer without waiting minutes for it. Per seat
+    /// because tests run in one process: a global bound made another test's
+    /// turn on a shared seat id refuse `SeatBusy` (CI 370 and 378).
     #[cfg(test)]
-    test_wait_bound: Option<Duration>,
+    test_wait_bounds: HashMap<String, Duration>,
     /// Seats whose predecessor could not be proven dead.
     fenced: std::collections::HashSet<String>,
 }
@@ -527,30 +529,36 @@ impl TurnCustody {
 /// the tree again at the only moment that matters — after the previous turn
 /// has ended, before this prompt is sent — and holds custody for as long as
 /// the caller keeps the guard, so nothing can move it while the turn runs.
-/// Shorten the dequeue's custody wait for the current test process.
+/// Shorten the dequeue's custody wait for one seat in this test process.
 ///
 /// Test-only: production always waits [`CUSTODY_WAIT_BOUND`]. What a test
 /// needs is the *answer* a turn gives when somebody else holds the seat, and
 /// waiting five real minutes for it proves nothing extra.
 #[cfg(test)]
-pub fn set_wait_bound_for_tests(bound: Option<Duration>) {
+pub fn set_wait_bound_for_tests(session_id: &str, bound: Option<Duration>) {
     let mut registry = match registry().lock() {
         Ok(registry) => registry,
         Err(poisoned) => poisoned.into_inner(),
     };
-    registry.test_wait_bound = bound;
+    match bound {
+        Some(bound) => registry
+            .test_wait_bounds
+            .insert(session_id.to_owned(), bound),
+        None => registry.test_wait_bounds.remove(session_id),
+    };
 }
 
-/// The bound this process's dequeues wait for custody.
-fn wait_bound() -> Duration {
+/// The bound a dequeue on this seat waits for custody.
+#[cfg_attr(not(test), allow(unused_variables))]
+fn wait_bound(session_id: &str) -> Duration {
     #[cfg(test)]
     {
         let registry = match registry().lock() {
             Ok(registry) => registry,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if let Some(bound) = registry.test_wait_bound {
-            return bound;
+        if let Some(bound) = registry.test_wait_bounds.get(session_id) {
+            return *bound;
         }
     }
     CUSTODY_WAIT_BOUND
@@ -560,7 +568,7 @@ pub async fn verify_for_turn(session_id: &str, command_id: &str) -> TurnCustody 
     // The lock comes first, unconditionally. Deciding whether to take custody
     // by asking whether this particular prompt names an assignment was R2:
     // the tree is the seat's, and whichever turn is running is using it.
-    let Some(guard) = hold_for_turn(session_id, wait_bound()).await else {
+    let Some(guard) = hold_for_turn(session_id, wait_bound(session_id)).await else {
         return TurnCustody::SeatBusy;
     };
     let Some(requirement) = take_requirement(session_id, command_id) else {
