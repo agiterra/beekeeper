@@ -110,8 +110,9 @@ struct Registry {
     unrecorded: HashMap<String, (String, AssignmentInputRecord)>,
     /// A shorter dequeue wait per seat, for tests that have to observe the
     /// custody-unavailable answer without waiting minutes for it. Per seat
-    /// because tests run in one process: a global bound made another test's
-    /// turn on a shared seat id refuse `SeatBusy` (CI 370 and 378).
+    /// because tests run in one process: a global bound can make another test's
+    /// turn on a shared seat id refuse `SeatBusy`, as reproduced by a probe.
+    /// Whether this caused CI 370 or 378 is unproven.
     #[cfg(test)]
     test_wait_bounds: HashMap<String, Duration>,
     /// Seats whose predecessor could not be proven dead.

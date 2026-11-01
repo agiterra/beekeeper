@@ -555,7 +555,8 @@ fn compressed_wait(seat: &str, bound: Duration) -> impl Drop {
     Restore(seat.to_owned())
 }
 
-/// CI 370 and 378: another test's compressed wait must not reach this seat.
+/// Another test's compressed wait must not reach this seat.
+/// This reproduces the isolation defect; the CI 370/378 cause remains unknown.
 /// Its turn waits for custody rather than being refused `SeatBusy`.
 #[tokio::test]
 async fn a_compressed_wait_on_one_seat_does_not_reach_another_held_seat() {
