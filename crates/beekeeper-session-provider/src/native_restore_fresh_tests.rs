@@ -261,3 +261,208 @@ async fn a_resume_that_reattaches_keeps_the_fact() {
     assert_eq!(current.generation, prior.generation + 1);
     assert!(current.native_history_started);
 }
+
+/// A runtime that keeps its own context is never published as fresh; the row
+/// that says it may remember more is the honest one.
+#[tokio::test]
+async fn a_runtime_keeping_its_own_context_is_not_called_fresh_on_restore() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = unprompted(root.path()).await;
+    provider.config.runtimes[0].context =
+        Some(beekeeper_core::coding_session_runtime::RuntimeContext::Runtime);
+    let rows = |provider: &crate::Provider, status: &str| {
+        provider
+            .outbox
+            .pending_events()
+            .filter(|event| event.content.contains(status))
+            .count()
+    };
+    let before = rows(&provider, "\"session_fresh\"");
+    let held_before = rows(&provider, crate::execution_scope::STATUS_RUNTIME_CONTEXT);
+    provider
+        .restore_generation(&prior.session_id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rows(&provider, "\"session_fresh\""), before);
+    assert_eq!(
+        rows(&provider, crate::execution_scope::STATUS_RUNTIME_CONTEXT),
+        held_before + 1
+    );
+}
+
+/// R4 as emitted: a fresh restore queues continuity statuses only, no receipt,
+/// and never says it reattached or leaks the new cursor.
+#[tokio::test]
+async fn a_fresh_restore_queues_only_what_it_can_truthfully_say() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = unprompted(root.path()).await;
+    let seen: std::collections::HashSet<String> = provider
+        .outbox
+        .pending_events()
+        .map(|event| event.id.to_hex())
+        .collect();
+    provider
+        .restore_generation(&prior.session_id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    let queued: Vec<_> = provider
+        .outbox
+        .pending_events()
+        .filter(|event| !seen.contains(&event.id.to_hex()))
+        .collect();
+    let mut statuses = Vec::new();
+    for event in &queued {
+        assert_ne!(
+            u32::from(event.kind.as_u16()),
+            beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            "no command was issued, so no receipt: {}",
+            event.content
+        );
+        for word in [
+            SESSION_RESTORED_NATIVE,
+            "a-brand-new-conversation",
+            "reattach",
+        ] {
+            assert!(!event.content.contains(word), "{word}: {}", event.content);
+        }
+        let value: serde_json::Value = serde_json::from_str(&event.content).unwrap();
+        if let Some(status) = value["item"]["status"].as_str() {
+            statuses.push(status.to_owned());
+        }
+    }
+    assert!(
+        statuses.iter().any(|status| status == "session_fresh"),
+        "{statuses:?}"
+    );
+    assert!(
+        statuses
+            .iter()
+            .all(|status| status == "session_fresh" || status.starts_with("execution_boundary")),
+        "{statuses:?}"
+    );
+}
+
+/// R4: the generation's metadata does not change on a fresh restore and has no
+/// continuity field that could disagree with the transcript.
+#[tokio::test]
+async fn the_metadata_says_nothing_about_continuity_on_a_fresh_restore() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = unprompted(root.path()).await;
+    let target = prior.target(&provider.config.instance_id);
+    let before = serde_json::to_value(provider.metadata_for(&target, SessionStatus::Idle)).unwrap();
+    provider
+        .restore_generation(&prior.session_id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    let after = serde_json::to_value(provider.metadata_for(&target, SessionStatus::Idle)).unwrap();
+    assert_eq!(before["session"], after["session"]);
+    let text = after.to_string().to_lowercase();
+    for word in [
+        "contin",
+        "restor",
+        "resum",
+        "rehydrat",
+        "native",
+        "loaded",
+        "reattach",
+        "a-brand-new",
+        "cursor",
+    ] {
+        assert!(!text.contains(word), "{word}: {text}");
+    }
+}
+
+/// F3: a non-native resume records what that open delivered, so an earlier
+/// package cannot be reported as lost for a conversation that never had one.
+/// (A real rehydrated resume needs a relay and an umbrella chain, and no test
+/// in this crate reaches it; the actor-level tests cover `Some` at open.)
+#[tokio::test]
+async fn a_resume_that_opens_new_records_that_opens_bootstrap_transport() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = unprompted(root.path()).await;
+    provider
+        .state
+        .update_session(&prior.session_id, |record| {
+            record.bootstrap_transport = Some(session::BootstrapTransport::SystemPrompt);
+        })
+        .unwrap();
+    let target = prior.target(&provider.config.instance_id);
+    let resume = crate::tests::lifecycle_target_event(
+        &provider,
+        prior.channel_id,
+        "resume-new-conversation",
+        "session.resume",
+        &target,
+    );
+    provider
+        .handle_command_event(prior.channel_id, &resume)
+        .await
+        .unwrap();
+    let current = provider.state.session(&prior.session_id).unwrap();
+    assert_eq!(current.generation, prior.generation + 1);
+    assert_eq!(current.bootstrap_transport, None);
+}
+
+/// F3: a reattachment did not change what the conversation was given.
+#[tokio::test]
+async fn a_resume_that_reattaches_keeps_the_bootstrap_transport() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = unprompted(root.path()).await;
+    provider
+        .state
+        .update_session(&prior.session_id, |record| {
+            record.bootstrap_transport = Some(session::BootstrapTransport::SystemPrompt);
+        })
+        .unwrap();
+    provider.config.runtimes[0].agent_command = fake_agent(
+        root.path(),
+        "reattach-transport",
+        &crate::session::testing::restorable_agent(root.path().join("work/t").to_str().unwrap()),
+    );
+    let target = prior.target(&provider.config.instance_id);
+    let resume = crate::tests::lifecycle_target_event(
+        &provider,
+        prior.channel_id,
+        "resume-reattached",
+        "session.resume",
+        &target,
+    );
+    provider
+        .handle_command_event(prior.channel_id, &resume)
+        .await
+        .unwrap();
+    let current = provider.state.session(&prior.session_id).unwrap();
+    assert_eq!(current.generation, prior.generation + 1);
+    assert_eq!(
+        current.bootstrap_transport,
+        Some(session::BootstrapTransport::SystemPrompt)
+    );
+}
+
+#[tokio::test]
+async fn fresh_restore_discloses_unattached_verified_package() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = unprompted(root.path()).await;
+    provider
+        .state
+        .update_session(&prior.session_id, |record| {
+            record.bootstrap_transport = Some(session::BootstrapTransport::SystemPrompt);
+        })
+        .unwrap();
+    provider
+        .restore_generation(&prior.session_id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        provider.outbox.pending_events().any(|event| {
+            let value: serde_json::Value = serde_json::from_str(&event.content).unwrap_or_default();
+            value["item"]["status"] == "session_fresh"
+                && value["item"]["reason"] == "context_not_reattached"
+        }),
+        "fresh restore must disclose that the prior package was not reattached"
+    );
+}

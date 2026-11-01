@@ -27,7 +27,9 @@
 //! ACP session is reattached natively (`session/resume`, else `session/load`)
 //! and the open is *strict* — [`crate::session::CreateRequest::strict_native`]
 //! — so an adapter that cannot reattach produces a named refusal rather than a
-//! new conversation.
+//! new conversation. The one exception holds no conversation to lose: a
+//! generation that never sent a prompt, and has no private archive, opens
+//! `session/new` in the same generation and says so.
 //!
 //! # Preconditions, in order, each a named obstacle
 //!
@@ -187,9 +189,9 @@ impl Provider {
     /// Reopen the current generation of `session_id` in place, or name the
     /// obstacle that stopped it.
     ///
-    /// `Ok(Ok(()))` means the generation now has a live adapter attached to
-    /// the same ACP conversation it had before, and a
-    /// `session_restored_native` transcript row says so. `Ok(Err(obstacle))`
+    /// `Ok(Ok(()))` means the generation now has a live adapter: on the same ACP
+    /// conversation with a `session_restored_native` row, or, if it had never
+    /// sent a prompt, on a new one disclosed as such. `Ok(Err(obstacle))`
     /// means no continuation was admitted. Private cleanup witnesses may
     /// change; absent/unproved startup groups stay distinct. `Err` is reserved
     /// for a durable write that failed after the adapter was already
@@ -223,6 +225,10 @@ impl Provider {
     /// generation. Written before delivery so a crash in between fails closed
     /// (the restore refuses) rather than opening a fresh conversation.
     pub(crate) fn mark_native_history_started(&mut self, session_id: &str) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.state.fault_plan().fail_next_history_mark) {
+            anyhow::bail!("injected failure writing native_history_started");
+        }
         if self
             .state
             .session(session_id)
@@ -633,23 +639,30 @@ impl Provider {
         // No lifecycle receipt: no command was issued. A transcript row is the
         // right surface — somebody watching this session's timeline needs to
         // know a gap in it was a restart, not the agent going quiet.
-        self.enqueue_transcript(
-            record.channel_id,
-            &target,
-            None,
-            // What the open produced, not what was intended. `session_fresh` is
-            // the row every client already renders for a new conversation.
-            payload::status_item(match startup.continuity {
-                session::SessionContinuity::Fresh => "session_fresh",
-                _ => SESSION_RESTORED_NATIVE,
-            }),
-            Priority::High,
-        )?;
+        let fresh = matches!(startup.continuity, session::SessionContinuity::Fresh);
+        let context_reason =
+            (fresh && record.bootstrap_transport.is_some()).then_some("context_not_reattached");
+        if !fresh || !self.runtime_keeps_context(&target.session_id) {
+            self.enqueue_transcript(
+                record.channel_id,
+                &target,
+                None,
+                payload::status_item_with_reason(
+                    if fresh {
+                        "session_fresh"
+                    } else {
+                        SESSION_RESTORED_NATIVE
+                    },
+                    context_reason,
+                ),
+                Priority::High,
+            )?;
+        }
         // What the provider's isolation settings withheld, when any did; for
         // a runtime that executes remotely, that the boundary is the
         // adapter's only; and for one that keeps its own context, that this
         // execution may remember more than Beekeeper gave it.
-        for item in self.open_disclosure_for(&target.session_id, &execution_state, None) {
+        for item in self.open_disclosure_for(&target.session_id, &execution_state, context_reason) {
             self.enqueue_transcript(record.channel_id, &target, None, item, Priority::High)?;
         }
         self.publish_metadata(record.channel_id, &target, SessionStatus::Idle)?;
@@ -884,7 +897,8 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
 
     let execution_state = execution.state();
     // Fresh only when nothing can exist to lose. A private continuity archive
-    // proves native history whatever the fact says, so that generation stays
+    // means native history may exist whatever the fact says (a staged
+    // reconstruction writes one before any prompt), so that generation stays
     // strict and names what the adapter actually answered.
     let opens_fresh = !record.native_history_started && private_fragments.is_empty();
     let request = CreateRequest {

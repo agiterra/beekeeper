@@ -628,6 +628,12 @@ impl Provider {
             record.open_turn = None;
             record.closed = false;
             record.resume_cursor = Some(startup.acp_session_id.clone());
+            if !matches!(
+                startup.continuity,
+                SessionContinuity::Resumed | SessionContinuity::Loaded
+            ) {
+                record.bootstrap_transport = startup.bootstrap_transport;
+            }
             // A new native conversation holds no prompt yet, whatever the last
             // one held. Only a reattachment keeps the earlier fact.
             if !matches!(

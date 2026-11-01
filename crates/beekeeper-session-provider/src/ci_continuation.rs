@@ -438,8 +438,8 @@ impl Provider {
         // restart rather than anything about the work.
         //
         // So the generation is reopened *in place* first, and only then is the
-        // turn built. The reopen never advances a generation and never starts a
-        // new conversation; when it cannot happen at all it names the obstacle,
+        // turn built. The reopen never advances a generation, and starts a new
+        // conversation only if none exists to lose; when it cannot happen it names the obstacle,
         // and the registration ends visibly rather than in a fresh chat with an
         // agent that remembers nothing. See `crate::native_restore`.
         if self.sessions.handle(&record.target.session_id).is_none() {

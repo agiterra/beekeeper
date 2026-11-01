@@ -5221,7 +5221,12 @@ impl Provider {
                 turn: Box::new(message),
             };
         }
-        if is_turn {
+        if is_turn
+            && self
+                .sessions
+                .handle(&session_id)
+                .is_some_and(session::SessionHandle::is_live)
+        {
             self.mark_native_history_started(&session_id)?;
         }
         let disposition = match self.sessions.handle(&session_id) {
@@ -5948,7 +5953,13 @@ impl Provider {
             operator_pubkey: Some(attempt.operator_pubkey.clone()),
             framing,
         };
-        self.mark_native_history_started(&attempt.session_id)?;
+        if self
+            .sessions
+            .handle(&attempt.session_id)
+            .is_some_and(session::SessionHandle::is_live)
+        {
+            self.mark_native_history_started(&attempt.session_id)?;
+        }
         let delivered = match self.sessions.handle(&attempt.session_id) {
             Some(handle) => handle.deliver(turn),
             None => Err(DeliverError::Gone),
@@ -9641,7 +9652,9 @@ impl Provider {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
-                // The adapter now has a conversation nobody prompted into being.
+                // Reported after the turn began, so unlike a prompt this cannot be
+                // written first. A wake normally follows an earlier prompt, which
+                // already set the fact; this covers the case where none did.
                 self.mark_native_history_started(&session_id)?;
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = Some(OpenTurn {
@@ -15838,6 +15851,16 @@ mod tests {
             message.contains(BUDGET_EXHAUSTED) && message.contains("1 of its 1 allowed turns"),
             "the refusal must name the code and the two numbers: {message}"
         );
+        // A refused first turn reached no adapter, so a later restore can go fresh.
+        let by_command = |provider: &Provider, command: &str| {
+            provider
+                .state
+                .sessions()
+                .find(|record| record.generation_command_id.as_deref() == Some(command))
+                .expect("the create's record")
+                .native_history_started
+        };
+        assert!(!by_command(&provider, "create-delegated"));
 
         // The umbrella's founder is not refused: their create's first turn
         // still runs, at the same exhausted allowance.
@@ -15854,6 +15877,10 @@ mod tests {
             .await
             .expect("handle");
         pump_until_turn_finished(&mut provider).await;
+        assert!(
+            by_command(&provider, "create-founder"),
+            "a delivered first turn sets the fact"
+        );
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
         // The pump drains *both* sessions' events, so this is where a

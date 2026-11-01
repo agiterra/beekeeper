@@ -259,9 +259,9 @@ pub struct CreateRequest {
     /// `session/load`, then starts a fresh conversation and says so through
     /// [`SessionContinuity::RestartedWithoutContext`].
     ///
-    /// `true` only for [`crate::native_restore`], where a fresh conversation
-    /// is the one outcome that must not happen. A restore reopens a generation
-    /// that already exists — same generation number, same seated identity,
+    /// `true` for [`crate::native_restore`] when the generation may hold a
+    /// conversation, where a fresh one is the outcome that must not happen. A
+    /// restore reopens a generation that already exists — same generation number, same seated identity,
     /// same transcript — and an open that silently became `session/new` would
     /// leave that generation's 44223 describing a conversation the agent has
     /// no memory of. So the fallback is replaced by a named failure

@@ -2732,6 +2732,9 @@ pub const CONTEXT_UNAVAILABLE_REASONS: &[&str] = &[
     "context_sidecar_path_invalid",
     "brief_encode_failed",
     "package_write_failed",
+    // A later open of a generation that had a verified package: a new
+    // conversation, without it. A loss, unlike a routine fresh start.
+    "context_not_reattached",
 ];
 
 /// Build a bounded `status` item — the projector renders it as a lifecycle row.
@@ -4521,7 +4524,7 @@ mod tests {
 
     #[test]
     fn status_item_with_reason_emits_only_enumerated_reasons() {
-        assert_eq!(CONTEXT_UNAVAILABLE_REASONS.len(), 11);
+        assert_eq!(CONTEXT_UNAVAILABLE_REASONS.len(), 12);
         for reason in CONTEXT_UNAVAILABLE_REASONS {
             let item = status_item_with_reason("session_fresh", Some(reason));
             assert_eq!(

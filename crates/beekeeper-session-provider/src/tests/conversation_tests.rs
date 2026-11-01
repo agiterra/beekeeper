@@ -1214,3 +1214,6 @@ mod refusal;
 
 #[path = "conversation_verified_tests.rs"]
 mod verified_admission;
+
+#[path = "conversation_restore_review_tests.rs"]
+mod restore_review;

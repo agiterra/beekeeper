@@ -558,7 +558,7 @@ impl Provider {
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
-            native_history_started: plan.initial_turn.is_some(),
+            native_history_started: false,
             authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
             model_requested: plan.model.clone(),
@@ -864,6 +864,18 @@ impl Provider {
                 &plan.founder_pubkey,
             )
         });
+        // Only a first turn that will really be delivered is native history; one
+        // refused here, or with no live actor, leaves nothing to restore.
+        if plan.initial_turn.is_some()
+            && authority_refusal.is_none()
+            && budget_refusal.is_none()
+            && self
+                .sessions
+                .handle(&target.session_id)
+                .is_some_and(session::SessionHandle::is_live)
+        {
+            self.mark_native_history_started(&target.session_id)?;
+        }
         let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
             // The handover fence and the authority read, ahead of the budget:
             // a turn nobody may send is not a turn that spent an allowance.

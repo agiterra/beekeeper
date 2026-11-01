@@ -837,6 +837,8 @@ pub(crate) struct FaultPlan {
     /// Fail the next steer-attempt append ([`StateStore::stage_steer_intent`]
     /// or [`StateStore::resolve_steer_attempt`]).
     pub fail_next_steer_append: bool,
+    /// Fail the next durable write of `native_history_started`.
+    pub fail_next_history_mark: bool,
 }
 
 impl StateStore {
