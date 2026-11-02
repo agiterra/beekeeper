@@ -118,6 +118,15 @@ def main() -> int:
                 f"acme answered prompt {prompts}: ACME_TOKEN sha256 prefix "
                 f"{credential_witness()}"
             )
+            # Say what project context the provider framed this turn with, so an
+            # acceptance run can read it from the signed answer.
+            framed = json.dumps(params.get("prompt"))
+            marker = "Configured shared project "
+            if marker in framed:
+                coordinate = framed.split(marker, 1)[1].split(".", 1)[0]
+                text += f"; project-context={coordinate}"
+            if "HIRE_SELECTION_UNAVAILABLE" in framed:
+                text += "; hire=unavailable"
             if session.get("cwd") and os.path.isfile(os.path.join(session["cwd"], "hire-proof.json")):
                 from hire_report import report_assignment
                 try:

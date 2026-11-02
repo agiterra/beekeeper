@@ -977,6 +977,7 @@ async fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal
         events: vec![definition.clone()],
         target: Some(target.clone()),
         receipt_event_id: Some("ab".repeat(32)),
+        superseded_events: Vec::new(),
         predecessor: None,
         custody_handoff: None,
     };

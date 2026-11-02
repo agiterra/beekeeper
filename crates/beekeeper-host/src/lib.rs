@@ -49,6 +49,7 @@ pub mod discovery;
 pub mod identity;
 #[cfg(unix)]
 pub mod install;
+pub mod inventory;
 #[cfg(unix)]
 pub mod owner;
 #[cfg(unix)]

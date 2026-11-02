@@ -108,6 +108,8 @@ pub(super) async fn dispatch(command: Command, client: &BeekeeperClient) -> Resu
                     model: a.model,
                     parallelism: a.parallelism,
                     templates: a.templates,
+                    respond_to: beekeeper_core::managed_agent::RespondTo::OwnerOnly,
+                    respond_to_allowlist: Vec::new(),
                 },
             )
             .await?;

@@ -151,6 +151,34 @@ before landing.
 
 ---
 
+## The Host gate
+
+For a change to the Host product, `just host-check --base <branch-point>` replaces the full repository gate, by Brian's
+decision of 2026-11-02 ("we need to get out of using full beekeeper ci"). It runs a fixed list:
+
+- `cargo fmt --check`, for the workspace and the menu bar crate.
+- `cargo clippy --all-targets -D warnings` and `cargo test` for `beekeeper-core`, `-sdk`, `-persona`,
+  `-ws-client`, `-workflow`, `-host-core`, `-host`, `-agent-management`, `-session-provider`, `-cli`,
+  `-acp` and `git-credential-nostr`, with `just test-unit`'s closed service ports.
+- The menu bar through its own manifest: clippy, tests and a build that embeds its frontend, plus lint
+  with undeclared variables as an error and a syntax check of the frontend.
+- `cargo check` of `beekeeper-desktop`, all targets, because it links these libraries. It runs no
+  desktop test.
+
+**It refuses, with `HOST_GATE_OUT_OF_SCOPE`, a change it cannot vouch for:** anything outside the Host
+product, including `beekeeper-core`, `-sdk`, `-persona`, `-ws-client` and `-workflow`, whose consumers
+reach past this list. They are tested here because the Host stands on them. A change to them, or to
+the relay, database, auth, desktop app, web or mobile, needs those surfaces' own checks. `--base <rev>` is mandatory and must name a commit. Both staged and worktree changes are checked;
+renames include the original and destination paths. `python3 scripts/host-check.py --self-test` tests the list and the refusal.
+
+**It does not establish behavior.** `just host-acceptance` does, on an isolated relay and Host with a
+scripted runtime, and it is run when product behavior changes, not for lint. The 960 s real-expiry
+wait is `host-manage-recovery-check.py --real-expiry`, run when the expiry code changes. Neither
+proves a real model, a real account or the installed app.
+
+**Still broad, and not changed by this:** the pre-push floor (`just push`) and the Woodpecker pipeline,
+which is still what admits to `main`. Narrowing those is a separate decision.
+
 ## Live Local Relay
 
 The fastest way to exercise the relay end-to-end is to build the release

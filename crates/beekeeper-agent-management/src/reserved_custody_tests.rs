@@ -20,6 +20,7 @@ fn reservation() -> (Keys, Operation) {
         events: vec![public, profile],
         target: None,
         receipt_event_id: None,
+        superseded_events: Vec::new(),
         predecessor: None,
         custody_handoff: Some(ReservedCustody {
             key: actor.private_key_nsec,

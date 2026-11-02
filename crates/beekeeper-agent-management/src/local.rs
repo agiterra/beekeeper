@@ -20,6 +20,20 @@ pub(crate) struct Operation {
     pub(crate) predecessor: Option<beekeeper_host_core::ownership::Transfer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custody_handoff: Option<ReservedCustody>,
+    /// Signed events the relay would no longer take and did not hold, replaced
+    /// by a re-signing of the same content. Oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) superseded_events: Vec<SupersededEvent>,
+}
+
+/// One replaced journal event: enough to trace old bytes to new.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct SupersededEvent {
+    pub(crate) event_id: String,
+    pub(crate) kind: u16,
+    pub(crate) created_at: u64,
+    pub(crate) replaced_by: String,
+    pub(crate) at: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

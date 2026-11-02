@@ -209,6 +209,7 @@ async fn dispatch(request: Request, control: &Arc<HostControl>) -> Response {
     match request {
         Request::Hello => encode(&Hello::current()),
         Request::Status => encode(&status(control)),
+        Request::Inventory => encode(&inventory(control)),
         Request::Logs { bytes } => match read_log_tail(&control.log_path(), bytes) {
             Ok(logs) => encode(&logs),
             Err(error) => Response::err(error),
@@ -297,6 +298,20 @@ fn status(control: &Arc<HostControl>) -> Status {
         app_activity_leased: control.app_activity().has_live_lease(),
         warnings,
     }
+}
+
+fn inventory(control: &Arc<HostControl>) -> crate::inventory::Inventory {
+    let config = control.config();
+    let sessions = crate::sessions::read_sessions(&config.provider_state_dir);
+    crate::inventory::read(crate::inventory::InventoryInput {
+        home: control.home(),
+        instance: control.instance(),
+        config: &config,
+        provider: control.child_state(),
+        host_pid: std::process::id(),
+        host_version: env!("CARGO_PKG_VERSION").to_string(),
+        sessions: &sessions,
+    })
 }
 
 /// The worker's unresolved recovery-custody requests, when any remain.

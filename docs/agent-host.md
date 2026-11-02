@@ -433,3 +433,76 @@ relay runs, so it says nothing about transcript items reaching a channel; there
 is no `Beekeeper.app`, so "the session survived the app" is proven only in its
 mechanical half; and it never loads a real LaunchAgent, because that would
 register a background service on whoever ran it.
+
+## Manage Host
+
+The menu bar's **Manage Host…** opens a window that needs no desktop app. It lists
+this Host's runtimes, agents and seat-custody requests, and sets up one durable
+conversational project agent. A terminal gets the same behavior from
+`bee host manage`.
+
+**The boundaries.** The window is a Tauri webview over files embedded in
+`beekeeper-menubar`, reached by IPC; nothing listens on a port. Reads use the
+Host's `inventory` socket op, which opens only secret-free files and never
+`actor-seats.json`, `provider-key`, `actors/` or the management operation journal.
+Writes spawn this app's own `bee`, because the Host holds no owner key by rule and a
+window should not. The window names one of a closed set of actions and passes the
+key as a *path*: `--owner-key-file`, by default `~/.nostr/key`, which must be an
+owner-only regular file.
+
+**What can be selected.** The provider writes `effective-catalog.json` beside
+`state.json`: the catalog it signs, plus how each runtime's list came to be, and the
+pid that wrote it. Only a catalog from the running provider counts. `host.json`'s
+list is shown as *commissioned* beside it, because discovery can replace it, and a
+commissioned model the discovery removed is displayed rather than offered.
+
+**The chain.** `plan` runs every check and journals the setup at
+`<provider state>/agent-setups/<id>.json`, secret-free, with operation ids minted
+once. `apply` runs install, start and verify, and can be repeated: the same ids reuse
+the same identity and events after a lost reply or a `kill -9`, and an install resumes
+from the role material it first pinned even if the source has moved. `cancel` records a
+state and names what already exists, including an execution still running; it undoes
+nothing. One setup per project and role.
+
+**After something goes wrong.** Only a refusal the provider signed closes a start: the
+next attempt gets a new id, persisted only then. Any other ending keeps the exact id,
+because the command may still be delivered, so Start and Stop each refuse while the
+other's outcome is unknown. Retry finishes the action that was asked, so a held stop is
+never turned into a start. `running` means an open provider record: a closed one, a
+stopped provider or a cancel over a live execution each read as what they are. After a
+failed discovery the word `default` is not offered, and missing credentials offer nothing.
+
+**Two windows, and they fail differently.** The relay refuses an event more than 15
+minutes from its clock. A signed event in a journal that the relay refuses for that
+reason, and that an exact read-back then shows it does not hold, can never be accepted,
+so it is reported as `JOURNAL_EVENT_EXPIRED` and the attempt is closed: start, stop and
+context continue under a new id recorded in the setup's `attempts`, and an install
+re-signs only the events shown absent, in place, keeping its reserved identity, its pin
+and anything already stored (`supersededEvents` in its operation journal). If the read
+fails, nothing changes and the outcome stays unknown. A command the relay already holds
+is never replaced. **The provider's horizon is the other window:** it ignores a stored
+command older than 24 hours. A start stored and then unanswered past that age reads
+unconfirmed for ever, and no action in this surface resolves it, deliberately: replacing
+it could run the agent twice while that outcome is unknown. Resolving it needs a separate
+design decision.
+
+**Attestations.** Manage Host signs as the owner, so it carries no auth tag and reads no
+`BEEKEEPER_AUTH_TAG_FILE`. It respects them as boundaries: `bee host manage` refuses an
+environment holding either unless a key file is named, the menu bar removes
+`host_core::env::INHERITED_KEYS_TO_CLEAR` and the owner keys from `bee`'s environment in
+both spellings, and the Host keeps clearing them for its provider. A provider record's
+attestation is shown only as the owner it verifies to. Whether it is near expiry is not
+reported, and nothing here renews it: renewal belongs to the owner's broker, and any
+writer or health surface needs its own agreed contract.
+
+**What `running` does not mean.** The provider signed `created`, holds an unexpired
+lease, and the signed definition matches the choices. Only a signed turn result
+proves the runtime's account works.
+
+**Not in this surface.** The agent cannot hire: the headless hire listener is a
+separate long-lived owner-keyed process. Allowlisted people share one conversation
+memory with the owner, and the allowlist grants no channel membership. Seat-custody
+recovery is read-only, because re-staging needs the seat's key from the Desktop's
+Keychain; its stop command needs the session's founder and cannot be undone.
+`just host-check` is this product's gate and `just host-acceptance` its behavior run;
+TESTING.md § The Host gate says what each covers.

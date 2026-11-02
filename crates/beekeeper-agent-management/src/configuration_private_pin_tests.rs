@@ -131,6 +131,7 @@ fn newer_definition_staging_preserves_captured_floor_and_refuses_explicit_drift(
         events: vec![revised],
         target: None,
         receipt_event_id: None,
+        superseded_events: Vec::new(),
         predecessor: None,
         custody_handoff: None,
     };
@@ -249,6 +250,7 @@ fn existing_unproved_floor_never_becomes_latest_definition_time_or_stage_write()
             events: vec![head],
             target: None,
             receipt_event_id: None,
+            superseded_events: Vec::new(),
             predecessor: None,
             custody_handoff: None,
         };

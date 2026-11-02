@@ -184,6 +184,12 @@ fn read(home: &Path, instance: Instance) -> Result<Journal, String> {
     }
 }
 
+/// Every identity this host holds a transfer for, for its inventory. Public
+/// facts only: the journal holds no key material.
+pub fn all_transfers(home: &Path, instance: Instance) -> Result<Vec<Transfer>, String> {
+    Ok(read(home, instance)?.transfers)
+}
+
 /// Read the current transfer for a participant/community pair.
 /// An unreadable journal is a refusal, never permission to spawn a fallback.
 pub fn for_pair(

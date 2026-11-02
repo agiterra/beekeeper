@@ -91,6 +91,12 @@ pub enum Request {
         #[serde(default)]
         rows: Vec<crate::activity::PushedActivity>,
     },
+    /// Agents, runtimes, projects, setups and recovery requests, from the
+    /// files this Host may read. Secret-free: see [`crate::inventory`].
+    ///
+    /// New op, no version bump: an older Host refuses it as an unknown op,
+    /// which a client can name, and nothing can be misread.
+    Inventory,
 }
 
 /// What the host answers. One shape for every op, so a client's read path does
@@ -274,6 +280,7 @@ mod tests {
             ),
             (Request::Bind, r#"{"op":"bind"}"#),
             (Request::AdoptIdentity, r#"{"op":"adopt-identity"}"#),
+            (Request::Inventory, r#"{"op":"inventory"}"#),
         ] {
             assert_eq!(serde_json::to_string(&request).expect("encode"), wire);
             assert_eq!(

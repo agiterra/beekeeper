@@ -1727,6 +1727,35 @@ impl Provider {
         self.session_events.recv().await
     }
 
+    /// Keep a local copy of what is on offer, for the Host's inventory.
+    ///
+    /// Best effort: the catalog's authority is the signed event, and a failed
+    /// copy reads as "unavailable" to its reader rather than as an old offer,
+    /// because the file names the pid that wrote it.
+    fn write_effective_catalog(&self, catalog: &catalog::Catalog) {
+        let file = beekeeper_host_core::agent_setup::EffectiveCatalogFile {
+            version: 1,
+            provider_pid: std::process::id(),
+            written_at: chrono::Utc::now().to_rfc3339(),
+            catalog: catalog.clone(),
+            discovery: self.config.model_discovery.clone(),
+        };
+        let written = serde_json::to_vec_pretty(&file)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+                    &self
+                        .config
+                        .state_dir
+                        .join(beekeeper_host_core::agent_setup::EFFECTIVE_CATALOG_FILE),
+                    &bytes,
+                )
+            });
+        if let Err(error) = written {
+            tracing::warn!(target: "csp::catalog", "could not write the local catalog copy: {error}");
+        }
+    }
+
     /// Advertise the catalog wherever it is not yet current.
     ///
     /// Called at startup, whenever a new channel is joined, and on every tick.
@@ -1765,6 +1794,7 @@ impl Provider {
 
         let catalog = catalog::build(&self.config, &projects, revision);
         let content = catalog::to_canonical_json(&catalog)?;
+        self.write_effective_catalog(&catalog);
         let mut published = 0usize;
         for channel_id in self.subscribed.clone() {
             if advertised.contains(&channel_id) {
@@ -13300,6 +13330,7 @@ mod tests {
             // real runtime's login or state.
             runtime_profile_override: Some(crate::execution_scope::RuntimeProfile::TestDouble),
             model_details: Default::default(),
+            model_discovery: Default::default(),
             session_isolation: Default::default(),
             // Titling spawns a second adapter; these fixtures describe a
             // host that has not turned it on, so no test sees a stray spawn.

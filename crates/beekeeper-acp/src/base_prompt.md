@@ -33,7 +33,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `
 | `bee pack` | `validate`, `inspect`, `compose`, `migrate`, `clone-template` |
 | `bee packs` | `set-source`, `init`, `get-source`, `status` |
 | `bee git` | `setup`, `status`, `check` |
-| `bee host` | `commission`, `trust-project`, `status`, `logs`, `start`, `stop`, `restart`, `bind`, `install`, `uninstall`, `installed` |
+| `bee host` | `commission`, `trust-project`, `manage`, `status`, `logs`, `start`, `stop`, `restart`, `bind`, `install`, `uninstall`, `installed` |
 | `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
 | `bee preview` | `status`, `open`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`, `eval`, `wait-for`, `servers`, `close` |
 | `bee device` | `list`, `open`, `screenshot`, `close`, `watch` |

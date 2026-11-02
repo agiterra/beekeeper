@@ -899,6 +899,11 @@ fn sign_delete_tombstone(
     ))
 }
 fn pre_ingest_tombstone_refusal(error: &Error, event: &Event) -> bool {
+    // `submit` already read back and found it absent, and says so by name.
+    if matches!(error, Error::Refused(text) if text.starts_with(management::JOURNAL_EVENT_EXPIRED))
+    {
+        return true;
+    }
     let message = match error {
         Error::Refused(message) | Error::Other(message) => message,
         Error::Relay { status: 400, body } => body,

@@ -20,7 +20,7 @@ beekeeper-tray = { path = "../beekeeper-tray" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
-tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
+tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros", "process"] }
 
 # The host crate is Unix-only, so the whole polling half of this app is too.
 # The crate stays a workspace member on every platform and gates *inside*, so

@@ -30,6 +30,7 @@ use crate::poll::{self, RELABEL_INTERVAL};
 
 const TRAY_ID: &str = "beekeeper-menubar";
 const OPEN_APP_ID: &str = "menubar-open-beekeeper";
+const MANAGE_HOST_ID: &str = "menubar-manage-host";
 const OPEN_LOG_ID: &str = "menubar-open-log";
 const RESTART_ID: &str = "menubar-restart-host";
 const STOP_ID: &str = "menubar-stop-host";
@@ -63,6 +64,12 @@ fn trailing(model: &MenuModel) -> Vec<MenuRow<'static>> {
         MenuRow::Action {
             id: OPEN_APP_ID,
             label: "Open Beekeeper",
+        },
+        // Present in every state, including when the host did not answer: the
+        // window is where a person reads why, and it needs no desktop app.
+        MenuRow::Action {
+            id: MANAGE_HOST_ID,
+            label: "Manage Host…",
         },
     ];
     if model.host_reachable {
@@ -241,6 +248,7 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &MenuId) {
     let state = app.state::<MenubarState<R>>();
     match id.as_ref() {
         OPEN_APP_ID => open_beekeeper(None),
+        MANAGE_HOST_ID => crate::manage::open(app),
         OPEN_LOG_ID => {
             let path = state.log_path.lock().ok().and_then(|path| path.clone());
             match path {
@@ -333,7 +341,18 @@ pub fn run() {
     let instance = Instance::from_env().unwrap_or(Instance::Production);
     let socket = layout::host_socket_path(&home, instance);
 
+    if crate::manage::answer_from_arguments(&socket) {
+        return;
+    }
+    let open_manage_host = std::env::args().any(|arg| arg == "--manage-host");
     let app = tauri::Builder::default()
+        .manage(crate::manage::ManageState::default())
+        .manage(crate::manage::HostSocket(socket.clone()))
+        .invoke_handler(tauri::generate_handler![
+            crate::manage::manage_inventory,
+            crate::manage::manage_run,
+            crate::manage::manage_interrupt,
+        ])
         .setup(move |app| {
             let handle = app.handle().clone();
             // An accessory app: no Dock icon, no menu bar of its own, no
@@ -370,13 +389,26 @@ pub fn run() {
                 .on_menu_event(|app, event| handle_menu_event(app, &event.id))
                 .build(&handle)?;
 
+            if open_manage_host {
+                crate::manage::open(&handle);
+            }
             spawn_loops(handle);
             Ok(())
         })
         .build(tauri::generate_context!());
 
     match app {
-        Ok(app) => app.run(|_, _| {}),
+        Ok(app) => app.run(|_, event| {
+            // Closing the Manage Host window closes the last window. That must
+            // not quit this app: the menu bar has no window on purpose. An
+            // explicit quit carries an exit code, and that one goes through.
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                api.prevent_exit();
+            }
+        }),
         Err(error) => eprintln!("beekeeper-menubar: failed to start: {error}"),
     }
 }

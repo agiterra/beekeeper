@@ -201,6 +201,10 @@ pub struct Config {
     /// for a runtime that was not discovered (or whose discovery failed); the
     /// catalog then publishes only what it knows from its own tables.
     pub model_details: BTreeMap<String, BTreeMap<String, ModelDetail>>,
+    /// How each runtime's model list came to be at startup, keyed by
+    /// `instance_ref`, so a client can tell a list the adapter gave from a
+    /// commissioned fallback. Published locally only.
+    pub model_discovery: BTreeMap<String, beekeeper_host_core::agent_setup::DiscoveryOutcome>,
     /// Isolation every coding session gets beyond its file boundary:
     /// `BEEKEEPER_CSP_SESSION_OPERATOR_GIT=withhold` keeps the operator's Git
     /// credentials (credential helpers, `nostr.keyfile`, the ssh agent) out
@@ -385,6 +389,7 @@ impl Config {
             command_horizon,
             runtime_profile_override: None,
             model_details: BTreeMap::new(),
+            model_discovery: BTreeMap::new(),
             session_isolation,
             auto_title,
         })

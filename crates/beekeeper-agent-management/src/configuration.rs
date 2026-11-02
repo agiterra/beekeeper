@@ -262,6 +262,7 @@ async fn update_guarded(
                 events: vec![event],
                 target: None,
                 receipt_event_id: None,
+                superseded_events: Vec::new(),
                 predecessor: None,
                 custody_handoff: None,
             };

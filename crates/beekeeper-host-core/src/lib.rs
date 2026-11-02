@@ -24,6 +24,7 @@
 //! and a server does not, so each end resolves the key its own way and they
 //! agree only on the record that names it.
 
+pub mod agent_setup;
 pub mod atomic_write;
 pub mod command_paths;
 pub mod config;

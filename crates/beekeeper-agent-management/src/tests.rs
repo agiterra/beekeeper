@@ -264,6 +264,7 @@ fn operation_retry_keeps_exact_events_and_reused_id_conflicts() {
         events: vec![event.clone()],
         target: None,
         receipt_event_id: None,
+        superseded_events: Vec::new(),
         predecessor: None,
         custody_handoff: None,
     };

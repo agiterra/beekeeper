@@ -71,6 +71,10 @@ pub struct CreateRequest {
     pub identity: Option<crate::IdentityInput>,
     /// Whether to create an execution now. False preserves a stopped identity.
     pub activate: bool,
+    /// Re-sign a journaled event the relay would refuse for age, once the relay is
+    /// shown not to hold it. For operations whose events are all idempotent, which
+    /// a create without an execution command is. A command is never re-signed.
+    pub reissue_expired: bool,
 }
 
 /// Publish a new public configuration revision as its authorized owner.
@@ -110,7 +114,16 @@ pub(crate) async fn submit(client: &impl RelayTransport, event: &Event) -> Resul
     if exact_event_stored(&client.query_all(exact_event_filter(event)).await?, event) {
         return Ok(());
     }
-    let raw = client.submit_event(event.clone()).await?;
+    let reply = client.submit_event(event.clone()).await;
+    if relay_refused_for_age(&reply, event) {
+        // The refusal alone proves nothing about an earlier attempt: read again,
+        // after it, for the exact signed bytes. A failed read stays unknown.
+        if exact_event_stored(&client.query_all(exact_event_filter(event)).await?, event) {
+            return Ok(());
+        }
+        return Err(expired_error(event));
+    }
+    let raw = reply?;
     match crate::parse_write_response(&raw, "operation event already accepted") {
         Ok(_) => Ok(()),
         Err(CliError::Conflict(_)) => {
@@ -123,6 +136,79 @@ pub(crate) async fn submit(client: &impl RelayTransport, event: &Event) -> Resul
         }
         Err(error) => Err(error),
     }
+}
+
+/// The stable code for a journaled event that can never be accepted.
+pub(crate) const JOURNAL_EVENT_EXPIRED: &str = "JOURNAL_EVENT_EXPIRED";
+
+/// Whether the relay refused this already-old event because of its age. Only that
+/// exact refusal: a timeout or a 500 says nothing, and neither does a clock that
+/// has this event in the future.
+pub(crate) fn relay_refused_for_age(reply: &Result<Value, CliError>, event: &Event) -> bool {
+    let said_so = match reply {
+        Err(CliError::Relay { status: 400, body }) => body.contains("timestamp too far"),
+        Ok(value) => {
+            value.get("accepted").and_then(Value::as_bool) == Some(false)
+                && value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("timestamp too far"))
+        }
+        Err(_) => false,
+    };
+    said_so && event.created_at < Timestamp::now()
+}
+
+/// What to say once the relay has refused an event for age and does not hold it.
+pub(crate) fn expired_error(event: &Event) -> CliError {
+    CliError::Refused(format!(
+        "{JOURNAL_EVENT_EXPIRED}: signed event {} (kind {}) is older than the relay accepts, and the relay does not hold it",
+        event.id,
+        event.kind.as_u16()
+    ))
+}
+
+/// Replace journaled events that have aged out and that the relay does not hold,
+/// saving before anything is sent, so a stored original is never re-signed and a
+/// failed read changes nothing.
+async fn reissue_expired_events<T: RelayTransport>(
+    path: &Path,
+    operation: &mut Operation,
+    owner: &T,
+    actor: &T,
+) -> Result<(), CliError> {
+    const RELAY_WINDOW_SECS: u64 = 900;
+    let now = Timestamp::now().as_secs();
+    let mut changed = false;
+    for index in 0..operation.events.len() {
+        let held = operation.events[index].clone();
+        if held.kind.as_u16() == 44221
+            || now.saturating_sub(held.created_at.as_secs()) <= RELAY_WINDOW_SECS
+        {
+            continue;
+        }
+        if exact_event_stored(&owner.query_all(exact_event_filter(&held)).await?, &held) {
+            continue;
+        }
+        let replacement = event_transport(&held, owner, actor)?.sign_event_unchecked(
+            nostr::EventBuilder::new(held.kind, &held.content)
+                .tags(held.tags.iter().cloned())
+                .custom_created_at(Timestamp::now()),
+        )?;
+        operation.superseded_events.push(SupersededEvent {
+            event_id: held.id.to_hex(),
+            kind: held.kind.as_u16(),
+            created_at: held.created_at.as_secs(),
+            replaced_by: replacement.id.to_hex(),
+            at: beekeeper_host_core::logs::now_iso(),
+        });
+        operation.events[index] = replacement;
+        changed = true;
+    }
+    if changed {
+        save(path, operation)?;
+    }
+    Ok(())
 }
 
 fn exact_event_filter(event: &Event) -> Value {
@@ -474,6 +560,7 @@ pub async fn create(
                 events,
                 target: None,
                 receipt_event_id: None,
+                superseded_events: Vec::new(),
                 predecessor: successor_boundary.clone(),
                 custody_handoff: args.agent_pubkey.is_none().then(|| ReservedCustody {
                     key: actor.private_key_nsec.clone(),
@@ -503,6 +590,9 @@ pub async fn create(
         finish_reserved_custody(&config.provider_state_dir, &path, &mut operation, &owner)?;
     let actor_keys = Keys::parse(&key).map_err(|_| fail("actor custody key is invalid"))?;
     let actor_client = client.scoped(actor_keys, auth.clone())?;
+    if args.reissue_expired && !args.activate {
+        reissue_expired_events(&path, &mut operation, client, &actor_client).await?;
+    }
     let staged_floor = stage_configuration(
         &context.home,
         &config,
@@ -547,10 +637,22 @@ pub async fn create(
             &cwd,
             project.as_deref(),
         )?;
+        // A command the relay already holds was accepted after these, so a reply
+        // lost then must not be turned into a refusal of them now. Membership
+        // commands are consumed, so they can never be read back to find that out.
+        let mut command_stored = false;
         for event in operation
             .events
             .iter()
-            .filter(|event| event.kind.as_u16() != 44221)
+            .filter(|event| event.kind.as_u16() == 44221)
+        {
+            command_stored |=
+                exact_event_stored(&client.query_all(exact_event_filter(event)).await?, event);
+        }
+        for event in operation
+            .events
+            .iter()
+            .filter(|event| event.kind.as_u16() != 44221 && !command_stored)
         {
             let transport = event_transport(event, client, &actor_client)?;
             submit(transport, event).await?;
@@ -584,7 +686,7 @@ pub async fn create(
             CreateWaitOutcome::Confirmed {target,receipt_event_id,..} => {
                 operation.target=Some(target); operation.receipt_event_id=Some(receipt_event_id); save(&path,&operation)?;
             }
-            CreateWaitOutcome::Refused {receipt_event_id,error} => return Err(CliError::Refused(format!("provider refused operation {} in receipt {}: {}",args.operation_id,receipt_event_id,serde_json::to_string(&error).map_err(fail)?))),
+            CreateWaitOutcome::Refused {receipt_event_id,error} => return Err(CliError::Refused(provider_refusal_text(&args.operation_id.to_string(),&receipt_event_id,&error)?)),
             CreateWaitOutcome::Conflicted {detail} => return Err(CliError::Conflict(detail)),
             CreateWaitOutcome::Unconfirmed {query_failed} => return Err(CliError::Unconfirmed(format!("operation {} remains unconfirmed (receipt_query_failed={query_failed}); retry the same operation and unchanged arguments",args.operation_id))),
         }
@@ -642,6 +744,47 @@ pub async fn create(
         "revision":operation.events.first().ok_or_else(|| fail("operation has no configuration event"))?.id.to_hex(),"host_admitted":true,"receipt_event_id":operation.receipt_event_id,
         "target":target,"conversation_route":"installed","runtime_account":"unconfirmed"}),
     )
+}
+
+#[cfg(test)]
+pub(crate) fn tests_support_refusal(
+    operation: &str,
+    receipt: &str,
+    code: &str,
+    message: &str,
+) -> String {
+    let error: beekeeper_core::coding_session_payload::ReceiptError =
+        serde_json::from_value(json!({"code": code, "message": message})).unwrap();
+    provider_refusal_text(operation, receipt, &error).unwrap()
+}
+
+const PROVIDER_REFUSAL_PREFIX: &str = "provider refused operation ";
+
+/// The sentence for a provider-signed terminal refusal. Paired with
+/// [`parse_provider_refusal`], which is what lets a caller tell a definite refusal
+/// from every other reason an operation did not finish.
+fn provider_refusal_text(
+    operation: &str,
+    receipt: &str,
+    error: &beekeeper_core::coding_session_payload::ReceiptError,
+) -> Result<String, CliError> {
+    Ok(format!(
+        "{PROVIDER_REFUSAL_PREFIX}{operation} in receipt {receipt}: {}",
+        serde_json::to_string(error).map_err(fail)?
+    ))
+}
+
+/// The receipt id and named refusal, when this error is exactly a signed one.
+pub(crate) fn parse_provider_refusal(
+    error: &CliError,
+) -> Option<(String, beekeeper_core::coding_session_payload::ReceiptError)> {
+    let CliError::Refused(text) = error else {
+        return None;
+    };
+    let rest = text.strip_prefix(PROVIDER_REFUSAL_PREFIX)?;
+    let (_, rest) = rest.split_once(" in receipt ")?;
+    let (receipt, json) = rest.split_once(": ")?;
+    Some((receipt.to_string(), serde_json::from_str(json).ok()?))
 }
 
 fn provider_membership(

@@ -73,6 +73,16 @@ impl HostControl {
         }
     }
 
+    /// The state home this Host was started with.
+    pub fn home(&self) -> &std::path::Path {
+        &self.home
+    }
+
+    /// The instance this Host serves.
+    pub fn instance(&self) -> Instance {
+        self.instance
+    }
+
     /// The config this host is serving.
     pub fn config(&self) -> HostConfig {
         self.with_commissioned(|commissioned| commissioned.config.clone())

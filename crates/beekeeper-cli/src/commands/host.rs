@@ -28,6 +28,10 @@ pub enum HostCmd {
     /// the relay, so agents created with `--project` can work in it. No
     /// desktop needed.
     TrustProject(super::host_project::ProjectArgs),
+    /// What the menu bar's Manage Host window runs: inspect this Host, and set
+    /// up one durable conversational project agent, resumably.
+    #[command(subcommand)]
+    Manage(super::host_manage::ManageCmd),
     /// Ask the running host for its status, as JSON.
     ///
     /// Distinguishes a host that is not installed from one that is installed
@@ -300,6 +304,7 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
                 | HostCmd::Uninstall { .. }
                 | HostCmd::Installed
                 | HostCmd::Commission(_)
+                | HostCmd::Manage(_)
                 | HostCmd::TrustProject(_) => unreachable!("handled above"),
             };
             let socket = layout::host_socket_path(&home, instance);

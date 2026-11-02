@@ -53,6 +53,22 @@ struct ProbeTarget {
 /// from starting. A later session still asks the fresh ACP response whether a
 /// requested model can be applied.
 pub(crate) async fn discover(config: &mut Config) {
+    use beekeeper_host_core::agent_setup::DiscoveryOutcome;
+    /// A bound on what lands in a file a window renders. Adapter errors can
+    /// quote whole frames; the provider log keeps the full text.
+    fn bounded(text: impl std::fmt::Display) -> String {
+        text.to_string().chars().take(300).collect()
+    }
+    for descriptor in config
+        .runtimes
+        .iter()
+        .filter(|descriptor| !descriptor.discover_models)
+    {
+        config.model_discovery.insert(
+            descriptor.instance_ref.clone(),
+            DiscoveryOutcome::NotRequested,
+        );
+    }
     for descriptor in config
         .runtimes
         .iter_mut()
@@ -62,6 +78,10 @@ pub(crate) async fn discover(config: &mut Config) {
             Ok(env) => env,
             Err(failure) => {
                 tracing::warn!(target: "csp::models", code = failure.code, "model discovery credentials unavailable");
+                config.model_discovery.insert(
+                    descriptor.instance_ref.clone(),
+                    DiscoveryOutcome::CredentialsUnavailable(bounded(failure.code)),
+                );
                 continue;
             }
         };
@@ -80,6 +100,10 @@ pub(crate) async fn discover(config: &mut Config) {
                     descriptor.runtime,
                     failure.message
                 );
+                config.model_discovery.insert(
+                    descriptor.instance_ref.clone(),
+                    DiscoveryOutcome::Failed(bounded(failure.message)),
+                );
                 continue;
             }
         };
@@ -96,6 +120,10 @@ pub(crate) async fn discover(config: &mut Config) {
             Ok(discovered) => discovered,
             Err(error) => {
                 tracing::warn!(target: "csp::models", "{runtime} model discovery failed: {error}");
+                config.model_discovery.insert(
+                    descriptor.instance_ref.clone(),
+                    DiscoveryOutcome::Failed(bounded(error)),
+                );
                 continue;
             }
         };
@@ -105,6 +133,10 @@ pub(crate) async fn discover(config: &mut Config) {
         config
             .model_details
             .insert(descriptor.instance_ref.clone(), discovered.details);
+        config.model_discovery.insert(
+            descriptor.instance_ref.clone(),
+            DiscoveryOutcome::Discovered,
+        );
     }
 }
 

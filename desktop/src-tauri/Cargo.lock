@@ -1050,6 +1050,7 @@ version = "0.1.0"
 dependencies = [
  "beekeeper-core",
  "beekeeper-host-core",
+ "beekeeper-sdk",
  "chrono",
  "clap",
  "dirs",

@@ -286,6 +286,7 @@ async fn canonical_cli_successor_fences_other_contexts_and_reconciles_without_de
         events: vec![event],
         target: Some(next.clone()),
         receipt_event_id: Some("cd".repeat(32)),
+        superseded_events: Vec::new(),
         predecessor: Some(boundary.clone()),
         custody_handoff: None,
     };

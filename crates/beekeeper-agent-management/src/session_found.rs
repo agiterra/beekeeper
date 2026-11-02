@@ -102,6 +102,9 @@ pub async fn found(
         observed = readback(client, &operation.event)
             .await
             .map_err(|e| unconfirmed(e.to_string()))?;
+        if !observed && crate::management::relay_refused_for_age(&reply, &operation.event) {
+            return Err(crate::management::expired_error(&operation.event));
+        }
         if !observed {
             if let Ok(value) = &reply {
                 if value.get("accepted").and_then(Value::as_bool) == Some(false)

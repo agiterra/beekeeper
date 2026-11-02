@@ -311,6 +311,18 @@ agents-repo:
     echo "  the map    $dest/plans/CURRENT_STATE.md"
     echo "  the ledger $dest/plans/SESSION_STATE.md"
 
+# The Host's own gate: fixed package list, refuses changes it cannot vouch for. See TESTING.md.
+host-check *ARGS: _ensure-sidecar-stubs
+    python3 scripts/host-check.py {{ ARGS }}
+
+# Host product behavior on an isolated relay and Host with a scripted runtime: no model spend, no
+# Keychain, no public relay. Not part of host-check. Add --native to open the real menu bar on this screen.
+host-acceptance *ARGS:
+    cargo build -p beekeeper-cli -p beekeeper-relay -p beekeeper-host -p beekeeper-session-provider -p git-credential-nostr
+    cargo build --manifest-path desktop/src-tauri/Cargo.toml -p beekeeper-menubar
+    python3 scripts/host-manage-check.py --ui {{ ARGS }}
+    python3 scripts/host-manage-recovery-check.py
+
 # Run the repository-wide differential file-size ratchet and its policy tests.
 # The ratchet inspects only files changed from the merge base, so this stays
 # cheap enough to run unconditionally without duplicating path filters.

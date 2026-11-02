@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manage Host</title>
+    <link rel="stylesheet" href="manage-host.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>Manage Host</h1>
+      <p id="host-line" class="muted" data-testid="host-line">Asking the Host…</p>
+      <button id="refresh" type="button" class="quiet">Refresh</button>
+    </header>
+    <main>
+      <div id="notices" data-testid="notices"></div>
+
+      <section aria-labelledby="owner-heading">
+        <h2 id="owner-heading">Owner</h2>
+        <p class="muted">
+          Changes are signed as this Host's owner. The key stays in its file: this window sends
+          the path to Beekeeper's command-line tool and never reads the key.
+        </p>
+        <div class="row">
+          <label class="grow">
+            Owner key file
+            <input id="key-file" type="text" placeholder="~/.nostr/key" autocomplete="off" spellcheck="false" />
+          </label>
+          <button id="check-key" type="button">Check key</button>
+        </div>
+        <p id="signer" data-testid="signer" class="muted">Not checked yet.</p>
+      </section>
+
+      <section aria-labelledby="setup-heading">
+        <h2 id="setup-heading">Set up a project agent</h2>
+        <p class="muted">
+          One durable agent for everyday conversation in a project channel. It answers in that
+          channel. <strong>It cannot delegate work to other agents from this setup</strong>: hiring needs a
+          listener this window does not run.
+        </p>
+        <form id="setup-form" autocomplete="off">
+          <div class="grid">
+            <label>Project
+              <select id="project" data-testid="project"></select>
+            </label>
+            <label>Role, from the project's versioned source
+              <select id="role" data-testid="role"></select>
+            </label>
+            <label>Channel, which you must own
+              <select id="channel" data-testid="channel"></select>
+            </label>
+            <label>Agent name
+              <input id="display-name" data-testid="display-name" type="text" value="" spellcheck="false" />
+            </label>
+            <label>Runtime
+              <select id="runtime" data-testid="runtime"></select>
+            </label>
+            <label>Model, from what the running provider offers
+              <select id="model" data-testid="model"></select>
+            </label>
+          </div>
+          <p id="model-note" class="muted" data-testid="model-note"></p>
+          <fieldset>
+            <legend>Who may instruct it</legend>
+            <label class="inline"><input type="radio" name="access" value="owner" checked data-testid="access-owner" /> Only the owner</label>
+            <label class="inline"><input type="radio" name="access" value="allowlist" data-testid="access-allowlist" /> The owner and these people</label>
+            <textarea id="allowlist" data-testid="allowlist" rows="2" placeholder="One 64-character hex public key per line" spellcheck="false" hidden></textarea>
+            <p id="allowlist-note" class="muted" hidden>
+              Everyone on this list shares the agent's one conversation memory with the owner. Memory
+              per person is not built yet, so do not list someone whose conversations must stay private.
+              This list grants no access: someone outside the channel cannot post there until its owner adds them.
+            </p>
+          </fieldset>
+          <div class="row">
+            <button id="preflight" type="button" data-testid="preflight">Check choices</button>
+            <button id="set-up" type="submit" class="primary" data-testid="set-up">Set up agent</button>
+          </div>
+        </form>
+        <details>
+          <summary>Add a project or a channel</summary>
+          <div class="grid">
+            <label>Project coordinate
+              <input id="trust-project" data-testid="trust-project" type="text" placeholder="30621:…:slug" spellcheck="false" />
+            </label>
+            <label>Project checkout on this computer
+              <input id="trust-checkout" data-testid="trust-checkout" type="text" spellcheck="false" />
+            </label>
+            <label>Clone of its agents repository
+              <input id="trust-agents" data-testid="trust-agents" type="text" spellcheck="false" />
+            </label>
+          </div>
+          <div class="row"><button id="trust" type="button" data-testid="trust">Record this project</button></div>
+          <div class="row">
+            <label class="grow">New private channel
+              <input id="new-channel" data-testid="new-channel" type="text" spellcheck="false" />
+            </label>
+            <button id="create-channel" type="button" data-testid="create-channel">Create channel</button>
+          </div>
+        </details>
+        <div id="result" data-testid="result" aria-live="polite"></div>
+      </section>
+
+      <section aria-labelledby="setups-heading">
+        <h2 id="setups-heading">Setups</h2>
+        <div id="setups" data-testid="setups"></div>
+      </section>
+
+      <section aria-labelledby="runtimes-heading">
+        <h2 id="runtimes-heading">Runtimes on this Host</h2>
+        <div id="runtimes" data-testid="runtimes"></div>
+      </section>
+
+      <section aria-labelledby="agents-heading">
+        <h2 id="agents-heading">Agents on this Host</h2>
+        <div id="agents" data-testid="agents"></div>
+      </section>
+
+      <section aria-labelledby="recovery-heading">
+        <h2 id="recovery-heading">Seat custody recovery</h2>
+        <div id="recovery" data-testid="recovery"></div>
+      </section>
+    </main>
+    <script src="manage-host.js"></script>
+  </body>
+</html>

@@ -179,6 +179,13 @@ pub async fn status(socket: &Path) -> Result<crate::protocol::Status, ClientErro
     decode(call(socket, &Request::Status, READ_TIMEOUT).await?)
 }
 
+/// Typed `inventory`. An older Host refuses it as an unknown op: see
+/// [`ClientError::Refused`].
+pub async fn inventory(socket: &Path) -> Result<crate::inventory::Inventory, ClientError> {
+    // It reads several files, so it gets the lifecycle budget, not the status one.
+    decode(call(socket, &Request::Inventory, LIFECYCLE_READ_TIMEOUT).await?)
+}
+
 /// Send one request; if the host is silent, try once more before giving up.
 ///
 /// The first attempt gets `first`; the retry gets whatever of `total` is left

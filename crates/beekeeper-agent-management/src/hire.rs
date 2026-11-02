@@ -405,6 +405,7 @@ async fn reconcile(
                 events: vec![plan.create.clone()],
                 target: None,
                 receipt_event_id: None,
+                superseded_events: Vec::new(),
                 predecessor: None,
                 custody_handoff: None,
                 hire_decision: None,

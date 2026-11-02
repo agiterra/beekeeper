@@ -1,10 +1,10 @@
 //! Beekeeper's menu bar app.
 //!
-//! A windowless accessory process whose only job is to show what this
-//! machine's agents are doing — separately from the desktop app, and
-//! separately from the agents themselves. It is a *client* of
-//! `beekeeper-host`'s control socket: it starts nothing, supervises nothing,
-//! and quitting it stops nothing.
+//! An accessory process whose job is to show what this machine's agents are
+//! doing — separately from the desktop app, and separately from the agents
+//! themselves. It is a *client* of `beekeeper-host`'s control socket: it
+//! supervises nothing, and quitting it stops nothing. Its one window, Manage
+//! Host, opens on request and changes things only through this app's own `bee`.
 //!
 //! That last point is the whole reason it exists as its own process. The
 //! desktop tray's "Quit" called `app.exit(0)`, which ended every agent on the
@@ -24,6 +24,9 @@ pub mod poll;
 
 #[cfg(all(unix, target_os = "macos"))]
 mod imp;
+#[cfg(all(unix, target_os = "macos"))]
+mod manage;
+pub mod manage_actions;
 
 /// Start the menu bar app.
 #[cfg(all(unix, target_os = "macos"))]

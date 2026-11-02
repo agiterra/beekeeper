@@ -158,6 +158,7 @@ pub mod authority;
 pub mod hire_evidence;
 
 pub mod hire_source;
+pub mod project_agent_setup;
 pub mod role_install;
 
 pub mod hire_host;

@@ -330,6 +330,7 @@ mod tests {
             command_horizon: Duration::from_secs(86_400),
             runtime_profile_override: None,
             model_details: Default::default(),
+            model_discovery: Default::default(),
             session_isolation: Default::default(),
             auto_title: false,
         }

@@ -58,6 +58,7 @@ pub(crate) fn operation(binding: serde_json::Value, reason: String) -> Operation
         events: vec![],
         target: None,
         receipt_event_id: None,
+        superseded_events: Vec::new(),
         predecessor: None,
         custody_handoff: None,
         hire: None,

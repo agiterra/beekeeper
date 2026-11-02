@@ -6137,6 +6137,21 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             )
             .await;
         }
+        if let commands::host::HostCmd::Manage(command) = sub {
+            return commands::host_manage::dispatch(
+                command,
+                cli.private_key.as_deref(),
+                cli.auth_tag
+                    .as_deref()
+                    .filter(|tag| !tag.is_empty())
+                    .is_some()
+                    || cli
+                        .auth_tag_file
+                        .as_deref()
+                        .is_some_and(|file| !file.as_os_str().is_empty()),
+            )
+            .await;
+        }
         if !matches!(sub, commands::host::HostCmd::TrustProject(_)) {
             return commands::host::dispatch(sub, false).await;
         }
