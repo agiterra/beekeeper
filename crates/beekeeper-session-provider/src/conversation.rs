@@ -433,7 +433,7 @@ impl Provider {
             return Ok(None);
         }
         // Historical routes remain for bound-thread terminal replies. Only
-        // current open generations can receive a new, unbound request.
+        // current open generations can receive a new request.
         let active: Vec<_> = candidates
             .iter()
             .copied()
@@ -451,7 +451,12 @@ impl Provider {
             .requests
             .get(&event_id)
             .map(|origin| origin.target.clone())
-            .or_else(|| origins.bindings.get(&binding_key).cloned())
+            .or_else(|| {
+                origins
+                    .bindings
+                    .get(&binding_key)
+                    .map(|bound| self.thread_target(bound, &active, context))
+            })
             .or_else(|| (active.len() == 1).then(|| active[0].target.clone()));
         let Some(target) = target else {
             let origin = Origin {
@@ -495,7 +500,15 @@ impl Provider {
         };
         // Persist origin and binding before mailbox admission; retries reconstruct
         // identical command bytes and use the provider's existing consumed ledger.
-        origins.bindings.insert(binding_key, target.clone());
+        // A replay keeps a binding that has since moved on; it restores a missing one.
+        if origins.requests.contains_key(&event_id) {
+            origins
+                .bindings
+                .entry(binding_key)
+                .or_insert(target.clone());
+        } else {
+            origins.bindings.insert(binding_key, target.clone());
+        }
         let request = origins.requests.entry(event_id.clone()).or_insert(origin);
         if request.author.is_none() {
             request.author = Some(event.pubkey.to_hex());
@@ -519,6 +532,50 @@ impl Provider {
             return Ok(None);
         }
         Ok(Some(serde_json::to_string(&payload)?))
+    }
+
+    /// Where a new request in a bound thread goes. A thread bound to an execution
+    /// that was stopped follows the one current execution that replaced it, with
+    /// the same actor, channel, runtime and project, and a Host-recorded replacement
+    /// link. That execution starts Fresh:
+    /// this moves the thread, and restores no memory. Anything else keeps the
+    /// binding, so the decision that follows refuses it truthfully.
+    fn thread_target(
+        &self,
+        bound: &CodingSessionTarget,
+        active: &[&ConversationRoute],
+        context: Option<(&std::path::Path, beekeeper_host_core::layout::Instance)>,
+    ) -> CodingSessionTarget {
+        let replaced = || -> Option<CodingSessionTarget> {
+            let [current] = active else { return None };
+            let old = self.state.session(&bound.session_id)?;
+            let new = self.state.session(&current.target.session_id)?;
+            let (home, instance) = context?;
+            let actor = old.actor.as_deref()?;
+            if !beekeeper_host_core::ownership::replaced_by(
+                home,
+                instance,
+                actor,
+                &self.config.relay_url,
+                bound,
+                &current.target,
+            )
+            .unwrap_or(false)
+            {
+                return None;
+            }
+            (old.closed
+                && !old.is_retired()
+                && *bound == self.target_for(old)
+                && old.actor == new.actor
+                && old.channel_id == new.channel_id
+                && old.driver == new.driver
+                && old.provider_instance_ref == new.provider_instance_ref
+                && old.project_ref == new.project_ref
+                && old.repo_ref == new.repo_ref)
+                .then(|| current.target.clone())
+        };
+        replaced().unwrap_or_else(|| bound.clone())
     }
 
     pub(crate) fn is_conversation_request(

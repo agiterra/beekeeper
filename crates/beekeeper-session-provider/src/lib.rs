@@ -12485,6 +12485,8 @@ mod tests {
     #[path = "deferred_admission_tests.rs"]
     mod deferred_admission_tests;
 
+    #[path = "conversation_stopped_thread_tests.rs"]
+    mod conversation_stopped_thread_tests;
     #[path = "conversation_tests.rs"]
     mod conversation_tests;
     #[path = "runtime_context_tests.rs"]

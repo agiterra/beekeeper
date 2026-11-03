@@ -451,6 +451,36 @@ pub fn successor(
     )
 }
 
+/// Whether the Host journal records a stopped execution replaced by the current
+/// adopted execution of this actor. Matching runtime fields alone prove no lineage.
+pub fn replaced_by(
+    home: &Path,
+    instance: Instance,
+    actor: &str,
+    relay: &str,
+    previous: &CodingSessionTarget,
+    current: &CodingSessionTarget,
+) -> Result<bool, String> {
+    let journal = read(home, instance)?;
+    let relay = canonical_relay_key(relay);
+    let pair = |transfer: &Transfer| {
+        transfer.actor_pubkey.eq_ignore_ascii_case(actor) && transfer.relay_url == relay
+    };
+    Ok(previous != current
+        && journal.history.iter().any(|transfer| {
+            pair(transfer)
+                && is_modern_enrollment(transfer)
+                && transfer.phase == Phase::HostStopped
+                && transfer.target.as_ref() == Some(previous)
+        })
+        && journal.transfers.iter().any(|transfer| {
+            pair(transfer)
+                && is_modern_enrollment(transfer)
+                && transfer.phase == Phase::Adopted
+                && transfer.target.as_ref() == Some(current)
+        }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,6 +527,127 @@ mod tests {
             Phase::HostStopped
         );
     }
+    fn lineage_target(name: &str) -> CodingSessionTarget {
+        CodingSessionTarget {
+            driver: "managed-acp".into(),
+            instance_id: "primary".into(),
+            session_id: name.into(),
+            generation: 1,
+        }
+    }
+
+    /// A's stop and B's adoption, through the real transitions.
+    fn replaced(
+        home: &Path,
+        actor: &str,
+        relay: &str,
+    ) -> (CodingSessionTarget, CodingSessionTarget) {
+        let (a, b) = (lineage_target("a"), lineage_target("b"));
+        record_host_enrollment(
+            home,
+            Instance::Dev,
+            actor,
+            relay,
+            &uuid_for_test(),
+            &"cd".repeat(32),
+            Some(a.clone()),
+        )
+        .unwrap();
+        host_stopped(home, Instance::Dev, actor, relay, &a).unwrap();
+        successor(
+            home,
+            Instance::Dev,
+            actor,
+            relay,
+            "22222222-2222-4222-8222-222222222222",
+            &"cd".repeat(32),
+            b.clone(),
+        )
+        .unwrap();
+        (a, b)
+    }
+
+    #[test]
+    fn replaced_by_reads_a_recorded_stop_and_adoption_for_this_exact_pair() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://one.example";
+        let (a, b) = replaced(home.path(), &actor, relay);
+        let check = |actor: &str, relay: &str, from, to| {
+            replaced_by(home.path(), Instance::Dev, actor, relay, from, to).unwrap()
+        };
+        assert!(check(&actor, relay, &a, &b));
+        assert!(check(
+            &actor.to_ascii_uppercase(),
+            "wss://one.example/",
+            &a,
+            &b
+        ));
+        assert!(!check(&actor, relay, &b, &a), "not the other way round");
+        assert!(!check(&actor, relay, &a, &a), "not itself");
+        assert!(!check(&"ef".repeat(32), relay, &a, &b), "not another actor");
+        assert!(
+            !check(&actor, "wss://two.example", &a, &b),
+            "not another relay"
+        );
+        let stale = CodingSessionTarget {
+            generation: 2,
+            ..b.clone()
+        };
+        assert!(!check(&actor, relay, &a, &stale), "exact generation");
+        let unknown = lineage_target("c");
+        assert!(
+            !check(&actor, relay, &unknown, &b),
+            "no recorded stop of it"
+        );
+        assert!(!check(&actor, relay, &a, &unknown), "not adopted");
+    }
+
+    #[test]
+    fn replaced_by_is_false_without_both_halves_of_the_lineage() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://one.example";
+        let (a, b) = (lineage_target("a"), lineage_target("b"));
+        let check = || replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).unwrap();
+        assert!(!check(), "no journal");
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &uuid_for_test(),
+            &"cd".repeat(32),
+            Some(a.clone()),
+        )
+        .unwrap();
+        assert!(!check(), "a sibling beside an adopted execution");
+        host_stopped(home.path(), Instance::Dev, &actor, relay, &a).unwrap();
+        assert!(!check(), "stopped, nothing adopted");
+    }
+
+    #[test]
+    fn replaced_by_refuses_historical_custody_and_reports_an_unreadable_journal() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://one.example";
+        let (a, b) = replaced(home.path(), &actor, relay);
+        let path = layout::host_dir(home.path(), Instance::Dev).join("managed-ownership.json");
+        let modern = std::fs::read_to_string(&path).unwrap();
+        let mut journal: serde_json::Value = serde_json::from_str(&modern).unwrap();
+        journal["history"][0]["legacyNonce"] = "imported".into();
+        std::fs::write(&path, journal.to_string()).unwrap();
+        assert!(!replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).unwrap());
+        std::fs::write(&path, modern).unwrap();
+        let mut journal: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        journal["transfers"][0]["legacyNonce"] = "imported".into();
+        std::fs::write(&path, journal.to_string()).unwrap();
+        assert!(!replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).unwrap());
+        std::fs::write(&path, b"{not a journal").unwrap();
+        assert!(replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).is_err());
+    }
+
     #[test]
     fn pair_admission_fences_startup_without_blocking_other_communities() {
         let home = tempfile::tempdir().unwrap();

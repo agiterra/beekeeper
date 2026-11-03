@@ -2,7 +2,7 @@ use super::*;
 use crate::conversation::{ConversationRoute, ConversationRoutes};
 use nostr::Tag;
 
-async fn routed_provider(
+pub(super) async fn routed_provider(
     dir: &Path,
     channel: Uuid,
     actor: &Keys,
@@ -78,7 +78,12 @@ async fn routed_provider_for_project(
     (host, target)
 }
 
-fn install_routes(host: &Provider, channel: Uuid, actor: &Keys, targets: Vec<CodingSessionTarget>) {
+pub(super) fn install_routes(
+    host: &Provider,
+    channel: Uuid,
+    actor: &Keys,
+    targets: Vec<CodingSessionTarget>,
+) {
     let dir = host
         .config
         .state_dir
@@ -108,7 +113,7 @@ fn install_routes(host: &Provider, channel: Uuid, actor: &Keys, targets: Vec<Cod
     .expect("route materialization");
 }
 
-fn message(channel: Uuid, actor: &Keys, root: Option<&str>, keys: &Keys) -> Event {
+pub(super) fn message(channel: Uuid, actor: &Keys, root: Option<&str>, keys: &Keys) -> Event {
     let mut tags = vec![Tag::parse(["h", &channel.to_string()]).expect("channel")];
     if let Some(root) = root {
         tags.push(Tag::parse(["e", root, "", "root"]).expect("root"));
