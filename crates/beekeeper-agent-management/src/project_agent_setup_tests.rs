@@ -112,6 +112,7 @@ fn closing_an_attempt_traces_old_to_new_and_holds_the_new_id_unsent() {
         effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
+        existing_actor: None,
     };
     let mut setup = AgentSetup {
         version: AGENT_SETUP_VERSION,
@@ -180,6 +181,7 @@ fn a_confirmed_start_marks_only_its_own_attempt_landed() {
         effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
+        existing_actor: None,
     };
     let confirmed = Uuid::from_u128(4);
     let mut setup = AgentSetup {
@@ -251,6 +253,7 @@ fn a_lost_reply_reuses_the_action_id_and_a_different_action_gets_a_new_one() {
         effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
+        existing_actor: None,
     };
     let mut setup = AgentSetup {
         version: AGENT_SETUP_VERSION,

@@ -726,6 +726,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -812,6 +813,7 @@ dependencies = [
  "git-credential-nostr",
  "hex",
  "infer",
+ "keyring",
  "nostr 0.44.7",
  "rand 0.10.1",
  "reqwest 0.13.4",
@@ -825,6 +827,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

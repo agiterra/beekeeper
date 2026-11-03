@@ -178,6 +178,7 @@ mod tests {
 
 pub(crate) mod host_commission;
 pub(crate) mod host_manage;
+pub(crate) mod host_manage_keystore;
 pub(crate) mod host_project;
 
 pub(crate) mod community;

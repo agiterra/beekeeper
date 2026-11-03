@@ -537,8 +537,13 @@ fn complete_with_context(
                     if let Some(prior) = held.target.as_ref() {
                         require_primary_terminal(config, state, actor, prior)?;
                     }
+                    let prior = beekeeper_host_core::agent_setup::adopted_prior_sessions(
+                        &config.state_dir,
+                        actor,
+                    );
                     if state.sessions().any(|record| {
                         record.actor.as_deref() == Some(actor)
+                            && !prior.contains(&record.session_id)
                             && record.command_id != plan.command_id
                             && !record.closed
                             && !record.is_retired()
@@ -599,8 +604,10 @@ pub(crate) fn stopped(
     let Some(actor) = record.actor.as_deref() else {
         return Ok(());
     };
+    let prior = beekeeper_host_core::agent_setup::adopted_prior_sessions(&config.state_dir, actor);
     if state.sessions().any(|row| {
         row.actor.as_deref() == Some(actor)
+            && !prior.contains(&row.session_id)
             && (!row.closed
                 || config
                     .state_dir

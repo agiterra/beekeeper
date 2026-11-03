@@ -96,6 +96,16 @@ pub enum ManageCmd {
         #[command(flatten)]
         owner: OwnerArgs,
     },
+    /// Bring an existing identity's key under this Host, once. Starts nothing and
+    /// spends no turn. Reads this instance's desktop key store, one entry, only if
+    /// this Host holds no key for it yet; macOS may ask. Prints no key.
+    AdoptIdentity {
+        /// The identity's public key.
+        #[arg(long)]
+        pubkey: String,
+        #[command(flatten)]
+        owner: OwnerArgs,
+    },
     /// Check a setup's choices. Changes nothing.
     Preflight(SpecArgs),
     /// Check the choices and journal a setup. Publishes nothing.
@@ -324,6 +334,20 @@ pub async fn dispatch(
             }
         }
         ManageCmd::Signer(args) => signer(args, env_key, delegated).await,
+        ManageCmd::AdoptIdentity { pubkey, owner } => {
+            let scope = scope()?;
+            let client = owner_client(owner, env_key, delegated, &scope.config)?;
+            let source =
+                super::host_manage_keystore::DesktopKeyStore::for_instance(scope.context.instance);
+            let outcome = beekeeper_agent_management::adopt_identity::adopt(
+                &scope.context,
+                &client,
+                pubkey,
+                &source,
+            )
+            .await?;
+            print(&outcome)
+        }
         ManageCmd::Roles { project } => roles(project),
         ManageCmd::Channels(args) => {
             let scope = scope()?;

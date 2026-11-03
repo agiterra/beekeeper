@@ -88,13 +88,26 @@ impl Provider {
             return self.enqueue_receipt(plan.channel_id, &plan.command_id, &LifecycleReceipt::failed(&plan.command_id, "AGENT_PRIVATE_CONFIG_UNAVAILABLE", "managed-actor runtime requires protected configured command; no placeholder fallback"));
         }
         if let Some(settings) = &private_settings {
+            let adopted_prior = plan
+                .actor
+                .as_deref()
+                .map(|actor| {
+                    beekeeper_host_core::agent_setup::adopted_prior_sessions(
+                        &self.config.state_dir,
+                        actor,
+                    )
+                })
+                .unwrap_or_default();
             match settings.parallelism() {
                 Ok(Some(limit))
                     if self
                         .state
                         .sessions()
                         .filter(|record| {
-                            record.actor == plan.actor && !record.closed && !record.is_retired()
+                            record.actor == plan.actor
+                                && !record.closed
+                                && !record.is_retired()
+                                && !adopted_prior.contains(&record.session_id)
                         })
                         .count()
                         >= limit =>

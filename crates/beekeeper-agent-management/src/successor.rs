@@ -105,10 +105,15 @@ pub(super) async fn require_prior_stops(
         .target
         .as_ref()
         .ok_or_else(|| fail("stopped ownership has no exact target"))?;
+    let adopted = beekeeper_host_core::agent_setup::adopted_prior_sessions(
+        &config.provider_state_dir,
+        &prior.actor_pubkey,
+    );
     let actor_records: Vec<_> = snapshot
         .sessions
         .values()
         .filter(|record| record.actor.as_deref() == Some(prior.actor_pubkey.as_str()))
+        .filter(|record| !adopted.contains(&record.session_id))
         .collect();
     let prior_record = actor_records.iter().find(|record| record.target(&provider.instance_id) == *old)
         .ok_or_else(|| CliError::Refused("stopped ownership target is absent from provider inventory; reconcile its exact generation before restarting".into()))?;

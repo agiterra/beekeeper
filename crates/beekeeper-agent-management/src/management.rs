@@ -523,6 +523,7 @@ pub async fn create(
                 args.channel,
                 &actor.pubkey,
                 args.agent_pubkey.is_some(),
+                args.operation_id,
             )?)?;
             let provider_member = client.sign_event_unchecked(provider_membership(
                 args.channel,
@@ -613,16 +614,22 @@ pub async fn create(
             .id
             .to_hex();
 
-        beekeeper_host_core::ownership::record_host_enrollment(
-            &home,
-            config.instance,
-            &operation.actor_pubkey,
-            &config.relay_url,
-            &args.operation_id.to_string(),
-            &revision,
-            None,
-        )
-        .map_err(fail)?;
+        // An adopted identity is recorded after its first confirmed start, under
+        // its own marker: it was never a fresh enrollment.
+        if crate::adopt_identity::adoption(&config.provider_state_dir, &operation.actor_pubkey)?
+            .is_none()
+        {
+            beekeeper_host_core::ownership::record_host_enrollment(
+                &home,
+                config.instance,
+                &operation.actor_pubkey,
+                &config.relay_url,
+                &args.operation_id.to_string(),
+                &revision,
+                None,
+            )
+            .map_err(fail)?;
+        }
         return Ok(
             json!({"operation_id":args.operation_id,"agent_pubkey":operation.actor_pubkey,"revision":revision,"desired_running":false,"execution_admitted":false,"custody":"host_retained"}),
         );
@@ -728,6 +735,13 @@ pub async fn create(
         .map_err(fail)?;
     }
     if args.agent_pubkey.is_some() {
+        crate::adopt_identity::record_first_start(
+            &home,
+            &config,
+            &operation,
+            args.operation_id,
+            target,
+        )?;
         successor::reconcile(
             &home,
             &config,
@@ -804,12 +818,19 @@ fn actor_membership(
     channel: Uuid,
     actor: &str,
     existing_identity: bool,
+    operation: Uuid,
 ) -> Result<nostr::EventBuilder, CliError> {
     // Native directory discovery uses the channel's automated designation.
     // This is independent of SessionCreate's optional team role. A bare add
     // preserves an existing identity's channel role, including elevated roles.
     let role = (!existing_identity).then_some(beekeeper_sdk::MemberRole::Bot);
-    beekeeper_sdk::build_add_member(channel, actor, role).map_err(fail)
+    let add = beekeeper_sdk::build_add_member(channel, actor, role).map_err(fail)?;
+    if !existing_identity {
+        return Ok(add);
+    }
+    // Two operations on one identity can sign this in one second. As for the
+    // provider's add, the tag keeps them distinct and confers no authority.
+    Ok(add.tags([Tag::parse(["management-operation", &operation.to_string()]).map_err(fail)?]))
 }
 
 fn event_transport<'a, T: RelayTransport>(

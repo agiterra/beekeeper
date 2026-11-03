@@ -67,6 +67,10 @@ pub struct AgentSetupSpec {
     pub parallelism: u32,
     /// Who may instruct it.
     pub access: SetupAccess,
+    /// An identity this Host already holds through `adopt-identity`, to set up
+    /// instead of minting one. Absent for every ordinary setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_actor: Option<String>,
 }
 
 impl AgentSetupSpec {
@@ -415,6 +419,56 @@ pub struct OpenExecution {
     pub generation: u64,
 }
 
+/// The file `adopt-identity` writes beside an adopted identity's custody.
+pub const ADOPTION_FILE: &str = "adoption.json";
+
+/// What `adopt-identity` recorded about one identity.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptionRecord {
+    pub actor: String,
+    pub owner: String,
+    pub prior_sessions: std::collections::BTreeSet<String>,
+}
+
+/// The adoption record, strictly: absent is `Ok(None)`, and anything unreadable,
+/// malformed or naming another actor is an error, never a stand-in for absent.
+pub fn read_adoption(
+    provider_state_dir: &Path,
+    actor: &str,
+) -> Result<Option<AdoptionRecord>, String> {
+    let path = provider_state_dir
+        .join("actors")
+        .join(actor)
+        .join(ADOPTION_FILE);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("the adoption record is unreadable".into()),
+    };
+    let record: AdoptionRecord = serde_json::from_slice(&bytes)
+        .map_err(|_| "the adoption record is malformed".to_string())?;
+    if record.actor != actor {
+        return Err("the adoption record names another identity".into());
+    }
+    Ok(Some(record))
+}
+
+/// The sessions an identity already had when this Host adopted it. They are not
+/// this Host's lineage, and do not count as its open work. For checks that fail
+/// closed when these sessions count: a bad record is empty here, so a transition
+/// refuses. Anything that would act on old sessions uses [`read_adoption`].
+pub fn adopted_prior_sessions(
+    provider_state_dir: &Path,
+    actor: &str,
+) -> std::collections::BTreeSet<String> {
+    read_adoption(provider_state_dir, actor)
+        .ok()
+        .flatten()
+        .map(|record| record.prior_sessions)
+        .unwrap_or_default()
+}
+
 /// [`read_open_executions`], for a reader that discloses its own uncertainty: an
 /// unreadable file reads as none.
 pub fn open_executions(provider_state_dir: &Path) -> Vec<OpenExecution> {
@@ -425,6 +479,17 @@ pub fn open_executions(provider_state_dir: &Path) -> Vec<OpenExecution> {
 /// no provider has recorded anything, which is none. An unreadable one is an
 /// error: a caller about to act on "nothing is open" must not guess.
 pub fn read_open_executions(provider_state_dir: &Path) -> Result<Vec<OpenExecution>, String> {
+    Ok(read_all_open_executions(provider_state_dir)?
+        .into_iter()
+        .filter(|row| {
+            !adopted_prior_sessions(provider_state_dir, &row.actor).contains(&row.session_id)
+        })
+        .collect())
+}
+
+/// Every open record, including an adopted identity's prior sessions, for a reader
+/// that shows them separately.
+pub fn read_all_open_executions(provider_state_dir: &Path) -> Result<Vec<OpenExecution>, String> {
     #[derive(Deserialize)]
     struct Snapshot {
         #[serde(default)]
@@ -529,6 +594,7 @@ mod tests {
             effort: None,
             parallelism: 1,
             access: SetupAccess::OwnerOnly,
+            existing_actor: None,
         }
     }
 

@@ -307,6 +307,9 @@ fn reserved_actor(context: &Context, setup: &AgentSetup) -> Result<Option<String
     if setup.agent_pubkey.is_some() {
         return Ok(setup.agent_pubkey.clone());
     }
+    if setup.spec.existing_actor.is_some() {
+        return Ok(setup.spec.existing_actor.clone());
+    }
     let path = local::operation_path(context, setup.install_operation)?;
     Ok(local::read_stored_operation(&path)?.map(|operation| operation.actor_pubkey))
 }
@@ -593,7 +596,8 @@ pub async fn preflight(
         }
     }
 
-    if own_actor.is_some() {
+    let mut pack_commit: Option<String> = None;
+    if own_actor.is_some() && spec.existing_actor.is_none() {
         // Pinned when the identity was reserved: resolving again here would judge
         // that install by a source it no longer depends on.
         add(
@@ -624,14 +628,17 @@ pub async fn preflight(
                         });
                         match conflict {
                             Some((code, message)) => add(code, false, message),
-                            None => add(
-                                "ROLE_RESOLVED",
-                                true,
-                                format!(
-                                    "Role `{}` resolves at commit {} of the project's source.",
-                                    spec.role, material.pack_ref.sha
-                                ),
-                            ),
+                            None => {
+                                pack_commit = Some(material.pack_ref.sha.clone());
+                                add(
+                                    "ROLE_RESOLVED",
+                                    true,
+                                    format!(
+                                        "Role `{}` resolves at commit {} of the project's source.",
+                                        spec.role, material.pack_ref.sha
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
@@ -639,6 +646,31 @@ pub async fn preflight(
         }
     }
 
+    if let Some(actor) = &spec.existing_actor {
+        match crate::adopt_identity::verify(context, &config, client, &owner, actor, spec).await {
+            Ok(()) => {
+                add(
+                    "EXISTING_IDENTITY_ADOPTED",
+                    true,
+                    format!(
+                        "This Host holds attested custody of {actor}, and its definition matches."
+                    ),
+                );
+                if let Some(change) =
+                    crate::adopt_identity::definition_change(client, actor, &spec.selection())
+                        .await?
+                {
+                    let pack = pack_commit
+                        .as_deref()
+                        .map(|sha| format!(" The role pack is at commit {sha}."))
+                        .unwrap_or_default();
+                    add("DEFINITION_WILL_CHANGE", true, format!("{change}{pack}"));
+                }
+            }
+            Err(error) => add("EXISTING_IDENTITY_NOT_ADOPTED", false, error.to_string()),
+        }
+    }
+    let own_actor = own_actor.or(spec.existing_actor.as_deref());
     match duplicate_identity(client, spec, &owner, own_actor).await {
         Ok(None) => add(
             "IDENTITY_UNIQUE",
@@ -826,6 +858,19 @@ async fn start_recorded(
 ) -> Result<(), Error> {
     match start_and_verify(context, client, config, setup, actor, operation).await {
         Err(error) if is_expired(&error) => {
+            // A new attempt would add an existing identity to the channel again. If
+            // it is not there now, the owner may have removed it, so that stays open.
+            if setup.spec.existing_actor.is_some()
+                && channel_role(client, setup.spec.channel, actor)
+                    .await?
+                    .is_none()
+            {
+                return attention(
+                    config,
+                    setup,
+                    &crate::adopt_identity::start_membership_unknown(),
+                );
+            }
             let fresh = close_attempt(
                 setup,
                 "start",
@@ -923,7 +968,12 @@ pub async fn plan(
         .iter()
         .filter(|held| held.spec.project == spec.project && held.spec.role == spec.role)
     {
-        let reserved = reserved_actor(context, held)?;
+        // A cancelled setup of an existing identity reserved nothing: it minted no one.
+        let reserved = if held.spec.existing_actor.is_some() && held.agent_pubkey.is_none() {
+            None
+        } else {
+            reserved_actor(context, held)?
+        };
         if held.state != SetupState::Cancelled || reserved.is_some() {
             return Err(refused(
                 "SETUP_ALREADY_EXISTS",
@@ -1040,9 +1090,10 @@ async fn readback(
         channels: vec![setup.spec.channel],
         ..Default::default()
     };
+    let discovery = discovery_of(setup);
     let deadline = std::time::Instant::now() + LEASE_WAIT;
     let status = loop {
-        let status = crate::status(&request, client).await?;
+        let status = crate::lifecycle::status_in(&request, discovery, client).await?;
         let available = status["responsibilities"]
             .as_array()
             .is_some_and(|rows| rows.iter().any(|row| row["runtime_available"] == true));
@@ -1273,6 +1324,9 @@ pub async fn apply(
         }
         _ => {}
     }
+    if resume_cancelled && setup.state == SetupState::Cancelled {
+        refuse_resume_over_another(&config, &setup)?;
+    }
     // Retry does what was asked: a held stop is finished, never turned into a start.
     if let Some(held) = setup
         .pending_action
@@ -1330,6 +1384,7 @@ pub async fn apply(
                 templates: templates.to_path_buf(),
                 respond_to: policy,
                 respond_to_allowlist: allowlist,
+                existing_actor: setup.spec.existing_actor.clone(),
             },
         )
         .await;
@@ -1339,6 +1394,10 @@ pub async fn apply(
                 setup.revision = value["revision"].as_str().map(str::to_owned);
                 finish(&mut setup, "done", None);
                 save(&config, &mut setup)?;
+            }
+            Err(error) if is_expired(&error) && setup.spec.existing_actor.is_some() => {
+                retire_expired_install(context, client, &config, &mut setup, &error).await?;
+                return Ok(setup);
             }
             Err(error) => {
                 attention(&config, &mut setup, &error)?;
@@ -1386,6 +1445,91 @@ pub async fn apply(
     Ok(setup)
 }
 
+/// Where this setup's own reads look: an adopted identity's stay in its channel.
+fn discovery_of(setup: &AgentSetup) -> crate::lifecycle::Discovery {
+    if setup.spec.existing_actor.is_some() {
+        crate::lifecycle::Discovery::NamedChannels
+    } else {
+        crate::lifecycle::Discovery::Membership
+    }
+}
+
+/// A cancelled setup of an existing identity holds no claim on it, so another setup
+/// may have taken it since. Resuming then would make two setups for one identity.
+/// Runs under the setup lock, before anything changes.
+fn refuse_resume_over_another(config: &HostConfig, setup: &AgentSetup) -> Result<(), Error> {
+    let Some(actor) = setup.spec.existing_actor.as_deref() else {
+        return Ok(());
+    };
+    let (others, unreadable) = agent_setup::list_setups(&config.provider_state_dir);
+    if let Some(sentence) = unreadable.first() {
+        return Err(refused(
+            "SETUP_JOURNAL_UNREADABLE",
+            format!("{sentence}; refusing to resume, which could duplicate an identity"),
+        ));
+    }
+    let taken = others.iter().find(|other| {
+        other.setup_id != setup.setup_id
+            && other.state != SetupState::Cancelled
+            && (other.spec.existing_actor.as_deref() == Some(actor)
+                || other.agent_pubkey.as_deref() == Some(actor))
+    });
+    if let Some(other) = taken {
+        return Err(refused(
+            "SETUP_ALREADY_EXISTS",
+            format!(
+                "setup {} now holds identity {actor}, so this cancelled setup stays cancelled",
+                other.setup_id
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// An existing identity's install aged out on the relay. Nothing is re-signed. If
+/// the definition and membership still read as that attempt left them, the next
+/// Retry starts a new attempt, which reads both again. If not, it stays refused.
+async fn retire_expired_install(
+    context: &Context,
+    client: &impl RelayTransport,
+    config: &HostConfig,
+    setup: &mut AgentSetup,
+    error: &Error,
+) -> Result<(), Error> {
+    let actor = setup
+        .spec
+        .existing_actor
+        .clone()
+        .ok_or_else(|| fail("no existing identity"))?;
+    let path = local::operation_path(context, setup.install_operation)?;
+    let held = local::read_stored_operation(&path)?;
+    let events = held.as_ref().map(|op| op.events.as_slice()).unwrap_or(&[]);
+    let journaled = events
+        .iter()
+        .find(|event| event.kind.as_u16() == 30177)
+        .map(|event| event.id.to_hex());
+    let added = events.iter().any(|event| event.kind.as_u16() == 9000);
+    let head = current_head(client, &actor).await?.id.to_hex();
+    let member = channel_role(client, setup.spec.channel, &actor)
+        .await?
+        .is_some();
+    if let Err(refusal) =
+        crate::adopt_identity::may_retry_install(journaled.as_deref(), &head, member, added)
+    {
+        return attention(config, setup, &refusal);
+    }
+    let old = setup.install_operation;
+    setup.install_operation = close_attempt(
+        setup,
+        "install",
+        old,
+        crate::management::JOURNAL_EVENT_EXPIRED,
+        error.to_string(),
+    );
+    setup.pending_action = None;
+    attention(config, setup, error)
+}
+
 /// Record that the operator stopped this setup, and what already exists. This is
 /// not an undo: identities are retired with `bee agents delete`, on purpose.
 pub fn cancel(
@@ -1405,14 +1549,27 @@ pub fn cancel(
     let reserved = reserved_actor(context, &setup)?;
     setup.state = SetupState::Cancelled;
     save(config, &mut setup)?;
-    let published = setup
-        .steps
-        .iter()
-        .any(|step| step.step == StepName::Install && step.state == "done");
+    // No claim yet on an existing identity: another setup may take it. Its custody,
+    // and any definition revision already published, stay.
+    let unclaimed = setup.spec.existing_actor.is_some() && setup.agent_pubkey.is_none();
+    let definition_changed = setup.spec.existing_actor.as_deref().is_some_and(|actor| {
+        config
+            .provider_state_dir
+            .join("actors")
+            .join(actor)
+            .join(crate::adopt_identity::PRE_ADOPTION_DEFINITION)
+            .exists()
+    });
+    let published = definition_changed
+        || setup
+            .steps
+            .iter()
+            .any(|step| step.step == StepName::Install && step.state == "done");
     let held: Vec<agent_setup::OpenExecution> =
         agent_setup::open_executions(&config.provider_state_dir)
             .into_iter()
-            .filter(|row| reserved.as_deref() == Some(row.actor.as_str()))
+            // An unclaimed setup started nothing: anything open belongs to another setup.
+            .filter(|row| !unclaimed && reserved.as_deref() == Some(row.actor.as_str()))
             .collect();
     let live = probe.live_pid.is_some();
     let stop_held = setup
@@ -1442,6 +1599,15 @@ pub fn cancel(
         control.to_string()
     } else if start_unknown {
         "A start was sent and its outcome is unknown, so the agent may still start. Resume learns which.".to_string()
+    } else if unclaimed {
+        let change = if definition_changed {
+            " Its definition was already revised, and that stays; the prior signed one is kept on this Host."
+        } else {
+            ""
+        };
+        format!(
+            "This setup holds no claim on the identity, whose custody stays on this Host.{change} A new setup for this project and role may start, and resuming this one is then refused."
+        )
     } else if reserved.is_some() && published {
         "The identity is kept. Resume to use it, or retire it with `bee agents delete`. A new setup for this project and role stays refused.".to_string()
     } else if reserved.is_some() {
@@ -1452,8 +1618,9 @@ pub fn cancel(
     Ok(json!({
         "setup": setup,
         "residual": {
-            "identityReserved": reserved,
+            "identityReserved": if unclaimed { None } else { reserved.as_deref() },
             "published": published,
+            "definitionChanged": definition_changed,
             "executionsHeld": held,
             "providerRunning": live,
             "actionOutcomeUnknown": unknown,
@@ -1599,7 +1766,7 @@ async fn run_stop(
             channels: vec![setup.spec.channel],
             wait_secs: RECEIPT_WAIT_SECS,
         };
-        match crate::stop(&request, client, context).await {
+        match crate::lifecycle::stop_in(&request, discovery_of(setup), client, context).await {
             Ok(value) if value["terminal"] == true => {
                 finish(setup, "done", None);
                 setup.state = SetupState::Stopped;

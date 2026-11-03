@@ -53,13 +53,20 @@ pub struct Transfer {
     pub phase: Phase,
 }
 
-/// Whether custody originated in canonical fresh host enrollment. Historical
+const FRESH_MARKER: &str = "fresh-identity:";
+/// An existing identity brought under this Host by `adopt-identity`. Not a fresh
+/// enrollment, and never recorded as one.
+const ADOPTED_MARKER: &str = "adopted-identity:";
+
+/// Whether custody originated in canonical fresh host enrollment or an adoption. Historical
 /// import markers remain readable, but cannot authorize new execution.
 pub fn is_modern_enrollment(transfer: &Transfer) -> bool {
-    transfer
-        .legacy_nonce
-        .strip_prefix("fresh-identity:")
-        .is_some_and(|operation| uuid::Uuid::parse_str(operation).is_ok())
+    [FRESH_MARKER, ADOPTED_MARKER].iter().any(|marker| {
+        transfer
+            .legacy_nonce
+            .strip_prefix(marker)
+            .is_some_and(|operation| uuid::Uuid::parse_str(operation).is_ok())
+    })
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -451,6 +458,50 @@ pub fn successor(
     )
 }
 
+/// Record sole host custody for an adopted identity, once its first start is
+/// confirmed. Repeating the same operation is a no-op; anything else conflicts.
+pub fn record_adopted_enrollment(
+    home: &Path,
+    instance: Instance,
+    actor: &str,
+    relay: &str,
+    operation: &str,
+    revision: &str,
+    target: CodingSessionTarget,
+) -> Result<(), String> {
+    nostr::PublicKey::from_hex(actor).map_err(|_| "invalid adopted actor")?;
+    nostr::EventId::from_hex(revision).map_err(|_| "invalid adopted revision")?;
+    uuid::Uuid::parse_str(operation).map_err(|_| "adoption requires operation UUID")?;
+    let _journal_lock = journal_lock(home, instance)?;
+    let mut journal = read(home, instance)?;
+    let relay = canonical_relay_key(relay);
+    let nonce = format!("{ADOPTED_MARKER}{operation}");
+    if let Some(held) = journal
+        .transfers
+        .iter()
+        .find(|t| t.actor_pubkey.eq_ignore_ascii_case(actor) && t.relay_url == relay)
+    {
+        return if held.legacy_nonce == nonce && held.target.as_ref() == Some(&target) {
+            Ok(())
+        } else {
+            Err("this identity already has a different ownership record".into())
+        };
+    }
+    journal.transfers.push(Transfer {
+        operation_id: operation.into(),
+        actor_pubkey: actor.to_ascii_lowercase(),
+        relay_url: relay,
+        legacy_nonce: nonce,
+        definition_event_id: revision.into(),
+        target: Some(target),
+        phase: Phase::Adopted,
+    });
+    atomic_write::atomic_write_json_restricted(
+        &layout::host_dir(home, instance).join("managed-ownership.json"),
+        &serde_json::to_vec_pretty(&journal).map_err(|_| "ownership encoding failed")?,
+    )
+}
+
 /// Whether the Host journal records a stopped execution replaced by the current
 /// adopted execution of this actor. Matching runtime fields alone prove no lineage.
 pub fn replaced_by(
@@ -646,6 +697,61 @@ mod tests {
         assert!(!replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).unwrap());
         std::fs::write(&path, b"{not a journal").unwrap();
         assert!(replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).is_err());
+    }
+
+    #[test]
+    fn an_adopted_identity_is_modern_and_follows_the_real_stop_and_start() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://one.example";
+        let op = uuid_for_test();
+        let (a, b) = (lineage_target("a"), lineage_target("b"));
+        let record = |target: &CodingSessionTarget| {
+            record_adopted_enrollment(
+                home.path(),
+                Instance::Dev,
+                &actor,
+                relay,
+                &op,
+                &"cd".repeat(32),
+                target.clone(),
+            )
+        };
+        record(&a).unwrap();
+        record(&a).unwrap();
+        assert!(record(&b).is_err(), "another target conflicts");
+        let held = for_pair(home.path(), Instance::Dev, &actor, relay)
+            .unwrap()
+            .unwrap();
+        assert!(held.legacy_nonce.starts_with("adopted-identity:"));
+        assert!(is_modern_enrollment(&held));
+        assert_eq!(held.phase, Phase::Adopted);
+        host_stopped(home.path(), Instance::Dev, &actor, relay, &a).unwrap();
+        successor(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            "22222222-2222-4222-8222-222222222222",
+            &"cd".repeat(32),
+            b.clone(),
+        )
+        .unwrap();
+        assert!(replaced_by(home.path(), Instance::Dev, &actor, relay, &a, &b).unwrap());
+    }
+
+    #[test]
+    fn a_marker_with_no_operation_id_is_not_modern() {
+        let transfer = Transfer {
+            operation_id: "x".into(),
+            actor_pubkey: "ab".repeat(32),
+            relay_url: "wss://one.example".into(),
+            legacy_nonce: "adopted-identity:not-a-uuid".into(),
+            definition_event_id: "cd".repeat(32),
+            target: None,
+            phase: Phase::Adopted,
+        };
+        assert!(!is_modern_enrollment(&transfer));
     }
 
     #[test]

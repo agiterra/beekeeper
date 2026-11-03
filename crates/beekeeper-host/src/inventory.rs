@@ -126,6 +126,11 @@ pub struct AgentRow {
     /// How many of those the provider's record says are open.
     pub open_sessions: usize,
     pub turns_in_flight: usize,
+    /// An adopted identity's open sessions from before its adoption. Not in
+    /// `open_sessions`, and not this Host's to stop.
+    pub prior_open_sessions: usize,
+    /// The turns in flight on those. Not in `turns_in_flight`.
+    pub prior_turns_in_flight: usize,
     /// `host_enrolled`, or `sessions_only` when the identity appears in the
     /// provider's sessions and the host enrollment journal does not hold it.
     pub custody: String,
@@ -417,14 +422,17 @@ fn session_projects(state_dir: &Path) -> BTreeMap<String, String> {
 }
 
 fn agent_rows(
+    state_dir: &Path,
     sessions: &[SessionRow],
     projects_by_session: &BTreeMap<String, String>,
     open: &[agent_setup::OpenExecution],
+    prior_open: &[agent_setup::OpenExecution],
     enrolled: &[String],
     setups: &[AgentSetup],
 ) -> Vec<AgentRow> {
     let mut rows: BTreeMap<String, AgentRow> = BTreeMap::new();
     let enrolled: BTreeSet<&str> = enrolled.iter().map(String::as_str).collect();
+    let prior_of = |actor: &str| agent_setup::adopted_prior_sessions(state_dir, actor);
     let blank = |actor: &str| AgentRow {
         actor: actor.to_string(),
         display_name: None,
@@ -434,6 +442,8 @@ fn agent_rows(
         session_count: 0,
         open_sessions: open.iter().filter(|row| row.actor == actor).count(),
         turns_in_flight: 0,
+        prior_open_sessions: prior_open.iter().filter(|row| row.actor == actor).count(),
+        prior_turns_in_flight: 0,
         custody: if enrolled.contains(actor) {
             "host_enrolled".to_string()
         } else {
@@ -454,7 +464,12 @@ fn agent_rows(
             .entry(actor.to_string())
             .or_insert_with(|| blank(actor));
         row.session_count += 1;
-        row.turns_in_flight += usize::from(session.turn_started_at_ms.is_some());
+        let working = usize::from(session.turn_started_at_ms.is_some());
+        if prior_of(actor).contains(&session.session_id) {
+            row.prior_turns_in_flight += working;
+        } else {
+            row.turns_in_flight += working;
+        }
         if let Some(role) = &session.role {
             push(&mut row.roles, role);
         }
@@ -690,10 +705,19 @@ pub fn read(input: InventoryInput<'_>) -> Inventory {
         .collect();
     let lock_held = agent_setup::apply_lock_held(state_dir);
     let open = agent_setup::open_executions(state_dir);
+    let all_open = agent_setup::read_all_open_executions(state_dir).unwrap_or_default();
+    let prior_open: Vec<_> = all_open
+        .into_iter()
+        .filter(|row| {
+            agent_setup::adopted_prior_sessions(state_dir, &row.actor).contains(&row.session_id)
+        })
+        .collect();
     let agents = agent_rows(
+        state_dir,
         &input.sessions.sessions,
         &session_projects(state_dir),
         &open,
+        &prior_open,
         &enrolled,
         &setups,
     );

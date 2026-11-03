@@ -19,7 +19,8 @@ beekeeper-session-provider = { path = "../beekeeper-session-provider" }
 nostr.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+zeroize.workspace = true
 chrono.workspace = true
 tokio = { workspace = true, features = ["time"] }
 thiserror.workspace = true

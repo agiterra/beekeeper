@@ -130,7 +130,7 @@ fn fresh_actor_membership_is_discoverable_bot_without_rewriting_existing_roles()
     let owner = Keys::generate();
     let actor = Keys::generate().public_key().to_hex();
     let channel = Uuid::new_v4();
-    let fresh = actor_membership(channel, &actor, false)
+    let fresh = actor_membership(channel, &actor, false, Uuid::new_v4())
         .expect("fresh membership")
         .sign_with_keys(&owner)
         .expect("signed membership");
@@ -144,7 +144,7 @@ fn fresh_actor_membership_is_discoverable_bot_without_rewriting_existing_roles()
     assert!(tags.contains(&vec!["h".into(), channel.to_string()]));
     assert!(tags.contains(&vec!["p".into(), actor.clone()]));
     assert!(tags.contains(&vec!["role".into(), "bot".into()]));
-    let existing = actor_membership(channel, &actor, true)
+    let existing = actor_membership(channel, &actor, true, Uuid::new_v4())
         .expect("existing membership")
         .sign_with_keys(&owner)
         .expect("signed membership");

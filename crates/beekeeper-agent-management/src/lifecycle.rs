@@ -62,11 +62,34 @@ pub(crate) async fn inventory(
     args: &LifecycleRequest,
     client: &impl RelayTransport,
 ) -> Result<Vec<Responsibility>, Error> {
+    inventory_in(args, Discovery::Membership, client).await
+}
+
+/// Where a lifecycle read looks. Not a public choice: only an adopted identity's own
+/// setup reads [`Discovery::NamedChannels`], because its other channels hold history
+/// from before this Host, which it need not authorize and must not act on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Discovery {
+    /// The named channels and every channel the actor belongs to.
+    Membership,
+    /// The named channels alone.
+    NamedChannels,
+}
+
+pub(crate) async fn inventory_in(
+    args: &LifecycleRequest,
+    discovery: Discovery,
+    client: &impl RelayTransport,
+) -> Result<Vec<Responsibility>, Error> {
     crate::support::validate_hex64(&args.agent_pubkey)?;
     let relay = client.relay_identity().await?;
-    let groups = client
-        .query_all(json!({"kinds":[39002],"#p":[args.agent_pubkey]}))
-        .await?;
+    let groups = if discovery == Discovery::NamedChannels {
+        Vec::new()
+    } else {
+        client
+            .query_all(json!({"kinds":[39002],"#p":[args.agent_pubkey]}))
+            .await?
+    };
     let mut channels = args.channels.clone();
     for group in groups {
         let Ok(event) = serde_json::from_value::<Event>(group) else {
@@ -487,7 +510,15 @@ async fn provider_presence(
 /// ([`execution_word`]): an idle provider with live presence reads `idle`,
 /// and `disconnected` is said only when presence is expired or absent.
 pub async fn status(args: &LifecycleRequest, client: &impl RelayTransport) -> Result<Value, Error> {
-    let rows = inventory(args, client).await?;
+    status_in(args, Discovery::Membership, client).await
+}
+
+pub(crate) async fn status_in(
+    args: &LifecycleRequest,
+    discovery: Discovery,
+    client: &impl RelayTransport,
+) -> Result<Value, Error> {
+    let rows = inventory_in(args, discovery, client).await?;
     let mut observations = Vec::new();
     for row in rows {
         let stopped = terminal(&row, client).await?;
@@ -518,11 +549,21 @@ pub async fn stop(
     client: &impl RelayTransport,
     context: &Context,
 ) -> Result<Value, Error> {
+    stop_in(args, Discovery::Membership, client, context).await
+}
+
+pub(crate) async fn stop_in(
+    args: &LifecycleRequest,
+    discovery: Discovery,
+    client: &impl RelayTransport,
+    context: &Context,
+) -> Result<Value, Error> {
     let _lock = local::management_lock(context)?;
-    stop_inner(args, client, context, &[]).await
+    stop_inner(args, discovery, client, context, &[]).await
 }
 async fn stop_inner(
     args: &LifecycleRequest,
+    discovery: Discovery,
     client: &impl RelayTransport,
     context: &Context,
     seed: &[Responsibility],
@@ -548,7 +589,11 @@ async fn stop_inner(
         },
         Err(_) => return Err(Error::Other("lifecycle journal unavailable".into())),
     };
-    let observed = inventory(args, client).await?;
+    let (observed, excluded) = crate::adopt_identity::stoppable(
+        context,
+        &args.agent_pubkey,
+        inventory_in(args, discovery, client).await?,
+    )?;
     merge_inventory(&mut operation.inventory, seed);
     merge_inventory(&mut operation.inventory, &observed);
     if operation.inventory.is_empty() {
@@ -622,7 +667,11 @@ async fn stop_inner(
                 &crate::support::to_ws_url(client.relay_url()),
             )
             .map_err(local::fail)?;
-            let fresh = inventory(args, client).await?;
+            let (fresh, _) = crate::adopt_identity::stoppable(
+                context,
+                &args.agent_pubkey,
+                inventory_in(args, discovery, client).await?,
+            )?;
             let before = operation.inventory.len();
             merge_inventory(&mut operation.inventory, &fresh);
             local::save(&path, &operation)?;
@@ -649,17 +698,21 @@ async fn stop_inner(
                     }
                 }
                 return Ok(
-                    json!({"operation_id":args.operation_id,"agent_pubkey":args.agent_pubkey,"terminal":true,"responsibilities":operation.inventory,"custody":"retained"}),
+                    json!({"operation_id":args.operation_id,"agent_pubkey":args.agent_pubkey,"left_alone":excluded,"terminal":true,"responsibilities":operation.inventory,"custody":"retained"}),
                 );
             }
         }
         if tokio::time::Instant::now() >= deadline {
             return Ok(
-                json!({"operation_id":args.operation_id,"agent_pubkey":args.agent_pubkey,"terminal":false,"pending":pending,"custody":"retained"}),
+                json!({"operation_id":args.operation_id,"agent_pubkey":args.agent_pubkey,"left_alone":excluded,"terminal":false,"pending":pending,"custody":"retained"}),
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let fresh = inventory(args, client).await?;
+        let (fresh, _) = crate::adopt_identity::stoppable(
+            context,
+            &args.agent_pubkey,
+            inventory_in(args, discovery, client).await?,
+        )?;
         merge_inventory(&mut operation.inventory, &fresh);
         local::save(&path, &operation)?;
         rows = operation.inventory.clone();
@@ -778,7 +831,14 @@ pub async fn delete(
         channels,
         wait_secs: args.wait_secs,
     };
-    let stopped = stop_inner(&lifecycle, client, context, &operation.inventory).await?;
+    let stopped = stop_inner(
+        &lifecycle,
+        Discovery::Membership,
+        client,
+        context,
+        &operation.inventory,
+    )
+    .await?;
     if stopped.get("terminal").and_then(Value::as_bool) != Some(true) {
         return Ok(
             json!({"operation_id":args.operation_id,"retirement_requested":true,"terminal":false,"stop":stopped,"custody":"retained"}),
@@ -1038,12 +1098,13 @@ pub async fn start(
                 let content: beekeeper_core::managed_agent::ManagedAgentEventContent =
                     serde_json::from_str(&head.content).map_err(local::fail)?;
                 verify_adopted_start(args, &content, &held, client, context)?;
-                let observation = status(
+                let observation = status_in(
                     &LifecycleRequest {
                         agent_pubkey: actor.into(),
                         channels: vec![args.channel],
                         ..Default::default()
                     },
+                    crate::adopt_identity::discovery_for(context, actor)?,
                     client,
                 )
                 .await?;
@@ -1069,7 +1130,18 @@ pub async fn start(
     ).map_err(local::fail)?.ok_or_else(|| Error::Unconfirmed(
         "start accepted but commissioned provider observation unavailable; retry the same operation".into(),
     ))?;
-    observe_created_start(result, args.channel, &config.provider_pubkey, client).await
+    let discovery = match args.agent_pubkey.as_deref() {
+        Some(actor) => crate::adopt_identity::discovery_for(context, actor)?,
+        None => Discovery::Membership,
+    };
+    observe_created_start(
+        result,
+        args.channel,
+        &config.provider_pubkey,
+        discovery,
+        client,
+    )
+    .await
 }
 fn verify_adopted_start(
     args: &crate::CreateRequest,
@@ -1172,6 +1244,7 @@ pub(crate) async fn observe_created_start(
     mut accepted: Value,
     channel: Uuid,
     provider: &str,
+    discovery: Discovery,
     client: &impl RelayTransport,
 ) -> Result<Value, Error> {
     let actor = accepted
@@ -1181,12 +1254,13 @@ pub(crate) async fn observe_created_start(
     let target = accepted
         .get("target")
         .ok_or_else(|| Error::Other("accepted start target missing".into()))?;
-    let observation = status(
+    let observation = status_in(
         &LifecycleRequest {
             agent_pubkey: actor.into(),
             channels: vec![channel],
             ..Default::default()
         },
+        discovery,
         client,
     )
     .await?;

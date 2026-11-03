@@ -256,9 +256,15 @@ async fn deletion_captured_inventory_seeds_stop_even_when_all_observations_are_g
         instance: beekeeper_host_core::layout::Instance::Dev,
         native_home: None,
     };
-    let result = stop_inner(&request, &client, &context, &captured)
-        .await
-        .expect("pending deletion stop");
+    let result = stop_inner(
+        &request,
+        Discovery::Membership,
+        &client,
+        &context,
+        &captured,
+    )
+    .await
+    .expect("pending deletion stop");
     assert_eq!(result["terminal"], false);
     assert_eq!(
         result["pending"][0]["target"],
@@ -754,6 +760,7 @@ async fn created_start_observes_exact_live_lease_and_adopted_replay_never_create
         accepted.clone(),
         channel,
         &provider.public_key().to_hex(),
+        Discovery::Membership,
         &relay,
     )
     .await
@@ -782,6 +789,7 @@ async fn created_start_observes_exact_live_lease_and_adopted_replay_never_create
             accepted.clone(),
             channel,
             &provider.public_key().to_hex(),
+            Discovery::Membership,
             &relay,
         )
         .await

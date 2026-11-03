@@ -248,7 +248,7 @@ function renderAgents() {
       el(
         "td",
         null,
-        `${row.openSessions} open of ${row.sessionCount}${row.turnsInFlight ? `, ${row.turnsInFlight} working` : ""}`,
+        `${row.openSessions} open of ${row.sessionCount}${row.turnsInFlight ? `, ${row.turnsInFlight} working` : ""}${row.priorOpenSessions ? `, plus ${row.priorOpenSessions} from before adoption${row.priorTurnsInFlight ? `, ${row.priorTurnsInFlight} working` : ""}` : ""}`,
       ),
       el(
         "td",

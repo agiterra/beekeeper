@@ -31,6 +31,9 @@ pub struct RoleInstallRequest {
     pub respond_to: RespondTo,
     /// The named identities for [`RespondTo::Allowlist`]; empty otherwise.
     pub respond_to_allowlist: Vec<String>,
+    /// Install for this adopted identity, keeping its current definition, instead
+    /// of minting one.
+    pub existing_actor: Option<String>,
 }
 
 /// The instruction every canonically installed identity is published with. The
@@ -156,12 +159,15 @@ async fn resume(
             provider_instance: Some(args.provider_instance.clone()),
             wait_secs: 1,
             activate: false,
+            agent_pubkey: args.existing_actor.clone(),
             public_definition: Some(public),
             private_config: Some(private),
-            // Every event of an install is idempotent, and the identity is reserved:
-            // anything aged out and absent is re-signed in place, so an interrupted
-            // install continues whether none or some of it reached the relay.
-            reissue_expired: true,
+            // Every event of a fresh install is idempotent, and the identity is
+            // reserved: anything aged out and absent is re-signed in place, so an
+            // interrupted install continues whether none or some of it reached the
+            // relay. An existing identity's owner may have acted since, so nothing
+            // of its install is ever re-signed: the setup starts a new attempt.
+            reissue_expired: args.existing_actor.is_none(),
             ..Default::default()
         },
         client,
@@ -186,6 +192,19 @@ pub async fn install(
     // source may have moved since, and that must not change or wedge it.
     let path = crate::management::local::operation_path(context, args.operation_id)?;
     if let Some(held) = crate::management::local::read_stored_operation(&path)? {
+        // An owner's later revision is never overwritten by an older journal.
+        if let Some(actor) = &args.existing_actor {
+            let journaled = held
+                .events
+                .iter()
+                .find(|event| event.kind.as_u16() == 30177)
+                .map(|event| event.id.to_hex());
+            let current = crate::management::configuration::current_head(client, actor)
+                .await?
+                .id
+                .to_hex();
+            crate::adopt_identity::may_retry_install(journaled.as_deref(), &current, true, false)?;
+        }
         return resume(context, client, args, &held.request).await;
     }
     let runtime = config
@@ -233,28 +252,39 @@ pub async fn install(
         crate::authorize_project(client, &args.project, &client.keys().public_key().to_hex())
             .await?;
     let prompt = CANONICAL_ROLE_PROMPT.to_string();
-    let public = ManagedAgentEventContent {
-        name: args.name.clone(),
-        persona_id: None,
-        system_prompt: Some(prompt.clone()),
-        model: Some(args.model.clone()),
-        provider: None,
-        persona_source_version: None,
-        parallelism: args.parallelism,
-        respond_to: args.respond_to,
-        respond_to_allowlist: args.respond_to_allowlist.clone(),
-        home_role: Some(args.role.clone()),
-        project_digest: public_project
-            .then(|| beekeeper_core::project_agent_association::project_agent_digest(&args.project))
-            .flatten(),
-        project_withdrawn: !public_project,
+    let public = if let Some(actor) = &args.existing_actor {
+        // Last, after every check that could still refuse: a refused migration leaves
+        // the definition as it was.
+        crate::adopt_identity::pin_model(context, client, actor, &args.model, args.operation_id)
+            .await?;
+        let head = crate::management::configuration::current_head(client, actor).await?;
+        serde_json::from_str::<ManagedAgentEventContent>(&head.content).map_err(fail)?
+    } else {
+        ManagedAgentEventContent {
+            name: args.name.clone(),
+            persona_id: None,
+            system_prompt: Some(prompt.clone()),
+            model: Some(args.model.clone()),
+            provider: None,
+            persona_source_version: None,
+            parallelism: args.parallelism,
+            respond_to: args.respond_to,
+            respond_to_allowlist: args.respond_to_allowlist.clone(),
+            home_role: Some(args.role.clone()),
+            project_digest: public_project
+                .then(|| {
+                    beekeeper_core::project_agent_association::project_agent_digest(&args.project)
+                })
+                .flatten(),
+            project_withdrawn: !public_project,
+        }
     };
     let environment: std::collections::BTreeMap<_, _> =
         persona.runtime_env_vars.into_iter().collect();
     crate::create(&CreateRequest {
         operation_id:args.operation_id,channel:args.channel,display_name:args.name.clone(),system_prompt:prompt,
         cwd,project:Some(args.project.clone()),model:Some(args.model.clone()),provider_instance:Some(args.provider_instance.clone()),
-        wait_secs:1,activate:false,public_definition:Some(public),private_config:Some(PrivateConfiguration {record:json!({
+        wait_secs:1,activate:false,agent_pubkey:args.existing_actor.clone(),public_definition:Some(public),private_config:Some(PrivateConfiguration {record:json!({
             "role_material":material,"runtime":runtime.runtime,"provider_instance":args.provider_instance,"model":args.model,
             "persona_team_dir":material.pack_dir,"persona_name_in_team":args.role,"effective_env":environment,
             "effective_parallelism":args.parallelism

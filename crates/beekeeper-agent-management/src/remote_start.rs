@@ -190,6 +190,7 @@ pub async fn start_remote(
             result.clone(),
             args.channel,
             &args.provider_authority,
+            crate::lifecycle::Discovery::Membership,
             client,
         )
         .await;
@@ -215,8 +216,14 @@ pub async fn start_remote(
     };
     operation.result = Some(result.clone());
     local::save(&path, &operation)?;
-    crate::lifecycle::observe_created_start(result, args.channel, &args.provider_authority, client)
-        .await
+    crate::lifecycle::observe_created_start(
+        result,
+        args.channel,
+        &args.provider_authority,
+        crate::lifecycle::Discovery::Membership,
+        client,
+    )
+    .await
 }
 #[path = "remote_start_observe.rs"]
 mod observe;
