@@ -196,7 +196,7 @@ scripts/              # Dev tooling
 cp .env.example .env      # configure local environment
 just setup                # install deps, run migrations
 just relay                # start relay at ws://localhost:3000
-just ci                   # run before any PR
+just ci                   # full repository gate; choose the scoped gate below when applicable
 ```
 
 See CONTRIBUTING.md for full setup details and dependency requirements.
@@ -235,10 +235,24 @@ Brian sets direction; you implement. Optimize for velocity within that.
   several of the best findings in this project came from exactly that kind of
   poking. Prefer disclosing an unpleasant truth over presenting a comfortable
   guess.
-- **Multi-agent orchestration is pre-authorized.** The pattern that works:
-  written spec → parallel build lanes with **strict file ownership** → full
-  gate → adversarial review against named constraints → a single finalizer
-  that commits. Lanes never commit; only the finalizer does.
+- **Carry authorized work through to a usable result.** Existing approval covers
+  routine implementation, validation and the agreed rollout. Continue through
+  those steps without new approval checkpoints. Ask only when authority, spending
+  limits, destructive scope or direction actually changes, or OS consent is needed.
+- **Scale orchestration to the work.** Multi-agent work is pre-authorized when
+  useful. Use a brief contract for substantial changes, strict file ownership for
+  parallel lanes, the relevant gate, and a single finalizer. Lanes do not commit.
+  Independent adversarial review is required for changes to identity, credentials,
+  authority, recovery or destructive behavior; routine documentation, formatting
+  and small mechanical fixes do not need a separate review agent.
+- **Keep review and validation bounded.** Review corrections against the changed
+  behavior and the named finding. Reuse evidence for unchanged source and binaries;
+  rerun checks when new bytes, failures or unresolved risks justify them. Additional
+  findings block only when they threaten the agreed outcome or its safety; record
+  other work as follow-ups. Do not silently retry a failing run or call it green.
+- **Keep the user outcome on the critical path.** Fix the concrete blocker and
+  complete the agreed workflow. New frameworks, cleanup and unrelated findings
+  stay separate unless they are necessary to that workflow.
 - **Draft before sending.** Anything addressed to Andy or anyone outside this
   machine gets written, shown to Brian, and sent only on his word.
 - **A completion report is not evidence.** Cite `file:line`, or the run that
@@ -247,9 +261,23 @@ Brian sets direction; you implement. Optimize for velocity within that.
 
 ## Quality Gates
 
-Run `just ci` before every PR — it runs repository-wide formatting, lint,
-and static checks; Rust, Tauri, desktop, and mobile tests; and desktop and web
-builds. Clippy passing does not mean fmt passes; run both.
+Choose validation by the affected product and behavior; see [TESTING.md](TESTING.md).
+
+- **Host-only work:** `just host-check --base <branch-point>` replaces the full
+  local repository gate, including before a PR. Its scope guard must pass. Use
+  focused tests while iterating and exercise the affected workflow when behavior
+  changes. Use `just host-acceptance` when its scenarios cover that change.
+- **Other product work:** run the affected package's documented checks and relevant
+  integration or UI workflow. Documentation-only changes need link, syntax and
+  applicable repository checks, not product builds or runtime suites.
+- **Cross-product or shared-contract work:** run `just ci` when the change reaches
+  beyond a scoped gate's coverage; add the affected surfaces' checks as needed.
+
+Clippy passing does not mean fmt passes; run both for Rust changes. A prior gate
+covers only the bytes and environment it actually checked. After a small correction,
+rerun the relevant checks; repeat a broad gate only when the delta warrants it.
+The normal pre-push floor and remote CI still run: this guidance does not bypass
+hooks or change which pipeline admits a commit to main.
 
 Run `just test` for integration tests if you touched `beekeeper-relay`,
 `beekeeper-db`, or `beekeeper-auth` — these require a running Postgres and Redis.
@@ -261,8 +289,9 @@ Auto-fixable issues are fixed and re-staged; unfixable lint issues block the
 commit. **Pre-push hooks** run the repository-wide differential file-size gate,
 clippy (workspace + Tauri), desktop TypeScript typechecking (`tsc --noEmit`),
 and fast unit tests in parallel (Rust, desktop JS, Tauri Rust, mobile Flutter)
-— no overlap with pre-commit. Builds are CI-only. Run `just fix-all` to auto-fix
-all formatting in one shot. Run `just ci` for the full local gate. Run `just
+— no overlap with pre-commit. Run `just fix-all` to auto-fix
+all formatting in one shot. Choose the local gate by scope as above; use `just ci`
+when the full repository gate is required. Run `just
 hooks` to re-install hooks after env changes. Before agents run Git or hooks,
 activate the repo's Hermit environment (`. ./bin/activate-hermit`); do not
 rewrite hook commands to compensate for an unconfigured shell `PATH`. **Push

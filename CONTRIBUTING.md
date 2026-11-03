@@ -248,7 +248,8 @@ See `TESTING.md` for the full multi-agent E2E testing guide.
 
 ### CI Gate
 
-Before opening a PR, run the full CI gate locally:
+Before opening a PR, run the gate that fits the change (`AGENTS.md` § Quality Gates).
+Host-only work uses `just host-check --base <branch-point>`. The full repository gate is:
 
 ```bash
 just ci
@@ -285,8 +286,8 @@ trade: a class of failure — a change that compiles and passes its own crate's
 tests but breaks a crate downstream of it, or an e2e path — now reaches CI
 instead of the pushing machine. It buys a push that finishes in about two
 minutes instead of one that times out, which is what stopped everyone from
-passing `--no-verify` and running no gate at all. Run `just ci` yourself before
-you open a PR; the floor does not replace it.
+passing `--no-verify` and running no gate at all. Run the gate that fits your
+change before you open a PR; the floor does not replace it.
 
 Every push prints one line saying what ran, what it skipped and why, and what
 it cost against a 120-second budget:
@@ -395,7 +396,8 @@ required. The scope (in parentheses) is optional but encouraged.
    config variables are documented. Update `README.md`, `AGENTS.md`, or
    `VISION.md` as appropriate.
 
-4. **CI passing** — `just ci` passes locally before you push.
+4. **CI passing** — the gate that fits the change passes locally before you push,
+   and remote CI passes.
 
 5. **Clear description** — the PR description explains:
    - What problem this solves (or what feature it adds)
