@@ -40,6 +40,7 @@ pub mod agents_checkout;
 pub mod agents_plan_blob;
 mod authority_stop;
 mod branch_authority;
+pub mod census;
 pub mod execution_scope;
 mod execution_scope_git;
 pub mod execution_scope_host;
@@ -290,7 +291,22 @@ const REPLAY_GRACE_SECS: u64 = 600;
 /// [`Config::command_horizon`]. A first send must be within the relay's own
 /// 900 s of its timestamp, so this covers every command the relay can newly accept.
 /// Dedupe is the command ledger, as for any replay.
-const LIFECYCLE_REPLAY_OVERLAP_SECS: u64 = 960;
+pub(crate) const LIFECYCLE_REPLAY_OVERLAP_SECS: u64 = 960;
+
+/// A channel's replay floor: its watermark, or before the membership that let
+/// it in, and never above a conversation route's own floor.
+pub(crate) fn replay_floor(
+    watermark: Option<u64>,
+    membership_created_at: Option<u64>,
+    conversation: Option<u64>,
+) -> Option<u64> {
+    let ordinary = watermark
+        .or_else(|| membership_created_at.map(|floor| floor.saturating_sub(REPLAY_GRACE_SECS)));
+    match (ordinary, conversation) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
 /// How long a freshly subscribed channel holds arriving turn commands so they
 /// can be delivered in the order they were sent.
 ///
@@ -1916,14 +1932,11 @@ impl Provider {
         // and re-delivered commands are no-ops under the consumed-command
         // dedupe (`AlreadyConsumed`). Commands older than the grace on a
         // watermark-less channel remain lost by design.
-        let ordinary = self
-            .state
-            .watermark(channel_id)
-            .or_else(|| membership_created_at.map(|floor| floor.saturating_sub(REPLAY_GRACE_SECS)));
-        match (ordinary, self.conversation_replay_since(channel_id)) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        replay_floor(
+            self.state.watermark(channel_id),
+            membership_created_at,
+            self.conversation_replay_since(channel_id),
+        )
     }
 
     /// Route one relay event.

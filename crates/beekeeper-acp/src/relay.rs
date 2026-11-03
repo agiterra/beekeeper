@@ -63,7 +63,7 @@ const LATEST_EPHEMERAL_HANDOFF_TIMEOUT: Duration = Duration::from_secs(5);
 /// drop after a long healthy run retries at the short end of the ladder again.
 const STABLE_CONNECTION_SECS: u64 = 60;
 /// Seconds subtracted from `since` on resubscribe to tolerate clock skew.
-const SINCE_SKEW_SECS: u64 = 5;
+pub const SINCE_SKEW_SECS: u64 = 5;
 /// Timeout for the NIP-42 auth handshake steps.
 ///
 /// Raised from 5s to 20s (≈2 RTTs at the observed 10s max round-trip on degraded
@@ -432,6 +432,25 @@ async fn read_json_body(what: &str, resp: reqwest::Response) -> Result<Value, Re
 }
 
 impl RestClient {
+    /// A client for one-shot reads, with no relay connection behind it.
+    pub fn for_read(
+        relay_url: &str,
+        keys: Keys,
+        auth_tag_json: Option<String>,
+    ) -> Result<Self, RelayError> {
+        Ok(Self {
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .map_err(|e| RelayError::Http(format!("failed to build HTTP client: {e}")))?,
+            base_url: relay_ws_to_http(relay_url),
+            keys,
+            auth_tag_json,
+            auth_tag_source: None,
+        })
+    }
+
     /// The `x-auth-tag` value for the request about to be sent.
     pub fn auth_tag_header(&self) -> Option<String> {
         match &self.auth_tag_source {
@@ -621,6 +640,25 @@ impl RestClient {
             .map_err(|e| RelayError::Http(format!("filter serialize error: {e}")))?;
         let resp = self.bridge_post("/query", &body_bytes).await?;
         read_json_body("POST /query", resp).await
+    }
+
+    /// One page of a filter, past an optional `(created_at, id)` keyset cursor,
+    /// which crosses events sharing a second where `until` alone cannot.
+    pub async fn query_page(
+        &self,
+        mut filter: Value,
+        cursor: Option<(u64, String)>,
+    ) -> Result<Vec<Value>, RelayError> {
+        if let Some((until, before_id)) = cursor {
+            filter["until"] = json!(until);
+            filter["before_id"] = json!(before_id);
+        }
+        let body = serde_json::to_vec(&[filter])?;
+        let resp = self.bridge_post("/query", &body).await?;
+        match read_json_body("POST /query", resp).await? {
+            Value::Array(rows) => Ok(rows),
+            _ => Err(RelayError::Http("expected a JSON array from /query".into())),
+        }
     }
 
     /// Resolve one signed event by its exact id and expected kind.

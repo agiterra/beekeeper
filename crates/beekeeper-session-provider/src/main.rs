@@ -15,5 +15,9 @@ async fn async_main() -> anyhow::Result<()> {
     // builds a TLS client; rustls deliberately panics when both are linked and
     // no process-level provider has been chosen.
     let _ = rustls::crypto::ring::default_provider().install_default();
+    // Before `run()`: a start discovers models, which spawns adapters.
+    if std::env::args().nth(1).as_deref() == Some("census") {
+        std::process::exit(beekeeper_session_provider::census::run().await);
+    }
     beekeeper_session_provider::run().await
 }

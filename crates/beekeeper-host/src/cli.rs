@@ -45,6 +45,14 @@ enum Command {
     Run,
     /// Print what this host would do, and exit. Reads no secrets aloud.
     Check,
+    /// Read which stored lifecycle commands a start of this bundle's provider could
+    /// act on. Reads only, beside any running Host. Prints one JSON document.
+    /// Exit 0 nothing would act, 10 read the list, 20 incomplete, 30 refused.
+    Census {
+        /// Required. Refuse unless the commissioned provider is this public key.
+        #[arg(long)]
+        expect_provider: Option<String>,
+    },
     /// Ask the running host for its status, as JSON.
     Status,
     /// Print a bounded tail of the supervised provider's log.
@@ -106,6 +114,14 @@ fn parse_instance(value: &str) -> Result<Instance, String> {
 
 pub fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Command::Census { .. })) && cli.instance.is_none() {
+        // A real-looking answer about the wrong instance is worse than none.
+        println!(
+            "{}",
+            serde_json::json!({"schema":"host-start-census/v1","exit":30,"reason":"INSTANCE_NOT_EXPLICIT"})
+        );
+        return std::process::ExitCode::from(30);
+    }
     init_tracing();
 
     let instance = match cli.instance {
@@ -259,6 +275,14 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
         _ => {}
     }
 
+    if let Command::Census { expect_provider } = &command {
+        std::process::exit(crate::census::run(
+            &home,
+            instance,
+            expect_provider.as_deref(),
+        ));
+    }
+
     let host_dir = layout::host_dir(&home, instance);
     create_dir_all_restricted(&host_dir)?;
 
@@ -382,6 +406,7 @@ fn client_request(command: &Command) -> Option<Request> {
         Command::Restart => Some(Request::Restart),
         Command::Bind => Some(Request::Bind),
         Command::Run
+        | Command::Census { .. }
         | Command::Check
         | Command::Install { .. }
         | Command::Uninstall { .. }

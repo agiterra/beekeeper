@@ -87,10 +87,23 @@ pub fn spawn_provider_child(
         .try_clone()
         .map_err(|error| format!("failed to clone the provider log handle: {error}"))?;
 
-    let mut command = std::process::Command::new(binary);
+    let mut command = provider_command(binary, config, record, nsec)?;
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::from(stdout));
     command.stderr(std::process::Stdio::from(stderr));
+    command
+        .spawn()
+        .map_err(|error| format!("failed to spawn {PROVIDER_BINARY}: {error}"))
+}
+
+/// The provider's command line and environment, for a start or a one-shot read.
+pub(crate) fn provider_command(
+    binary: &Path,
+    config: &HostConfig,
+    record: &CodingSessionProviderRecord,
+    nsec: &str,
+) -> Result<std::process::Command, String> {
+    let mut command = std::process::Command::new(binary);
     for key in INHERITED_KEYS_TO_CLEAR {
         command.env_remove(key);
     }
@@ -161,9 +174,7 @@ pub fn spawn_provider_child(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    command
-        .spawn()
-        .map_err(|error| format!("failed to spawn {PROVIDER_BINARY}: {error}"))
+    Ok(command)
 }
 
 #[cfg(test)]

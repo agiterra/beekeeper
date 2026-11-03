@@ -18,6 +18,7 @@ use crate::{publish::Priority, Provider};
 mod admission;
 #[path = "conversation_backfill.rs"]
 pub(crate) mod backfill;
+pub(crate) use backfill::conversation_floor;
 #[path = "conversation_definition.rs"]
 mod definition;
 

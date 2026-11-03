@@ -1694,12 +1694,15 @@ impl StateStore {
 }
 
 fn load_snapshot(path: &Path) -> io::Result<Snapshot> {
-    let body = match fs::read(path) {
-        Ok(body) => body,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Snapshot::default()),
-        Err(error) => return Err(error),
-    };
-    match serde_json::from_slice::<Snapshot>(&body) {
+    match fs::read(path) {
+        Ok(body) => parse_snapshot(&body),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Snapshot::default()),
+        Err(error) => Err(error),
+    }
+}
+
+fn parse_snapshot(body: &[u8]) -> io::Result<Snapshot> {
+    match serde_json::from_slice::<Snapshot>(body) {
         Ok(snapshot) if snapshot.version == STATE_VERSION => Ok(snapshot),
         Ok(snapshot) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -1713,6 +1716,88 @@ fn load_snapshot(path: &Path) -> io::Result<Snapshot> {
             format!("state.json is unreadable: {error}"),
         )),
     }
+}
+
+/// The part of `state.json` the start census classifies with. Read by the
+/// provider's own parser, from bytes: no directory is created, pruned or locked.
+#[derive(Debug, Default)]
+pub(crate) struct CensusState {
+    pub watermarks: BTreeMap<Uuid, u64>,
+    /// Every channel the state names, whether or not this provider is still in it.
+    pub channels: std::collections::BTreeSet<Uuid>,
+    /// Channels holding a record that is not closed.
+    pub open_channels: std::collections::BTreeSet<Uuid>,
+    /// Terminal dispositions by command id, with any start reservation they hold.
+    pub dispositions: BTreeMap<String, Option<HeldStart>>,
+}
+
+/// A start reservation in a terminal disposition. A start acts on this from state,
+/// with no delivery, whatever the relay still shows.
+#[derive(Debug, Clone)]
+pub(crate) struct HeldStart {
+    pub phase: LifecycleStartPhase,
+    pub fingerprint: String,
+    pub channel: Uuid,
+    pub actor: Option<String>,
+    pub initial_turn: bool,
+}
+
+pub(crate) fn census_state(body: Option<&[u8]>) -> io::Result<CensusState> {
+    let Some(body) = body else {
+        return Ok(CensusState::default());
+    };
+    let snapshot = parse_snapshot(body)?;
+    let dispositions: BTreeMap<String, Option<HeldStart>> = snapshot
+        .terminal_dispositions
+        .iter()
+        .map(|(command, held)| {
+            let intent = held.lifecycle_start.as_ref().map(|intent| HeldStart {
+                phase: intent.phase,
+                fingerprint: intent.fingerprint.clone(),
+                channel: intent.channel,
+                actor: intent.actor.clone(),
+                initial_turn: intent.initial_turn,
+            });
+            (command.clone(), intent)
+        })
+        .collect();
+    let held_channels: Vec<Uuid> = dispositions
+        .values()
+        .flatten()
+        .map(|held| held.channel)
+        .collect();
+    let channels = snapshot
+        .watermarks
+        .keys()
+        .copied()
+        .chain(snapshot.sessions.values().map(|record| record.channel_id))
+        .chain(held_channels.iter().copied())
+        .collect();
+    let open_channels = snapshot
+        .sessions
+        .values()
+        .filter(|record| !record.closed)
+        .map(|record| record.channel_id)
+        .chain(held_channels.iter().copied())
+        .collect();
+    Ok(CensusState {
+        watermarks: snapshot.watermarks,
+        channels,
+        open_channels,
+        dispositions,
+    })
+}
+
+/// A ledger's ids as [`StateStore::load_ledger`] would keep them at `now`, so an
+/// entry a start would prune counts as absent. Reads bytes and writes nothing.
+pub(crate) fn census_ledger(body: Option<&[u8]>, retention_secs: u64, now: u64) -> HashSet<String> {
+    let cutoff = now.saturating_sub(retention_secs);
+    String::from_utf8_lossy(body.unwrap_or_default())
+        .lines()
+        .filter_map(|line| serde_json::from_str::<CommandRecord>(line).ok())
+        .filter(|record| record.at >= cutoff)
+        .map(|record| record.command_id)
+        .collect()
 }
 
 /// The `n` in an attempt id `{commandId}#{n}`; zero for an id without one.

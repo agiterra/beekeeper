@@ -9,6 +9,7 @@ reuses: its own relay, Host and generated keys, a scripted runtime, no model spe
 Usage: scripts/host-manage-recovery-check.py [--only R1,R2] [--evidence DIR]
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -518,7 +519,8 @@ class Recovery(base.Harness):
             rows = self.read([44224], f"n5-{uuid.uuid4().hex[:6]}.json", channel=made["channel"], extra={"authors": [self.provider]})
             return {row["id"] for row in rows}
         before = answers()
-        floor = self.floor(made["channel"])
+        # A channel can have no watermark yet: a start then reads from 600 s before now.
+        floor = self.floor(made["channel"]) or int(time.time()) - 600
         commands = self.read([44221], f"n5-c-{uuid.uuid4().hex[:6]}.json", channel=made["channel"], extra={"authors": [self.owner]})
         self.check("N5: every command is inside the read a restart makes", commands and all(c["created_at"] >= floor - 960 for c in commands), [floor, [c["created_at"] for c in commands]])
         self.provider_down()
@@ -528,6 +530,139 @@ class Recovery(base.Harness):
         sessions = json.loads((self.state_dir() / "state.json").read_text())["sessions"].values()
         open_rows = [s for s in sessions if s.get("actor") == made["actor"] and not s.get("closed")]
         self.check("N5: one open execution", len(open_rows) == 1, len(open_rows))
+
+    # ── The start census ──
+    def census(self, host=None, keep_override=False, extra=(), env=None):
+        # This fixture's host.json names a provider binary, which the census refuses.
+        # Lifted for the call: the running Host read it long ago.
+        config = self.home / ".local/state/buzz/host/host.json"
+        original = config.read_text()
+        if not keep_override:
+            held = json.loads(original)
+            held.pop("providerCommand", None)
+            config.write_text(json.dumps(held))
+        try:
+            result = subprocess.run([str(host or base.HOST), "census", "--instance", "production", "--expect-provider", self.provider, *extra], env=dict(self.env, **(env or {})), cwd=self.work, capture_output=True, text=True, timeout=300)
+        finally:
+            config.write_text(original)
+        (self.work / "evidence").mkdir(exist_ok=True)
+        (self.work / "evidence" / f"census-{uuid.uuid4().hex[:6]}.json").write_text(result.stdout)
+        return result.returncode, json.loads(result.stdout), result.stdout
+
+    def state_digest(self):
+        rows = {}
+        for path in sorted(self.state_dir().rglob("*")):
+            if path.is_file() and not path.is_symlink():
+                rows[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        return rows
+
+    def seed_command(self, made, name, authority=None, turn=None):
+        command = str(uuid.uuid4())
+        action = {"type": "session.create", "projectRef": made["project"], "repoRef": None, "sessionRef": None, "providerInstanceRef": "acme-primary", "providerAuthorityPubkey": authority or self.provider, "model": made["model"], "title": "CENSUS TITLE SENTINEL", "initialTurn": turn}
+        content = json.dumps({"schema": "buzz-coding-session-lifecycle-command/v1", "commandId": command, "action": action})
+        try:
+            self.publish_as(self.owner_key, {"kind": 44221, "tags": [["h", made["channel"]], ["csl-v", "csl1-1"], ["csl-command", command]], "content": content}, f"{name}-{uuid.uuid4().hex[:4]}")
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f"seed refused: {str(error.stderr)[-300:]} {str(error.stdout)[-300:]}") from None
+        return command
+
+    def seed_ties(self, made, count):
+        """Publish `count` commands for another provider, all stamped one second."""
+        script = """
+import {finalizeEvent, nip98Client, relayHttpUrl, loadKey} from './_common.mjs';
+const key = loadKey(); const [channel, project, count] = process.argv.slice(1);
+const at = Math.floor(Date.now() / 1000) - 5; const post = nip98Client(key, relayHttpUrl());
+for (let n = 0; n < Number(count); n++) {
+  const command = crypto.randomUUID();
+  const action = {type: 'session.create', projectRef: project, repoRef: null, sessionRef: null, providerInstanceRef: 'acme-primary', providerAuthorityPubkey: 'cd'.repeat(32), model: 'm', title: 't', initialTurn: null};
+  const event = finalizeEvent({kind: 44221, created_at: at, tags: [['h', channel], ['csl-v', 'csl1-1'], ['csl-command', command]], content: JSON.stringify({schema: 'buzz-coding-session-lifecycle-command/v1', commandId: command, action})}, key);
+  const reply = await post('/events', event);
+  if (reply.status !== 200 || reply.body.accepted !== true) throw new Error(JSON.stringify(reply));
+}
+"""
+        env = dict(self.env, RELAY_URL=self.relay_http, FOREIGN_CLIENT_OUT=str(self.work / "records"), FOREIGN_CLIENT_KEY=self.owner_key)
+        base.out("node", "--input-type=module", "-e", script, made["channel"], made["project"], str(count), env=env, cwd=base.FOREIGN)
+
+    def c1_c4_census(self):
+        made = self.started("C1")
+        other = self.started("C1 other")
+        stopped_first = self.created_receipts(made["channel"])
+        code, refused, text = self.census(keep_override=True)
+        self.check("C1: a provider override is refused before any query", code == 30 and refused["reason"] == "CENSUS_PROVIDER_OVERRIDE", text[:300])
+        for name in ("BEEKEEPER_CSP_COMMAND_HORIZON_SECS", "BUZZ_CSP_COMMAND_HORIZON_SECS"):
+            code, refused, text = self.census(env={name: "60"})
+            self.check(f"C1: a shell's {name} is refused, not obeyed or scrubbed", code == 30 and refused["reason"] == "CENSUS_HORIZON_OVERRIDE", text[:300])
+        bare = subprocess.run([str(base.HOST), "census", "--expect-provider", self.provider], env=dict(self.env), cwd=self.work, capture_output=True, text=True, timeout=60)
+        self.check("C1: an instance that is not explicit is refused", bare.returncode == 30 and json.loads(bare.stdout)["reason"] == "INSTANCE_NOT_EXPLICIT", bare.stdout[:200])
+        no_provider = subprocess.run([str(base.HOST), "census", "--instance", "production"], env=dict(self.env), cwd=self.work, capture_output=True, text=True, timeout=60)
+        self.check("C1: and so is a run naming no provider", no_provider.returncode == 30 and json.loads(no_provider.stdout)["reason"] == "EXPECT_PROVIDER_REQUIRED", no_provider.stdout[:200])
+        code, clean, text = self.census()
+        self.check("C1: with every command answered, a live Host's census finds nothing to act on", code == 0 and clean["exit"] == 0 and clean["snapshotStable"] is True, text[:400])
+        self.check("C1: consumed commands are read and named so", clean["counts"].get("consumed", 0) >= 2, clean.get("counts"))
+        self.check("C1: it names its instance, both builds, and its scope", clean["instance"] and clean["hostCommit"] == clean["commit"] and "44221" in clean["scope"] and clean["ordinaryTurnReplay"] == "notRead", {k: clean.get(k) for k in ("instance", "hostCommit", "commit", "scope", "ordinaryTurnReplay")})
+        floors = {row["channel"]: row for row in clean["channels"]}
+        self.check("C1: the read is the start's: 965 s behind the floor", floors[made["channel"]]["readSince"] == floors[made["channel"]]["floor"] - 965, floors[made["channel"]])
+
+        self.provider_down()
+        created = self.seed_command(made, "c1-create")
+        turned = self.seed_command(made, "c1-turn", turn="CENSUS_TURN_SENTINEL")
+        foreign = self.seed_command(made, "c1-foreign", authority="cd" * 32)
+        before = self.state_digest()
+        events = len(self.read([44221, 44223, 44224], f"c1-e-{uuid.uuid4().hex[:6]}.json", channel=made["channel"]))
+        code, seen, text = self.census()
+        rows = {row["commandId"]: row for row in seen["commands"]}
+        self.check("C1: unanswered commands give exit 10", code == 10 and seen["exit"] == 10, text[:300])
+        self.check("C1: each is classed", rows[created]["class"] == "candidate" and rows[turned]["class"] == "candidate" and rows[foreign]["class"] == "otherProvider", {k: rows[k]["class"] for k in (created, turned, foreign)})
+        self.check("C1: an initial turn is named by a flag, and neither its text nor a title is printed", rows[turned]["initialTurn"] is True and "SENTINEL" not in text and '"content"' not in text and '"sig"' not in text, "")
+        self.check("C1: no key reaches the document", not any(secret in text for secret in self.secrets) and "nsec1" not in text, "")
+        self.check("C1: the state directory is byte for byte the same", self.state_digest() == before, sorted(set(self.state_digest().items()) ^ set(before.items()))[:4])
+        self.check("C1: no event was published", len(self.read([44221, 44223, 44224], f"c1-e-{uuid.uuid4().hex[:6]}.json", channel=made["channel"])) == events, "")
+        self.check("C1: it starts no provider", self.inventory()["host"]["provider"]["state"] == "notSupervised", "")
+
+        # A channel the provider has left, with a recent floor: not clean.
+        self.publish_as(self.owner_key, {"kind": 9001, "tags": [["h", other["channel"]], ["p", self.provider]], "content": ""}, f"c1-remove-{uuid.uuid4().hex[:4]}")
+        self.wait_for("the provider's removal", lambda: self.census()[0] == 20, 30)
+        code, seen, text = self.census()
+        unknown = [row for row in seen["channels"] if row["result"] == "unknown"]
+        self.check("C1: a channel it cannot read makes the result incomplete", code == 20 and unknown and unknown[0]["channel"] == other["channel"], text[:300])
+        self.publish_as(self.owner_key, {"kind": 9000, "tags": [["h", other["channel"]], ["p", self.provider]], "content": ""}, f"c1-readd-{uuid.uuid4().hex[:4]}")
+        self.wait_for("the provider's return", lambda: self.census()[0] == 10, 30)
+
+        # C4: what the census named is what a start answers.
+        self.provider_up()
+        def answered(command):
+            rows = self.read([44224], f"c4-{uuid.uuid4().hex[:6]}.json", channel=made["channel"], extra={"authors": [self.provider]})
+            return any(json.loads(row["content"]).get("commandId") == command for row in rows)
+        self.wait_for("the start to answer what the census named", lambda: answered(created) and answered(turned), 60)
+        self.check("C4: every candidate is answered by the start", answered(created) and answered(turned), "")
+        self.check("C4: the other provider's is not", not answered(foreign), "")
+        self.check("C4: what was consumed is not run again", len(self.created_receipts(made["channel"])) >= len(stopped_first) and sum(1 for r in self.created_receipts(made["channel"]) if r["commandId"] in {c["commandId"] for c in stopped_first}) == len(stopped_first), "")
+
+        # C2: an isolated live Host, the census run from a staged copy. Not the real Dev Host.
+        staged = self.work / "staged-bundle"
+        staged.mkdir(exist_ok=True)
+        for binary in (base.HOST, base.PROVIDER):
+            shutil.copy(binary, staged / binary.name)
+        host_pid = self.host.pid
+        provider_pid = self.inventory()["host"]["provider"]["pid"]
+        lock = (self.state_dir() / "provider.lock").read_bytes()
+        socket_paths = [str(p) for p in self.home.rglob("*.sock")]
+        code, seen, text = self.census(staged / base.HOST.name)
+        self.check("C2: a staged copy reads beside the live Host", code in (0, 10), text[:400])
+        self.check("C2: the Host and provider are the same processes", self.inventory()["host"]["hostPid"] == host_pid and self.inventory()["host"]["provider"]["pid"] == provider_pid, "")
+        self.check("C2: its lock did not change hands", (self.state_dir() / "provider.lock").read_bytes() == lock, "")
+        self.check("C2: it left no second socket", [str(p) for p in self.home.rglob("*.sock")] == socket_paths, "")
+
+        # C5: more than a page in one second, through the real relay's /query.
+        ties = self.started("C5")
+        self.provider_down()
+        self.seed_ties(ties, 501)
+        code, seen, text = self.census()
+        row = next(r for r in seen["channels"] if r["channel"] == ties["channel"])
+        foreign = [r for r in seen["commands"] if r["channel"] == ties["channel"] and r["class"] == "otherProvider"]
+        self.check("C5: 501 commands in one second are all read through the real relay", row["result"] == "complete" and len(foreign) == 501, {"row": row, "foreign": len(foreign), "exit": code})
+        self.check("C5: 501 distinct events", len({r["eventId"] for r in foreign}) == 501, "")
+        self.provider_up()
 
     def n3_effort(self):
         made = self.fresh("N3")
@@ -1094,6 +1229,7 @@ SCENARIOS = {
     "N2": lambda h: h.n2_old_command_after_floor(),
     "N4": lambda h: h.n4_own_command_unanswered(),
     "N5": lambda h: h.n5_restart_rereads_nothing(),
+    "C": lambda h: h.c1_c4_census(),
     "N3": lambda h: h.n3_effort(),
 }
 
@@ -1111,6 +1247,7 @@ def main():
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("overall limit")))
     signal.alarm(OVERALL_LIMIT_SECS)
     print(f"work: {harness.work}", flush=True)
+    print(f"binaries: {base.BIN_DIR or 'cargo output'}", flush=True)
     names = args.only.split(",") if args.only else list(SCENARIOS)
     if args.real_expiry:
         names.append("real-expiry")

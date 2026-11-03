@@ -43,6 +43,17 @@ fn scoped(event: &Event, channel: Uuid, actor: &str) -> bool {
                 && tag.as_slice().get(1).is_some_and(|v| v == actor)
         })
 }
+/// The lowest replay floor any conversation route holds for this channel.
+pub(crate) fn conversation_floor(routes: &ConversationRoutes, channel: Uuid) -> Option<u64> {
+    routes
+        .routes
+        .iter()
+        .filter(|route| route.channel_id == channel)
+        .filter_map(|route| route.replay_floor_unix)
+        .map(|floor| floor.saturating_sub(crate::REPLAY_GRACE_SECS))
+        .min()
+}
+
 impl Provider {
     fn route_query_since(&self, route: &ConversationRoute) -> anyhow::Result<u64> {
         Ok(route
@@ -53,13 +64,7 @@ impl Provider {
     pub(crate) fn conversation_replay_since(&self, channel: Uuid) -> Option<u64> {
         let routes: ConversationRoutes =
             load(&self.config.state_dir.join("conversation-routes.json")).ok()?;
-        routes
-            .routes
-            .iter()
-            .filter(|route| route.channel_id == channel)
-            .filter(|route| route.replay_floor_unix.is_some())
-            .filter_map(|route| self.route_query_since(route).ok())
-            .min()
+        conversation_floor(&routes, channel)
     }
     pub(crate) fn start_conversation_backfill(&mut self) -> anyhow::Result<()> {
         self.start_conversation_backfill_at(crate::now_secs())
