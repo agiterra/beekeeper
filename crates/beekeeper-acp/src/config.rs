@@ -539,6 +539,21 @@ pub struct ChannelFilter {
     pub kinds: Option<Vec<u32>>,
     /// Whether to include `#p` tag filter for agent pubkey.
     pub require_mention: bool,
+    /// Kinds read from further back than the others. See [`KindOverlap`].
+    pub overlap: Option<KindOverlap>,
+}
+
+/// Kinds a subscription reads from `secs` before its floor, as their own REQ filter.
+///
+/// A `since` filters live events as well as stored ones, so an event signed before
+/// the floor moved and sent after it is stored and never delivered. For kinds whose
+/// reader dedupes by its own durable id, this closes that without touching the event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KindOverlap {
+    /// The kinds, a subset of the subscription's.
+    pub kinds: Vec<u32>,
+    /// How far before the floor to read them.
+    pub secs: u64,
 }
 
 #[derive(Debug)]
@@ -1401,6 +1416,7 @@ pub fn resolve_channel_filters(
                     ChannelFilter {
                         kinds: Some(kinds.clone()),
                         require_mention,
+                        overlap: None,
                     },
                 );
             }
@@ -1412,6 +1428,7 @@ pub fn resolve_channel_filters(
                     ChannelFilter {
                         kinds: config.kinds_override.clone(),
                         require_mention: false,
+                        overlap: None,
                     },
                 );
             }
@@ -1447,6 +1464,7 @@ pub fn resolve_channel_filters(
                         ChannelFilter {
                             kinds: merged_kinds,
                             require_mention,
+                            overlap: None,
                         },
                     );
                 }
@@ -1500,10 +1518,12 @@ pub fn resolve_dynamic_channel_filter(
                 ]
             })),
             require_mention: !config.no_mention_filter,
+            overlap: None,
         }),
         SubscribeMode::All => Some(ChannelFilter {
             kinds: config.kinds_override.clone(),
             require_mention: false,
+            overlap: None,
         }),
         SubscribeMode::Config => {
             // Same merge logic as resolve_channel_filters() Config branch:
@@ -1541,6 +1561,7 @@ pub fn resolve_dynamic_channel_filter(
             Some(ChannelFilter {
                 kinds: merged_kinds,
                 require_mention,
+                overlap: None,
             })
         }
     }

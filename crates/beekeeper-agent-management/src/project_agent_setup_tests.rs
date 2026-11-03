@@ -109,6 +109,7 @@ fn closing_an_attempt_traces_old_to_new_and_holds_the_new_id_unsent() {
         display_name: "Lead".into(),
         provider_instance: "acme-primary".into(),
         model: "m".into(),
+        effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
     };
@@ -176,6 +177,7 @@ fn a_confirmed_start_marks_only_its_own_attempt_landed() {
         display_name: "Lead".into(),
         provider_instance: "acme-primary".into(),
         model: "m".into(),
+        effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
     };
@@ -246,6 +248,7 @@ fn a_lost_reply_reuses_the_action_id_and_a_different_action_gets_a_new_one() {
         display_name: "Lead".into(),
         provider_instance: "acme-primary".into(),
         model: "m".into(),
+        effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
     };

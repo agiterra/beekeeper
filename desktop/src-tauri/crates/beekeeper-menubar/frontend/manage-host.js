@@ -28,6 +28,8 @@ const short = (hex) =>
 let inventory = null;
 let signerOk = false;
 let busy = false;
+// The setup the running action belongs to: its card can interrupt it.
+let runningSetup = null;
 
 function keyFile() {
   return byId("key-file").value.trim() || null;
@@ -42,6 +44,7 @@ function spec() {
     displayName: byId("display-name").value.trim(),
     providerInstance: byId("runtime").value,
     model: byId("model").value,
+    ...(byId("effort").value ? { effort: byId("effort").value } : {}),
     parallelism: 1,
     access:
       access === "owner"
@@ -63,9 +66,11 @@ function setBusy(next) {
 function updateControls() {
   const offered = (runtime()?.selectableModels || []).length > 0;
   const ready = signerOk && !busy;
+  const effortChosen = byId("effort").hidden || Boolean(byId("effort").value);
   byId("set-up").disabled = !(
     ready &&
     offered &&
+    effortChosen &&
     byId("project").value &&
     byId("channel").value &&
     byId("role").value
@@ -491,7 +496,7 @@ function renderSetups() {
           ),
         );
       }
-      if (effectiveState === "applying") {
+      if (effectiveState === "applying" || (busy && runningSetup === id)) {
         const interrupt = el(
           "button",
           { type: "button", testid: `interrupt-${id}` },
@@ -522,10 +527,17 @@ function renderSetups() {
           null,
           el("h3", null, setup.spec.displayName),
           el("span", { class: `badge ${tone}`, testid: "setup-state" }, word),
+          effectiveState === "applying" && setup.steps?.length
+            ? el(
+                "span",
+                { class: "muted", testid: "setup-step" },
+                `step: ${setup.steps[setup.steps.length - 1].step}`,
+              )
+            : null,
           el(
             "span",
             { class: "muted" },
-            `${setup.spec.role} · ${setup.spec.project.split(":").pop()} · ${setup.spec.providerInstance} · ${setup.spec.model}`,
+            `${setup.spec.role} · ${setup.spec.project.split(":").pop()} · ${setup.spec.providerInstance} · ${setup.spec.model}${setup.spec.effort ? ` · effort ${setup.spec.effort}` : ""}`,
           ),
         ),
         setup.lastRefusal
@@ -614,15 +626,30 @@ function fillModels() {
   const chosen = row?.selectableModels.find(
     (model) => model.id === byId("model").value,
   );
+  // The catalog's own values for this model. Nothing is chosen for the person, and
+  // the choice is sent exactly: `default` is the adapter deciding, by that name.
+  const efforts = chosen?.efforts || [];
+  fill(
+    byId("effort"),
+    efforts.length
+      ? [
+          { value: "", label: "Choose an effort" },
+          ...efforts.map((effort) => ({ value: effort, label: effort })),
+        ]
+      : [],
+    "This model lists none",
+  );
+  byId("effort").hidden = !efforts.length;
+  byId("effort-label").hidden = !efforts.length;
   const notes = [];
   if (row) notes.push(row.readinessDetail);
   if (chosen?.isLabel)
     notes.push(
       "`default` names no model: the real one is known only from a signed turn result.",
     );
-  if (chosen?.efforts?.length)
+  if (efforts.length)
     notes.push(
-      `This runtime has effort settings (${chosen.efforts.join(", ")}); this setup does not set one.`,
+      "No runtime reports the effort a turn ran at: the provider's signed model records what it applied.",
     );
   byId("model-note").textContent = notes.join(" ");
   updateControls();
@@ -683,7 +710,10 @@ async function loadInventory() {
 // ── Actions ──────────────────────────────────────────────────────────────────
 
 async function act(action) {
+  runningSetup = action.setup || null;
   setBusy(true);
+  lastCards = "";
+  refreshCards();
   showResult(el("p", { class: "muted" }, "Working…"));
   try {
     const outcome = await run(action);
@@ -699,6 +729,7 @@ async function act(action) {
     }
     return outcome;
   } finally {
+    runningSetup = null;
     setBusy(false);
     await loadInventory();
   }
@@ -918,6 +949,7 @@ byId("key-file").addEventListener("input", () => {
 byId("project").addEventListener("change", loadRoles);
 byId("runtime").addEventListener("change", fillModels);
 byId("model").addEventListener("change", fillModels);
+byId("effort").addEventListener("change", updateControls);
 byId("preflight").addEventListener("click", preflight);
 byId("setup-form").addEventListener("submit", setUp);
 byId("trust").addEventListener("click", trust);
@@ -932,9 +964,35 @@ for (const radio of document.querySelectorAll('input[name="access"]')) {
   });
 }
 
-// Reads are cheap and socket-only. Skipped while a write runs, so a setup's own
-// journal is what the person is reading when it finishes.
+// Reads are cheap and socket-only. While a write runs only the setup cards are
+// redrawn, and only when what they say changed: the form keeps its focus and typing,
+// and a button under the pointer is not replaced between press and release.
+let lastCards = "";
+async function refreshCards() {
+  const outcome = await invoke("manage_inventory");
+  if (!outcome.ok || !busy) return;
+  const cards = JSON.stringify(
+    outcome.value.setups.map(({ setup, effectiveState }) => [
+      setup.setupId,
+      effectiveState,
+      setup.steps?.[setup.steps.length - 1],
+    ]),
+  );
+  if (cards === lastCards) return;
+  lastCards = cards;
+  inventory = outcome.value;
+  renderSetups();
+  updateControls();
+}
+let lastRead = 0;
 setInterval(() => {
-  if (!busy) loadInventory();
-}, 5000);
+  const now = Date.now();
+  if (busy) {
+    refreshCards();
+  } else if (now - lastRead >= 5000) {
+    lastRead = now;
+    lastCards = "";
+    loadInventory();
+  }
+}, 1000);
 loadInventory().then(loadRoles);

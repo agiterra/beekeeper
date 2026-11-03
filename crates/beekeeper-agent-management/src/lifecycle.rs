@@ -102,7 +102,13 @@ pub(crate) async fn inventory(
     let mut uncertain = Vec::new();
     for channel in channels {
         uncertain.extend(
-            crate::lifecycle_uncertain::inventory(client, &args.agent_pubkey, channel).await?,
+            crate::lifecycle_uncertain::inventory(
+                client,
+                &args.agent_pubkey,
+                channel,
+                Some(&args.operation_id.to_string()),
+            )
+            .await?,
         );
         let rows = client
             .query_all(json!({"kinds":[44223],"#h":[channel]}))
@@ -1232,9 +1238,11 @@ pub(crate) async fn require_configured_stops(
     actor: &str,
     channel: Uuid,
     accepted: Option<&CodingSessionTarget>,
+    operation: Uuid,
     client: &impl RelayTransport,
 ) -> Result<(), Error> {
     let request = LifecycleRequest {
+        operation_id: operation,
         agent_pubkey: actor.into(),
         channels: vec![channel],
         ..Default::default()

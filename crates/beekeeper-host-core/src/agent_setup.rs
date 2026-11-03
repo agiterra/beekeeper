@@ -57,8 +57,12 @@ pub struct AgentSetupSpec {
     pub display_name: String,
     /// Commissioned runtime alias.
     pub provider_instance: String,
-    /// Exact model id from the effective catalog, including any effort suffix.
+    /// Exact model id from the effective catalog.
     pub model: String,
+    /// The effort chosen from what the catalog lists for that model. Absent only
+    /// for a model that lists none, or a setup journaled before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// Concurrent responsibilities, including the primary context.
     pub parallelism: u32,
     /// Who may instruct it.
@@ -66,6 +70,16 @@ pub struct AgentSetupSpec {
 }
 
 impl AgentSetupSpec {
+    /// What a session is asked to run: the provider's own `model[effort]` form,
+    /// which it applies as the base model and then the effort, and signs back
+    /// saying only what it applied.
+    pub fn selection(&self) -> String {
+        match &self.effort {
+            Some(effort) => format!("{}[{effort}]", self.model),
+            None => self.model.clone(),
+        }
+    }
+
     /// The digest a retry is held to.
     pub fn digest(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec(self).map_err(|error| error.to_string())?;
@@ -512,6 +526,7 @@ mod tests {
             display_name: "Lead".into(),
             provider_instance: "acme-primary".into(),
             model: "acme-test".into(),
+            effort: None,
             parallelism: 1,
             access: SetupAccess::OwnerOnly,
         }
@@ -662,5 +677,25 @@ mod tests {
             effective_state(SetupState::Running, false),
             EffectiveSetupState::Running
         );
+    }
+
+    /// What a session is asked to run. The digest binds the effort, so a retry
+    /// cannot quietly run another one, and a journal from before the field reads
+    /// and digests as it always did.
+    #[test]
+    fn the_effort_is_part_of_the_selection_and_the_digest() {
+        let plain = spec();
+        assert_eq!(plain.selection(), plain.model);
+        let bytes = serde_json::to_value(&plain).unwrap();
+        assert!(bytes.get("effort").is_none());
+        let low = AgentSetupSpec {
+            effort: Some("low".into()),
+            ..plain.clone()
+        };
+        assert_eq!(low.selection(), format!("{}[low]", plain.model));
+        assert_ne!(low.digest().unwrap(), plain.digest().unwrap());
+        let back: AgentSetupSpec =
+            serde_json::from_value(serde_json::to_value(&low).unwrap()).unwrap();
+        assert_eq!(back, low);
     }
 }

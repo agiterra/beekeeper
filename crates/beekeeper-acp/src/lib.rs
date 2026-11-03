@@ -25,7 +25,7 @@ mod setup_mode;
 pub mod steer;
 mod usage;
 
-pub use config::ChannelFilter;
+pub use config::{ChannelFilter, KindOverlap};
 pub use usage::TurnUsage;
 
 /// The compiled-in `[Base]` platform-context prompt prepended to every managed

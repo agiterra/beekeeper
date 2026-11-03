@@ -75,16 +75,66 @@ async function read() {
   };
 }
 
+async function text2(scope, id) {
+  const node = scope.locator(`[data-testid="${id}"]`);
+  return (await node.count())
+    ? (await node.first().textContent()).trim()
+    : null;
+}
+
 const result = {};
 try {
   await page.fill("#key-file", input.keyFile);
   await page.click("#check-key");
   await page.locator('[data-testid="signer"].good').waitFor({ timeout: 20000 });
   result.before = await read();
+  if (input.readEffort) {
+    await page.selectOption("#project", input.readEffort.project);
+    await page.waitForTimeout(800);
+    await page.selectOption("#model", input.readEffort.model);
+    const effort = page.locator("#effort");
+    result.effortHidden = await effort.evaluate((node) => node.hidden);
+    result.effortOptions = await effort.locator("option").allTextContents();
+    result.effortValue = await effort.inputValue();
+  }
+  if (input.setUp) {
+    // A person's path: the form, the effort list, the button. Nothing injected.
+    const form = input.setUp;
+    await page.selectOption("#project", form.project);
+    await page.waitForFunction(
+      () => document.getElementById("role").value,
+      null,
+      { timeout: 20000 },
+    );
+    await page.selectOption("#channel", form.channel);
+    await page.fill("#display-name", form.name);
+    await page.selectOption("#model", form.model);
+    result.setUpEnabledBeforeEffort = await page.locator("#set-up").isEnabled();
+    await page.selectOption("#effort", form.effort);
+    result.setUpEnabledAfterEffort = await page.locator("#set-up").isEnabled();
+    await page.click("#set-up");
+    await page.waitForFunction(
+      () => !document.getElementById("check-key").disabled,
+      null,
+      { timeout: 200000 },
+    );
+    result.result = (await page.locator("#result").textContent()).trim();
+  }
   if (input.click) {
     const button = card.locator("button", { hasText: input.click }).first();
     if (await button.count()) {
       await button.click();
+      if (input.watchProgress) {
+        // Without a Refresh: the card must show this by itself, while it runs.
+        const interrupt = card.locator("button", { hasText: "Interrupt" });
+        await interrupt.waitFor({ timeout: 8000 }).catch(() => {});
+        result.interruptShown = await interrupt.count();
+        await card
+          .locator('[data-testid="setup-step"]')
+          .waitFor({ timeout: 8000 })
+          .catch(() => {});
+        result.stepShown = await text2(card, "setup-step");
+      }
       // The window disables its actions while one runs, and redraws when it ends.
       await page.waitForFunction(
         () => document.getElementById("result").textContent !== "Working…",

@@ -282,6 +282,15 @@ const PENDING_HINT_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 /// volume trivial — 442xx commands are low-rate, and a re-delivered command
 /// dedupes as `AlreadyConsumed`.
 const REPLAY_GRACE_SECS: u64 = 600;
+/// How far before a channel's floor its lifecycle commands are still read.
+///
+/// The floor moves on any event in the channel, and a retry's own membership events
+/// move it. A command signed before that and sent after it would be stored and
+/// never delivered, here or after a restart, though it is well inside
+/// [`Config::command_horizon`]. A first send must be within the relay's own
+/// 900 s of its timestamp, so this covers every command the relay can newly accept.
+/// Dedupe is the command ledger, as for any replay.
+const LIFECYCLE_REPLAY_OVERLAP_SECS: u64 = 960;
 /// How long a freshly subscribed channel holds arriving turn commands so they
 /// can be delivered in the order they were sent.
 ///
@@ -1874,6 +1883,10 @@ impl Provider {
                 KIND_DELETION,
             ]),
             require_mention: false,
+            overlap: Some(beekeeper_acp::KindOverlap {
+                kinds: vec![KIND_CODING_SESSION_LIFECYCLE_COMMAND],
+                secs: LIFECYCLE_REPLAY_OVERLAP_SECS,
+            }),
         };
         // A newly granted membership and the first command are published back
         // to back. `subscribe_channel_from` only queues the REQ, so falling

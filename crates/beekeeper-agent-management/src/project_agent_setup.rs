@@ -404,6 +404,34 @@ pub async fn preflight(
             match offered {
                 Some(provider) if provider.allowed_models.contains(&spec.model) => {
                     use beekeeper_host_core::agent_setup::DiscoveryOutcome;
+                    let efforts = provider
+                        .models
+                        .iter()
+                        .find(|model| model.id == spec.model)
+                        .map_or(&[][..], |model| model.efforts.as_slice());
+                    match spec.effort.as_deref() {
+                        Some(effort) if !efforts.iter().any(|offered| offered == effort) => add(
+                            "EFFORT_NOT_OFFERED",
+                            false,
+                            if efforts.is_empty() {
+                                format!("`{}` lists no effort setting, so `{effort}` cannot be applied.", spec.model)
+                            } else {
+                                format!("`{}` offers these efforts: {}. `{effort}` is not one of them.", spec.model, efforts.join(", "))
+                            },
+                        ),
+                        Some(effort) => add(
+                            "EFFORT_OFFERED",
+                            true,
+                            format!("`{}` offers effort `{effort}`.", spec.model),
+                        ),
+                        // A journaled setup keeps what it chose. A new one chooses.
+                        None if !efforts.is_empty() && own_actor.is_none() => add(
+                            "EFFORT_REQUIRED",
+                            false,
+                            format!("`{}` offers these efforts: {}. Choose one.", spec.model, efforts.join(", ")),
+                        ),
+                        None => {}
+                    }
                     match file.discovery.get(&spec.provider_instance) {
                         Some(DiscoveryOutcome::CredentialsUnavailable(code)) => add(
                             "RUNTIME_CREDENTIALS_UNAVAILABLE",
@@ -592,7 +620,7 @@ pub async fn preflight(
                     ),
                     Ok(persona) => {
                         let conflict = runtime.and_then(|runtime| {
-                            role_conflict(&persona, &spec.role, &runtime.runtime, &spec.model)
+                            role_conflict(&persona, &spec.role, &runtime.runtime, &spec.selection())
                         });
                         match conflict {
                             Some((code, message)) => add(code, false, message),
@@ -973,7 +1001,7 @@ fn start_request(
         system_prompt: CANONICAL_ROLE_PROMPT.to_string(),
         cwd,
         project: Some(setup.spec.project.clone()),
-        model: Some(setup.spec.model.clone()),
+        model: Some(setup.spec.selection()),
         provider_instance: Some(setup.spec.provider_instance.clone()),
         agent_pubkey: Some(actor.to_string()),
         wait_secs: RECEIPT_WAIT_SECS,
@@ -993,7 +1021,8 @@ async fn readback(
     let head = current_head(client, actor).await?;
     let definition: ManagedAgentEventContent = serde_json::from_str(&head.content).map_err(fail)?;
     let (expected_policy, expected_list) = respond_to(&setup.spec.access);
-    if definition.model.as_deref() != Some(setup.spec.model.as_str())
+    let selection = setup.spec.selection();
+    if definition.model.as_deref() != Some(selection.as_str())
         || definition.respond_to != expected_policy
         || definition.respond_to_allowlist != expected_list
         || definition.home_role.as_deref() != Some(setup.spec.role.as_str())
@@ -1056,13 +1085,26 @@ async fn readback(
     if let Some(signed) = provider_view
         .as_ref()
         .and_then(|view| view["model"].as_str())
-        .filter(|signed| *signed != setup.spec.model)
+        .filter(|signed| *signed != selection)
     {
         return Err(refused(
             "EFFECTIVE_CONFIG_MISMATCH",
             format!(
-                "the provider signed model `{signed}` for this generation, and this setup chose `{}`",
-                setup.spec.model
+                "the provider signed model `{signed}` for this generation, and this setup chose `{selection}`"
+            ),
+        ));
+    }
+    // No runtime reports the effort a turn ran at: the signed model is all there is,
+    // so an effort it does not name was not applied as far as anyone can show.
+    let signed_model = provider_view
+        .as_ref()
+        .and_then(|view| view["model"].as_str());
+    if setup.spec.effort.is_some() && live.is_some() && signed_model != Some(selection.as_str()) {
+        return Err(refused(
+            "EFFECTIVE_CONFIG_MISMATCH",
+            format!(
+                "this setup chose `{selection}`, and the provider signed {:?} for this generation, so that effort is unconfirmed",
+                signed_model
             ),
         ));
     }
@@ -1283,7 +1325,7 @@ pub async fn apply(
                 role: setup.spec.role.clone(),
                 name: setup.spec.display_name.clone(),
                 provider_instance: setup.spec.provider_instance.clone(),
-                model: setup.spec.model.clone(),
+                model: setup.spec.selection(),
                 parallelism: setup.spec.parallelism,
                 templates: templates.to_path_buf(),
                 respond_to: policy,

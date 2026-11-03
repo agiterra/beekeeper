@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import uuid
@@ -44,12 +45,13 @@ def decode_nsec(key):
 
 
 class Recovery(base.Harness):
-    def page(self, setup, click=None):
+    def page(self, setup, click=None, **options):
         env = dict(self.env, MENUBAR_BIN=str(base.MENUBAR), BEEKEEPER_BEE=str(base.BEE), NODE_PATH=str(base.ROOT / "desktop/node_modules"),
                    PLAYWRIGHT_BROWSERS_PATH=str(pathlib.Path(os.environ["HOME"]) / "Library/Caches/ms-playwright"))
         if os.environ.get("HM_PAGE_FILE"):
             env["HM_PAGE_FILE"] = os.environ["HM_PAGE_FILE"]
         payload = {"setup": setup, "keyFile": str(self.key_file)}
+        payload.update(options)
         if click:
             payload["click"] = click
         result = subprocess.run(["node", str(HERE / "host-manage-page-step.mjs"), json.dumps(payload)], env=env, cwd=base.ROOT / "desktop", capture_output=True, text=True, timeout=260)
@@ -422,6 +424,188 @@ class Recovery(base.Harness):
             view = self.page(made["id"], control)
             after = view.get("after", {})
             self.check(f"B7 start: {control} acts, and no refusal says to use a button that is absent", not after.get("refusal") and (after.get("badge") in ("running", "stopped")), view)
+
+    # ── A start command the relay holds and its provider cannot see ──
+    def first_start_unsent(self, name):
+        """Interrupted with the command journaled and not sent, as Interrupt does."""
+        def operation(journal):
+            return journal["startOperation"]
+        def at_start(_):
+            def ready(journal):
+                if not self.at_step("start")(journal):
+                    return False
+                path = self.operation_file(operation(journal))
+                return path.exists() and any(e["kind"] == 44221 for e in json.loads(path.read_text()).get("events", []))
+            return ready
+        made, path = self.killed_before_stored(lambda: self.fresh(name + " " + uuid.uuid4().hex[:4]), "apply", at_start, lambda m: operation(self.journal(m["id"])))
+        return made, path, next(e for e in json.loads(path.read_text())["events"] if e["kind"] == 44221)
+
+    def provider_saw(self, command):
+        ledger = self.state_dir() / "commands.jsonl"
+        return ledger.exists() and json.loads(command["content"])["commandId"] in ledger.read_text()
+
+    def floor(self, channel):
+        return json.loads((self.state_dir() / "state.json").read_text())["watermarks"].get(channel)
+
+    def n1_unsent_start_retried(self):
+        made, path, command = self.first_start_unsent("N1")
+        time.sleep(3)
+        start = self.journal(made["id"])["startOperation"]
+        view = self.page(made["id"], "Retry", watchProgress=True)
+        self.check("N1: while Retry runs its card shows Interrupt and the step, with no Refresh", view.get("interruptShown", 0) >= 1 and view.get("stepShown"), {k: view.get(k) for k in ("interruptShown", "stepShown", "error")})
+        journal = self.journal(made["id"])
+        floor = self.floor(made["channel"])
+        self.check("N1: the retried memberships moved the provider's floor past the signed command", floor is not None and floor > command["created_at"], [floor, command["created_at"]])
+        self.check("N1: the relay holds the exact signed command", bool(self.stored_ids([command["id"]])), command["id"])
+        self.check("N1: its provider answered it", self.provider_saw(command), "")
+        self.check("N1: a start interrupted before it was sent reaches running", journal["state"] == "running", f"{journal['state']} {journal.get('lastRefusal')}")
+        self.check("N1: under the same operation id", journal["startOperation"] == start, start)
+        final = json.loads(path.read_text())
+        self.check("N1: the same bytes: nothing re-signed", next(e for e in final["events"] if e["kind"] == 44221)["id"] == command["id"] and not (final.get("supersededEvents") or final.get("superseded_events")), "")
+        self.check("N1: one execution", len(self.created_receipts(made["channel"])) == 1, "")
+
+    def n2_old_command_after_floor(self):
+        made, path, command = self.first_start_unsent("N2")
+        time.sleep(2)
+        # What the native run did, by exact replay: the memberships, then the old command.
+        for index, event in enumerate(json.loads(path.read_text())["events"]):
+            if event["kind"] == 9000:
+                self.publish_as(self.owner_key, event, f"n2-member-{index}-{uuid.uuid4().hex[:4]}")
+        self.wait_for("the provider's floor to pass the command", lambda: (self.floor(made["channel"]) or 0) > command["created_at"], 30)
+        self.publish_as(self.owner_key, command, f"n2-command-{uuid.uuid4().hex[:4]}")
+        time.sleep(12)
+        self.check("N2: a command signed before the floor moved is still delivered", self.provider_saw(command), "")
+        code, journal, message = self.manage("apply", "--setup", made["id"], timeout=200)
+        self.check("N2: Retry learns its answer", code == 0 and journal["state"] == "running", f"{message} {journal and journal.get('lastRefusal')}")
+        self.check("N2: one execution", len(self.created_receipts(made["channel"])) == 1, "")
+        self.provider_down()
+        self.provider_up()
+        time.sleep(4)
+        self.check("N2: a restart reads it again and does nothing", len(self.created_receipts(made["channel"])) == 1, "")
+
+    def n4_own_command_unanswered(self):
+        made, path, command = self.first_start_unsent("N4")
+        events = json.loads(path.read_text())["events"]
+        for index, event in enumerate(events):
+            if event["kind"] == 9000:
+                self.publish_as(self.owner_key, event, f"n4-member-{index}-{uuid.uuid4().hex[:4]}")
+        # A live provider that does not answer: stored and silent, as in the native run.
+        provider = self.inventory()["host"]["provider"]["pid"]
+        os.kill(provider, signal.SIGSTOP)
+        try:
+            self.publish_as(self.owner_key, command, f"n4-command-{uuid.uuid4().hex[:4]}")
+            start = self.journal(made["id"])["startOperation"]
+            code, inspected, message = self.manage("inspect", "--setup", made["id"])
+            self.check("N4: another reader of that command still cannot certify it", "no verified outcome" in json.dumps(inspected) + message, f"{message} {str(inspected)[:300]}")
+            code, journal, message = self.manage("apply", "--setup", made["id"], timeout=200)
+            refusal = (journal or {}).get("lastRefusal") or {}
+            self.check("N4: its own Retry is not blocked by its own silence", "no verified outcome" not in refusal.get("message", "") + message, f"{message} {refusal}")
+            self.check("N4: it stays unknown, under its operation id", self.journal(made["id"])["state"] != "running" and self.journal(made["id"])["startOperation"] == start and refusal.get("uncertain") is True, f"{refusal}")
+        finally:
+            os.kill(provider, signal.SIGCONT)
+        self.wait_for("the provider's answer", lambda: self.created_receipts(made["channel"]), 40)
+        code, journal, message = self.manage("apply", "--setup", made["id"], timeout=200)
+        self.check("N4: with the provider back, Retry reaches running", journal is not None and journal["state"] == "running", f"{message} {journal and journal.get('lastRefusal')}")
+        self.check("N4: as one execution", len(self.created_receipts(made["channel"])) == 1, "")
+
+    def n5_restart_rereads_nothing(self):
+        made = self.started("N5")
+        code, journal, message = self.manage("stop", "--setup", made["id"])
+        self.check("N5: stopped", code == 0 and journal["state"] == "stopped", message)
+        code, journal, message = self.manage("start", "--setup", made["id"])
+        self.check("N5: started again", code == 0 and journal["state"] == "running", message)
+        def answers():
+            rows = self.read([44224], f"n5-{uuid.uuid4().hex[:6]}.json", channel=made["channel"], extra={"authors": [self.provider]})
+            return {row["id"] for row in rows}
+        before = answers()
+        floor = self.floor(made["channel"])
+        commands = self.read([44221], f"n5-c-{uuid.uuid4().hex[:6]}.json", channel=made["channel"], extra={"authors": [self.owner]})
+        self.check("N5: every command is inside the read a restart makes", commands and all(c["created_at"] >= floor - 960 for c in commands), [floor, [c["created_at"] for c in commands]])
+        self.provider_down()
+        self.provider_up()
+        time.sleep(8)
+        self.check("N5: a restart answers none of them again", answers() == before, sorted(answers() - before))
+        sessions = json.loads((self.state_dir() / "state.json").read_text())["sessions"].values()
+        open_rows = [s for s in sessions if s.get("actor") == made["actor"] and not s.get("closed")]
+        self.check("N5: one open execution", len(open_rows) == 1, len(open_rows))
+
+    def n3_effort(self):
+        made = self.fresh("N3")
+        catalog = self.state_dir() / "effective-catalog.json"
+        original = catalog.read_text()
+        held = json.loads(original)
+        provider = next(p for p in held["catalog"]["providers"] if p["providerInstanceRef"] == "acme-primary")
+        models = provider.setdefault("models", [])
+        entry = next((m for m in models if m["id"] == made["model"]), None)
+        if entry is None:
+            entry = {"id": made["model"]}
+            models.append(entry)
+        entry["efforts"] = ["low", "high"]
+        os.chmod(catalog, 0o600)
+        # The provider rewrites this file whenever it joins a channel, so before each use.
+        offer = lambda: catalog.write_text(json.dumps(dict(held, catalog=dict(held["catalog"], revision=json.loads(catalog.read_text())["catalog"]["revision"]))))
+        offer()
+        def page_with_offer(**options):
+            # The provider rewrites the file when it advertises, so hold the offer while the page reads it.
+            holding = threading.Event()
+            def hold():
+                while not holding.wait(0.2):
+                    offer()
+            holder = threading.Thread(target=hold, daemon=True)
+            holder.start()
+            try:
+                return self.page(made["id"], **options)
+            finally:
+                holding.set()
+                holder.join()
+        try:
+            view = page_with_offer(readEffort={"project": made["project"], "model": made["model"]})
+            self.check("N3: the window offers that model's efforts, and picks none", view.get("effortHidden") is False and view.get("effortOptions") == ["Choose an effort", "low", "high"] and view.get("effortValue") == "", view)
+            def spec(name, effort=None):
+                slug = f"r{uuid.uuid4().hex[:8]}"
+                channel = self.channel(slug)
+                project, code, agents, model = self.project(slug, channel)
+                self.manage("trust", "--project", project, "--checkout", code, "--agents-repo", agents)
+                body = json.loads(self.spec(project, channel, "lead", name, model))
+                if effort:
+                    body["effort"] = effort
+                return json.dumps(body), channel
+            body, _ = spec("N3 none")
+            offer()
+            code, _, message = self.manage("plan", "--spec-file", "-", stdin=body)
+            self.check("N3: a new setup must choose", code != 0 and "EFFORT_REQUIRED" in message, message)
+            body, _ = spec("N3 turbo", "turbo")
+            offer()
+            code, _, message = self.manage("plan", "--spec-file", "-", stdin=body)
+            self.check("N3: an effort the model does not offer is refused", code != 0 and "EFFORT_NOT_OFFERED" in message, message)
+            body, channel = spec("N3 low", "low")
+            offer()
+            code, planned, message = self.manage("plan", "--spec-file", "-", stdin=body)
+            self.check("N3: an offered effort plans, and the journal binds it", code == 0 and planned["spec"]["effort"] == "low", message)
+            if code:
+                return
+            offer()
+            code, journal, message = self.manage("apply", "--setup", planned["setupId"], timeout=200)
+            definition = self.definitions("N3 low")
+            self.check("N3: the signed definition carries the selection", definition and json.loads(definition[0]["content"]).get("model") == f"{planned['spec']['model']}[low]", definition and definition[0]["content"][:200])
+            commands = self.creates(channel)
+            self.check("N3: and so does the command", commands and json.loads(commands[0]["content"])["action"]["model"] == f"{planned['spec']['model']}[low]", "")
+            # This stub has no effort control, so the provider repeats what was asked:
+            # this reads the journal's binding back. It does not show an effort applied.
+            signed = ((journal or {}).get("readback") or {}).get("provider") or {}
+            self.check("N3: the readback names the same selection", signed.get("model") == f"{planned['spec']['model']}[low]", signed)
+            # N3b: the same choice through the page, by the path a person takes.
+            slug = f"r{uuid.uuid4().hex[:8]}"
+            channel = self.channel(slug)
+            project, code, agents, model = self.project(slug, channel)
+            self.manage("trust", "--project", project, "--checkout", code, "--agents-repo", agents)
+            view = page_with_offer(setUp={"project": project, "channel": channel, "name": "N3b page", "model": model, "effort": "low"})
+            self.check("N3b: Set up stays disabled until an effort is chosen, then enables", view.get("setUpEnabledBeforeEffort") is False and view.get("setUpEnabledAfterEffort") is True, {k: view.get(k) for k in ("setUpEnabledBeforeEffort", "setUpEnabledAfterEffort", "error")})
+            row = next((r for r in self.inventory()["setups"] if r["setup"]["spec"]["displayName"] == "N3b page"), None)
+            self.check("N3b: the page's Set up journals that effort", row is not None and row["setup"]["spec"].get("effort") == "low" and row["setup"]["spec"]["model"] == model, f"{view.get('result')} {view.get('error')} {row and row['setup']['spec']}")
+            self.check("N3b: and reaches running with the selection read back", row is not None and row["effectiveState"] == "running" and ((row["setup"].get("readback") or {}).get("provider") or {}).get("model") == f"{model}[low]", f"{view.get('result')} {row and row['effectiveState']}")
+        finally:
+            catalog.write_text(original)
 
     # ── A used start id is not reused for ever ──
     def b8_stop_cancel_resume(self):
@@ -906,6 +1090,11 @@ SCENARIOS = {
     "E3": lambda h: h.e3_stop_aged(),
     "E4": lambda h: h.e4_stored_ack_lost(),
     "E5": lambda h: h.e5_context_aged(),
+    "N1": lambda h: h.n1_unsent_start_retried(),
+    "N2": lambda h: h.n2_old_command_after_floor(),
+    "N4": lambda h: h.n4_own_command_unanswered(),
+    "N5": lambda h: h.n5_restart_rereads_nothing(),
+    "N3": lambda h: h.n3_effort(),
 }
 
 

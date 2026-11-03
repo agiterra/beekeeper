@@ -15,6 +15,7 @@ pub(crate) async fn inventory(
     client: &impl RelayTransport,
     actor: &str,
     channel: Uuid,
+    own_command: Option<&str>,
 ) -> Result<Vec<Responsibility>, Error> {
     let profiles = client
         .query_all(json!({"kinds":[0],"authors":[actor],"limit":1}))
@@ -90,6 +91,11 @@ pub(crate) async fn inventory(
             &provider_authority_pubkey,
         );
         if outcomes.is_empty() {
+            // The operation asking is the one waiting on this answer, and retrying it
+            // is how the answer gets learned. Anyone else's stays unknowable.
+            if own_command == Some(payload.command_id.as_str()) {
+                continue;
+            }
             return Err(Error::Unconfirmed(
                 "accepted actor create has no verified outcome; zero work cannot be certified"
                     .into(),

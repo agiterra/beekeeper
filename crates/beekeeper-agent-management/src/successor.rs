@@ -90,6 +90,7 @@ pub(super) async fn require_prior_stops(
             &prior.actor_pubkey,
             channel,
             accepted,
+            operation,
             client,
         )
         .await;

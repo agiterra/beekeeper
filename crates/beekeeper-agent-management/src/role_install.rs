@@ -39,6 +39,12 @@ pub struct RoleInstallRequest {
 pub const CANONICAL_ROLE_PROMPT: &str =
     "Follow the canonical role pack staged for this responsibility.";
 
+/// The catalog id a `model[effort]` selection was made from. An id the catalog
+/// lists whole, brackets included, is compared whole first by each caller.
+fn catalog_model(selection: &str) -> &str {
+    selection.split('[').next().unwrap_or(selection)
+}
+
 /// Why a resolved role cannot be installed as asked, before anything is
 /// written: its stable code and a sentence.
 pub(crate) fn role_conflict(
@@ -63,7 +69,11 @@ pub(crate) fn role_conflict(
             format!("role `{role}` declares runtime `{declared}`, and `{runtime}` was selected"),
         ));
     }
-    if let Some(declared) = persona.model.as_ref().filter(|declared| *declared != model) {
+    if let Some(declared) = persona
+        .model
+        .as_ref()
+        .filter(|declared| *declared != model && *declared != catalog_model(model))
+    {
         return Some((
             "ROLE_DECLARATION_CONFLICT",
             format!("role `{role}` declares model `{declared}`, and `{model}` was selected"),
@@ -192,7 +202,11 @@ pub async fn install(
             .is_some_and(|file| {
                 file.catalog.providers.iter().any(|provider| {
                     provider.provider_instance_ref == args.provider_instance
-                        && provider.allowed_models.contains(&args.model)
+                        && (provider.allowed_models.contains(&args.model)
+                            || provider
+                                .allowed_models
+                                .iter()
+                                .any(|model| model == catalog_model(&args.model)))
                 })
             });
     if !runtime.allowed_models.contains(&args.model) && !offered {

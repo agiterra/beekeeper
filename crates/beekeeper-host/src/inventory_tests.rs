@@ -239,6 +239,7 @@ fn a_closed_record_is_not_a_held_execution() {
         display_name: "Agent".into(),
         provider_instance: "acme-primary".into(),
         model: "m".into(),
+        effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
     };
@@ -432,6 +433,7 @@ fn agents_merge_sessions_enrollment_and_setups_without_opening_custody() {
         display_name: "Project agent".into(),
         provider_instance: "acme-primary".into(),
         model: "m".into(),
+        effort: None,
         parallelism: 1,
         access: SetupAccess::OwnerOnly,
     };

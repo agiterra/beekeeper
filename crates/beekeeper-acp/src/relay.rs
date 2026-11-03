@@ -4296,29 +4296,29 @@ async fn wait_for_reconnect(
     }
 }
 
-/// Send a NIP-01 REQ for a channel, built from a [`ChannelFilter`].
-///
-/// - `kinds` is included only when `filter.kinds` is `Some`; `None` = wildcard.
-/// - `#p` is included only when `filter.require_mention` is `true`.
-/// - `#h` is always included (channel-scoped subscription).
-/// - On first subscribe (`since` is `None`) adds `since=now` to avoid replaying
-///   history. On reconnect (`since` is `Some`) subtracts [`SINCE_SKEW_SECS`].
-///
-/// Returns `true` if the REQ was successfully written to the WebSocket.
-async fn send_subscribe(
-    ws: &mut WsStream,
-    _state: &BgState,
+/// The REQ for one channel: one filter, or two when a kind reads further back.
+fn channel_req(
     channel_id: Uuid,
     agent_pubkey_hex: &str,
     since: Option<u64>,
     filter: &ChannelFilter,
-) -> bool {
+) -> Value {
     let sub_id = channel_sub_id(channel_id);
 
     let mut req_filter = serde_json::Map::new();
 
+    // A kind read further back goes in its own filter, not this one.
+    let overlapped = filter.overlap.as_ref();
+    let kinds_here = filter.kinds.as_ref().map(|kinds| {
+        kinds
+            .iter()
+            .copied()
+            .filter(|kind| !overlapped.is_some_and(|overlap| overlap.kinds.contains(kind)))
+            .collect::<Vec<_>>()
+    });
+
     // kinds — omit entirely for wildcard subscriptions.
-    if let Some(ref kinds) = filter.kinds {
+    if let Some(ref kinds) = kinds_here {
         req_filter.insert("kinds".into(), json!(kinds));
     }
 
@@ -4341,7 +4341,35 @@ async fn send_subscribe(
     };
     req_filter.insert("since".into(), json!(since_ts));
 
-    let req = json!(["REQ", sub_id, Value::Object(req_filter)]);
+    let mut req = vec![json!("REQ"), json!(sub_id)];
+    if let Some(overlap) = overlapped {
+        let mut older = req_filter.clone();
+        older.insert("kinds".into(), json!(overlap.kinds));
+        older.insert("since".into(), json!(since_ts.saturating_sub(overlap.secs)));
+        req.push(Value::Object(older));
+    }
+    req.push(Value::Object(req_filter));
+    Value::Array(req)
+}
+
+/// Send a NIP-01 REQ for a channel, built from a [`ChannelFilter`].
+///
+/// - `kinds` is included only when `filter.kinds` is `Some`; `None` = wildcard.
+/// - `#p` is included only when `filter.require_mention` is `true`.
+/// - `#h` is always included (channel-scoped subscription).
+/// - On first subscribe (`since` is `None`) adds `since=now` to avoid replaying
+///   history. On reconnect (`since` is `Some`) subtracts [`SINCE_SKEW_SECS`].
+///
+/// Returns `true` if the REQ was successfully written to the WebSocket.
+async fn send_subscribe(
+    ws: &mut WsStream,
+    _state: &BgState,
+    channel_id: Uuid,
+    agent_pubkey_hex: &str,
+    since: Option<u64>,
+    filter: &ChannelFilter,
+) -> bool {
+    let req = channel_req(channel_id, agent_pubkey_hex, since, filter);
 
     match serde_json::to_string(&req) {
         Ok(text) => {
@@ -5590,6 +5618,7 @@ mod tests {
         ChannelFilter {
             kinds: Some(vec![9]),
             require_mention: false,
+            overlap: None,
         }
     }
 
@@ -6749,6 +6778,7 @@ mod tests {
         let filter = ChannelFilter {
             kinds: Some(vec![9]),
             require_mention: true,
+            overlap: None,
         };
 
         apply_command_to_state(
@@ -6770,6 +6800,38 @@ mod tests {
             Some(membership_ts),
             "channel_since should use the dynamic replay floor until an event is seen"
         );
+    }
+
+    /// A kind with an overlap reads further back in its own filter, and only that
+    /// kind: the rest of the subscription keeps its floor.
+    #[test]
+    fn an_overlap_reads_only_its_kinds_from_further_back() {
+        let channel = Uuid::new_v4();
+        let filter = ChannelFilter {
+            kinds: Some(vec![9, 44221]),
+            require_mention: false,
+            overlap: Some(crate::KindOverlap {
+                kinds: vec![44221],
+                secs: 960,
+            }),
+        };
+        let req = channel_req(channel, "pk", Some(10_000), &filter);
+        let since = 10_000 - SINCE_SKEW_SECS;
+        assert_eq!(req[0], "REQ");
+        assert_eq!(req[2]["kinds"], json!([44221]));
+        assert_eq!(req[2]["since"], json!(since - 960));
+        assert_eq!(req[2]["#h"], json!([channel.to_string()]));
+        assert_eq!(req[3]["kinds"], json!([9]));
+        assert_eq!(req[3]["since"], json!(since));
+        assert_eq!(req.as_array().map(Vec::len), Some(4));
+
+        let plain = ChannelFilter {
+            overlap: None,
+            ..filter
+        };
+        let req = channel_req(channel, "pk", Some(10_000), &plain);
+        assert_eq!(req[2]["kinds"], json!([9, 44221]));
+        assert_eq!(req.as_array().map(Vec::len), Some(3));
     }
 
     /// Membership dedup must NOT contaminate per-channel `last_seen`.
@@ -6840,6 +6902,7 @@ mod tests {
                 filter: ChannelFilter {
                     kinds: Some(vec![9]),
                     require_mention: false,
+                    overlap: None,
                 },
                 replay_since: Some(1_000),
             },
@@ -8099,6 +8162,7 @@ mod tests {
                 filter: ChannelFilter {
                     kinds: Some(vec![9]),
                     require_mention: false,
+                    overlap: None,
                 },
                 replay_since: Some(1_000),
             },
@@ -8190,6 +8254,7 @@ mod tests {
                 filter: ChannelFilter {
                     kinds: Some(vec![9]),
                     require_mention: false,
+                    overlap: None,
                 },
                 replay_since: None,
             },
@@ -8229,6 +8294,7 @@ mod tests {
                 filter: ChannelFilter {
                     kinds: Some(vec![9]),
                     require_mention: false,
+                    overlap: None,
                 },
                 replay_since: None,
             },
@@ -8264,6 +8330,7 @@ mod tests {
                 filter: ChannelFilter {
                     kinds: Some(vec![9]),
                     require_mention: false,
+                    overlap: None,
                 },
                 replay_since: None,
             },
