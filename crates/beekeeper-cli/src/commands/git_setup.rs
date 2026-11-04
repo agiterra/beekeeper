@@ -445,6 +445,60 @@ fn git_config_get(key: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// The program a `credential.<scope>.helper` value makes git run.
+///
+/// Git's forms: a bare name means `git-credential-<name>`, a value naming a path
+/// is that path, and `!` hands the rest to the shell. A host-staged session
+/// configuration uses the last, single-quoted so an install path may hold a
+/// space. `None` when the value is shell this cannot read without running it:
+/// not knowing is not the same as the program being missing.
+fn helper_program(value: &str) -> Option<String> {
+    let value = value.trim();
+    let Some(shell) = value.strip_prefix('!') else {
+        let first = value.split_whitespace().next()?;
+        return Some(if first.contains('/') {
+            first.to_string()
+        } else {
+            format!("git-credential-{first}")
+        });
+    };
+    let shell = shell.trim_start();
+    if !shell.starts_with('\'') {
+        let word = shell.split_whitespace().next()?;
+        let plain = word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c));
+        return plain.then(|| word.to_string());
+    }
+    // `'…'`, with `'\''` for an apostrophe: the only quoting the host writes.
+    let mut word = String::new();
+    let mut rest = shell;
+    loop {
+        let body = rest.strip_prefix('\'')?;
+        let close = body.find('\'')?;
+        word.push_str(&body[..close]);
+        rest = &body[close + 1..];
+        match rest.strip_prefix("\\'") {
+            Some(joined) if joined.starts_with('\'') => {
+                word.push('\'');
+                rest = joined;
+            }
+            _ => break,
+        }
+    }
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(word)
+}
+
+/// Whether what a helper value runs is there, in the way git would look for it.
+fn helper_resolves(value: &str) -> Option<bool> {
+    let program = helper_program(value)?;
+    Some(if program.contains('/') {
+        is_executable_file(Path::new(&program))
+    } else {
+        which_on_path(&program).is_some()
+    })
+}
+
 /// Arguments for `bee git setup`, resolved from the CLI.
 pub struct SetupRequest<'a> {
     pub relay_url: &'a str,
@@ -551,6 +605,7 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
     // path would use. Reporting null when the config is unset would push the
     // default into every caller, and a caller that guessed a different one
     // would tell the user about a file nothing reads.
+    let keyfile_is_only_the_default = keyfile.is_none() && configured_keyfile.is_none();
     let keyfile_path = match keyfile {
         Some(path) => Some(path),
         None => match configured_keyfile.as_ref() {
@@ -558,12 +613,18 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
             None => default_keyfile().ok(),
         },
     };
+    // Inside a boundary the default path is the operator's and is refused on
+    // purpose. With a key in the environment and no key file configured, nothing
+    // reads that file: its refusal is no problem of this setup, and naming it
+    // sends a seat looking for the operator's key. A file that is configured or
+    // named still reports its problem, and so does this one with no key beside it.
+    let keyfile_path = keyfile_path.filter(|path| {
+        !(keyfile_is_only_the_default
+            && read_keyfile(path).is_err()
+            && matches!(git_credential_nostr::env_key(), Ok(Some(_))))
+    });
 
-    let helper_ok = match configured_helper.as_deref() {
-        None => None,
-        Some("nostr") => Some(which_on_path("git-credential-nostr").is_some()),
-        Some(path) => Some(is_executable_file(Path::new(path))),
-    };
+    let helper_ok = configured_helper.as_deref().and_then(helper_resolves);
     let (key_present, key_pubkey, key_problem) = match keyfile_path.as_deref() {
         None => (false, None, None),
         Some(path) => match read_keyfile(path) {
@@ -3049,6 +3110,53 @@ mod tests {
             .find(|(key, _)| key.ends_with(".helper"))
             .expect("a helper entry");
         assert_eq!(helper_values, &vec![String::new(), "nostr".to_string()]);
+    }
+
+    #[test]
+    fn helper_program_reads_every_form_git_runs() {
+        let staged =
+            "!'/Users/a/Applications/Beekeeper Dev.app/Contents/MacOS/git-credential-nostr'";
+        assert_eq!(
+            helper_program(staged).as_deref(),
+            Some("/Users/a/Applications/Beekeeper Dev.app/Contents/MacOS/git-credential-nostr"),
+        );
+        assert_eq!(
+            helper_program(r"!'/a/it'\''s/helper' --flag").as_deref(),
+            Some("/a/it's/helper"),
+        );
+        assert_eq!(
+            helper_program("nostr").as_deref(),
+            Some("git-credential-nostr")
+        );
+        assert_eq!(helper_program("/opt/h --x").as_deref(), Some("/opt/h"));
+        assert_eq!(
+            helper_program("!/opt/homebrew/bin/gh auth git-credential").as_deref(),
+            Some("/opt/homebrew/bin/gh"),
+        );
+        // Shell it cannot read is unknown, never reported as missing.
+        for unreadable in ["!f() { echo; }; f", "!$HELPER", "!'unterminated", "", "!"] {
+            assert_eq!(helper_program(unreadable), None, "{unreadable}");
+        }
+    }
+
+    #[test]
+    fn a_staged_helper_resolves_through_its_quotes_and_a_missing_one_does_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spaced = dir.path().join("Beekeeper Dev.app");
+        std::fs::create_dir(&spaced).expect("dir");
+        let helper = spaced.join("git-credential-nostr");
+        std::fs::write(&helper, "#!/bin/sh\n").expect("write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod");
+        }
+        let staged = format!("!'{}'", helper.display());
+        assert_eq!(helper_resolves(&staged), Some(true));
+        std::fs::remove_file(&helper).expect("remove");
+        assert_eq!(helper_resolves(&staged), Some(false));
+        assert_eq!(helper_resolves("!$HELPER"), None);
     }
 
     #[test]
