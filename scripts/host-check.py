@@ -9,6 +9,7 @@ and is named. Nothing is skipped silently. See TESTING.md § The Host gate.
 Usage: scripts/host-check.py --base REV | --self-test
 """
 import argparse
+import json
 import os
 import pathlib
 import shlex
@@ -20,53 +21,21 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# Tested here because the Host is built from them or ships them.
-HOST_PACKAGES = [
-    "beekeeper-core",
-    "beekeeper-sdk",
-    "beekeeper-persona",
-    "beekeeper-ws-client",
-    "beekeeper-workflow",
-    "beekeeper-host-core",
-    "beekeeper-host",
-    "beekeeper-agent-management",
-    "beekeeper-session-provider",
-    "beekeeper-cli",
-    "beekeeper-acp",
-    "git-credential-nostr",
-]
+# One list, shared with the remote Host lane (scripts/ci-gate-scope.mjs), which runs
+# where this interpreter does not: the CI image has no Python.
+POLICY = json.loads((ROOT / "scripts/host-gate-policy.json").read_text())
 
-MENUBAR = "desktop/src-tauri/crates/beekeeper-menubar"
+# Tested here because the Host is built from them or ships them.
+HOST_PACKAGES = POLICY["host_packages"]
+
+MENUBAR = POLICY["menubar"]
 
 # A change here is what this gate vouches for.
-IN_SCOPE_PREFIXES = (
-    "crates/beekeeper-host-core/",
-    "crates/beekeeper-host/",
-    "crates/beekeeper-agent-management/",
-    "crates/beekeeper-session-provider/",
-    "crates/beekeeper-cli/",
-    "crates/beekeeper-acp/",
-    "crates/git-credential-nostr/",
-    MENUBAR + "/",
-    "conformance/acme-acp/",
-    "scripts/host-",
-)
-IN_SCOPE_FILES = {
-    "Cargo.lock",
-    "desktop/src-tauri/Cargo.lock",
-    "Justfile",
-    "TESTING.md",
-    "docs/agent-host.md",
-}
+IN_SCOPE_PREFIXES = tuple(POLICY["in_scope_prefixes"])
+IN_SCOPE_FILES = set(POLICY["in_scope_files"])
 
 # Consumed well beyond the Host, so a change here is not this gate's to pass.
-SHARED_FANOUT = {
-    "crates/beekeeper-core/": "the relay, desktop and most of the workspace (24 of 40 crates at the time of writing)",
-    "crates/beekeeper-sdk/": "every client that builds events",
-    "crates/beekeeper-persona/": "the desktop and team tooling",
-    "crates/beekeeper-ws-client/": "other relay clients",
-    "crates/beekeeper-workflow/": "the relay",
-}
+SHARED_FANOUT = POLICY["shared_fanout"]
 
 
 def classify(path):

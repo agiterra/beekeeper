@@ -1,0 +1,70 @@
+{
+  "host_packages": [
+    "beekeeper-core",
+    "beekeeper-sdk",
+    "beekeeper-persona",
+    "beekeeper-ws-client",
+    "beekeeper-workflow",
+    "beekeeper-host-core",
+    "beekeeper-host",
+    "beekeeper-agent-management",
+    "beekeeper-session-provider",
+    "beekeeper-cli",
+    "beekeeper-acp",
+    "git-credential-nostr"
+  ],
+  "menubar": "desktop/src-tauri/crates/beekeeper-menubar",
+  "in_scope_prefixes": [
+    "crates/beekeeper-host-core/",
+    "crates/beekeeper-host/",
+    "crates/beekeeper-agent-management/",
+    "crates/beekeeper-session-provider/",
+    "crates/beekeeper-cli/",
+    "crates/beekeeper-acp/",
+    "crates/git-credential-nostr/",
+    "desktop/src-tauri/crates/beekeeper-menubar/",
+    "conformance/acme-acp/",
+    "scripts/host-"
+  ],
+  "in_scope_files": [
+    "Cargo.lock",
+    "desktop/src-tauri/Cargo.lock",
+    "Justfile",
+    "TESTING.md",
+    "docs/agent-host.md"
+  ],
+  "shared_fanout": {
+    "crates/beekeeper-core/": "the relay, desktop and most of the workspace (24 of 40 crates at the time of writing)",
+    "crates/beekeeper-sdk/": "every client that builds events",
+    "crates/beekeeper-persona/": "the desktop and team tooling",
+    "crates/beekeeper-ws-client/": "other relay clients",
+    "crates/beekeeper-workflow/": "the relay"
+  },
+  "remote": {
+    "scope_crates": [
+      "beekeeper-host-core",
+      "beekeeper-host",
+      "beekeeper-agent-management",
+      "beekeeper-session-provider",
+      "beekeeper-cli",
+      "beekeeper-acp",
+      "git-credential-nostr"
+    ],
+    "extra_packages": ["beekeeper-dev-mcp", "sprig"],
+    "relay_image_packages": [
+      "beekeeper-relay",
+      "beekeeper-admin",
+      "beekeeper-pair-relay",
+      "beekeeper-plugin-tools"
+    ],
+    "full_files": [
+      "Cargo.lock",
+      "desktop/src-tauri/Cargo.lock",
+      "Justfile",
+      "justfile",
+      "scripts/host-check.py",
+      "scripts/host-gate-policy.json"
+    ],
+    "full_basenames": ["Cargo.toml"]
+  }
+}

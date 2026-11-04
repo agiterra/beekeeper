@@ -33,6 +33,7 @@ impl DesktopKeyStore {
 }
 
 /// Take exactly one actor's key out of the store's map, and clear the rest.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn extract_agent_key(
     blob: &mut String,
     actor: &str,

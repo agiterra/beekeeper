@@ -348,6 +348,83 @@ them back in `git branch`. They are not pushed.
 `.woodpecker/` pipelines run the gate on pushes to `main` and on PRs, at
 [ci.agiterra.org](https://ci.agiterra.org).
 
+### The Host lane
+
+`gate.yml` is one workflow with two lanes, so there is one
+`ci/woodpecker/push/gate` status and one pipeline row for
+`beekeeper-autodeploy`. Exactly one lane compiles for any pipeline.
+
+**The Host lane is selected only when all of these hold.** Anything else,
+including anything unknown, compiles the full lane:
+
+- the event is a push to `main`;
+- the previous pipeline on the branch was a **push** and **succeeded** — a red,
+  killed, still-running or nightly/PR predecessor proves nothing about the tree;
+- `CI_PIPELINE_FILES` is a non-empty list (Woodpecker leaves it undefined above
+  500 files) and every path is Host or inert markdown under
+  `scripts/host-gate-policy.json`.
+
+**Why the predecessor matters.** The deployer ships the newest green push
+pipeline's whole tree. Without this rule, a Host commit on top of a red relay
+commit would go green and deploy the unvetted relay change. A green Host lane
+means: the previous green push vouched for everything else, and only Host and
+markdown paths have changed since.
+
+**The first step re-derives that from git.** `host-scope` diffs
+`CI_PREV_COMMIT_SHA..HEAD` with renames off, so both sides of a rename count,
+and classifies the real commits rather than the webhook's list. That catches
+a lost webhook, a `[skip ci]` commit and a force-push. If the base is missing,
+is not an ancestor, or the range reaches outside Host, **the pipeline goes red
+and does not deploy**. It cannot fall through to full in place, because the
+services were not compiled in. Restart it, or push again: the predecessor is
+now red, so the next run compiles the full lane.
+
+**What selects full even when it is under a Host path:** `Cargo.lock`,
+`desktop/src-tauri/Cargo.lock`, any `Cargo.toml`, the `Justfile`,
+`scripts/host-check.py` and the policy file. A lockfile can move a dependency
+for every product, and nothing verifies yet that a given change does not. So an
+ordinary Host change that adds a dependency pays for a full run, as `351d62a4c`
+would have. The compiled lane cannot read provenance: that check could only run
+after the services were already left out. The workflow and
+`scripts/ci-gate-scope*` are outside the Host list, so they select full as well.
+Pull requests always run full: their clone does not carry the
+target branch's history, so a merge base cannot be established.
+
+**What the Host lane runs, on Linux:**
+
+| Step | Runs |
+| --- | --- |
+| `host-scope` | the range check above |
+| `host-rust` | `cargo metadata --locked`; a reverse-dependency check; workspace fmt; clippy and tests for the Host packages plus `beekeeper-dev-mcp` and `sprig`, with closed service ports |
+| `host-frontend` | biome on the menu bar frontend and harness scripts; `node --check` |
+| `host-compat` | installs the Tauri apt packages, then menu bar fmt, clippy and tests, and `cargo check` of the `beekeeper-desktop` library and its tests (its binary has no Linux build: `run()` is macOS-only) |
+| `host-gate` | refuses unless every required step has a passing receipt for this commit and each test step ran at least one test |
+
+`beekeeper-dev-mcp` and `sprig` are there because they depend on Host crates.
+The reverse-dependency check derives that list from `cargo metadata` on every
+run, and fails if a crate outside the list starts depending on Host, or if a
+relay image crate does.
+
+**Not the same as `just host-check`, and not a substitute for it.** This is
+Linux. The menu bar's macOS code is compiled out here, so only a Mac (the local
+gate, the pre-push floor) compiles it. `host-check.py`'s Python syntax step does
+not run because the image has no Python. The lane starts no Postgres, Redis or
+RustFS, and runs no relay, database, desktop JS, web, mobile or `beekeeper-agent`
+tests.
+
+**Costs to expect:** the first Host push after a nightly, after a PR pipeline,
+or while another pipeline is still running compiles full. Re-running a red Host
+lane also compiles full, so a flaky test costs a full run rather than a retry.
+`host-compat` adds the Tauri apt packages per run; `.deb` files are kept in
+`/srv/ci-cache/apt-archives`. A green Host lane still makes the deployer rebuild
+the relay, as any green push does today, although no relay input changed.
+
+The nightly workflows are unchanged. Tests: `node --test
+scripts/ci-gate-scope.test.mjs` (the `ci-scope-tests` step, full lane), and
+`scripts/test-ci-gate-config.mjs`, which compiles the real workflow with
+`woodpecker-cli` when one is on `PATH` or named by `WOODPECKER_CLI`, and says it
+was skipped when not. The CI image has none.
+
 ### Documentation-only pushes skip the gate — and therefore the deploy
 
 `gate.yml`'s push rule carries `path.exclude` for `*.md`, `docs/*.md` and
@@ -509,7 +586,9 @@ Wiping any cache dir just costs one cold build. Size is capped by a weekly
 root cron on forge that clears `cargo-target` past 60 GB and `hermit-rust`
 past 20 GB.
 
-The gate clones with `depth: 1` — nothing in it walks git history. The
+The gate clones with `depth: 100`, only so `host-scope` can reach the previous
+pipeline's commit; a longer push loses that base and fails closed. Nothing else
+in it walks git history. The
 file-size ratchet (`just file-size-check`) does **not** run in the gate
 (desktop `pnpm check` is biome + px-text + pubkey-truncation); it runs on
 pre-push instead, where it resolves its base from `origin/main` directly. If it

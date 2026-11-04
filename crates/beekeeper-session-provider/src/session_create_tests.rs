@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(target_os = "macos")]
 use nostr::Keys;
 
 #[tokio::test]

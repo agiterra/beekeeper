@@ -176,8 +176,12 @@ scripted runtime, and it is run when product behavior changes, not for lint. The
 wait is `host-manage-recovery-check.py --real-expiry`, run when the expiry code changes. Neither
 proves a real model, a real account or the installed app.
 
-**Still broad, and not changed by this:** the pre-push floor (`just push`) and the Woodpecker pipeline,
-which is still what admits to `main`. Narrowing those is a separate decision.
+**The remote gate has a Host lane too:** `.woodpecker/gate.yml` runs a narrower lane for a push that is
+Host-only and sits on a previous green push. `docs/INTEGRATION.md` § The Host lane has the contract. The list
+of what counts as Host lives in one file, `scripts/host-gate-policy.json`, read by this gate and that lane. The
+remote lane is stricter: a lockfile, a `Cargo.toml`, the `Justfile` or the gate's own scripts select the full gate.
+
+**Still broad, and not changed by this:** the pre-push floor (`just push`).
 
 ## Live Local Relay
 
