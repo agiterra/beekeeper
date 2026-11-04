@@ -2738,6 +2738,14 @@ pub(crate) fn boundary_briefing(execution: &crate::execution_scope::ExecutionPla
                     path.display()
                 ));
             }
+            if let (true, Some((path, true))) = (prepared.lead_agents, &prepared.agents) {
+                text.push_str(&agents_checkout_briefing(
+                    &crate::actor_seats::SeatAgentsCheckout {
+                        path: path.clone(),
+                        access: "write".to_owned(),
+                    },
+                ));
+            }
             text
         }
         crate::execution_scope::ExecutionPlan::Legacy { reason, .. } => format!(

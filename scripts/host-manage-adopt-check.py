@@ -13,7 +13,7 @@ refuses, the first apply must refuse, and that setup is retried once the fixed o
 The identity's history has the real shape: 23 sessions, 3 open, 13 closed ones carrying a
 stop fence from before the adoption, and no process witness on any of them.
 """
-import datetime, hashlib, importlib.util, json, os, pathlib, secrets, shutil, sys, time, uuid
+import datetime, hashlib, importlib.util, json, os, pathlib, secrets, shutil, subprocess, sys, time, uuid
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("recovery", HERE / "host-manage-recovery-check.py")
@@ -356,6 +356,48 @@ try:
     check("history unchanged: every closed record, the open ones' position, all 13 fences", history() == history_digest)
     check("history unchanged: the same status rows", status_rows() == status_digest, [s[:8] for s in prior_ids if status_rows().get(s) != status_digest.get(s)])
 
+    # A lead's own agents clone: added after the conversation began, it must not cost it.
+    this_session = current[0]["sessionId"]
+    before_clone = state()["sessions"][this_session]
+    def policy(row):
+        digest = (row.get("executionBoundary") or {}).get("policyDigest")
+        return (h.state_dir() / "boundaries" / f"{digest}.sb").read_text() if digest else ""
+    project_row = [p for p in h.inventory()["projects"] if p["coordinate"] == project][0]
+    agents_remote = h.git("-C", project_row["agentsRepo"], "remote", "get-url", "origin").strip()
+    sibling = pathlib.Path(project_row["checkout"]).resolve().with_name(pathlib.Path(project_row["checkout"]).name + "-agents")
+    check("lead's clone: no grant before it exists", str(sibling) not in policy(before_clone))
+    h.git("clone", agents_remote, sibling)
+    foreign_agents = pathlib.Path(project_row["checkout"]).resolve().with_name("another-project-agents")
+    foreign_agents.mkdir()
+    h.stop_host(); h.start_host()
+    # The stub cannot resume, so this turn refuses there; what matters is how far the restore got.
+    again = h.mention(actor, channel, "@Keystone after the clone")
+    def refusal():
+        rows = [r for r in receipts(again) if r[0] == "turn_refused"]
+        return rows or None
+    h.wait_for("the stub's refusal", refusal, 60)
+    log = h.state_dir().parent / "logs" / f"{h.state_dir().name}.log"
+    prepared = [l for l in log.read_text().splitlines() if "execution boundary prepared" in l and this_session in l][-1]
+    import re
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", prepared)
+    policy_digest, scope_digest = re.search(r"policy=(\w+)", clean).group(1), re.search(r"scope=(\w+)", clean).group(1)
+    outbox = (h.state_dir() / "outbox.jsonl").read_text()
+    check("lead's clone: the restore is refused only because the stub cannot resume", "NATIVE_RESTORE_UNSUPPORTED" in outbox and "NATIVE_HISTORY_FOREIGN" not in outbox)
+    check("lead's clone: the scope is unchanged, so the history still attaches", scope_digest == before_clone["executionBinding"]["scopeDigest"], scope_digest[:12])
+    check("lead's clone: the policy changed", policy_digest != before_clone["executionBoundary"]["policyDigest"], policy_digest[:12])
+    restored = (h.state_dir() / "boundaries" / f"{policy_digest}.sb")
+    check("lead's clone: in the policy the restore prepared", f'(subpath "{sibling}")' in restored.read_text())
+    secret = foreign_agents / "plans.md"; secret.write_text("another project\n")
+    def sandboxed(*command):
+        return subprocess.run(["/usr/bin/sandbox-exec", "-f", str(restored), *command], capture_output=True, text=True, timeout=30, cwd=str(sibling))
+    own = sandboxed("/bin/cat", str(sibling / "team.yml"))
+    check("lead's clone: the real policy reads the clone", own.returncode == 0 and "schema" in own.stdout, own.stderr[-200:])
+    other = sandboxed("/bin/cat", str(secret))
+    check("lead's clone: the real policy refuses the directory beside it", other.returncode != 0 and "not permitted" in other.stderr, (other.returncode, other.stderr[-200:]))
+    written = sandboxed("/bin/sh", "-c", f"echo x >> '{sibling / 'team.yml'}'")
+    check("lead's clone: read access writes nothing", written.returncode != 0, written.stderr[-200:])
+    check("lead's clone: history unchanged", history() == history_digest)
+
     # The boundary holds only for the history the adoption found.
     def refused_start(why):
         code, held, message = h.manage("start", "--setup", planned["setupId"])
@@ -396,6 +438,7 @@ try:
     check("with the baseline back: Retry runs", code == 0 and resumed["state"] == "running", message or resumed)
     current = [s for s in state()["sessions"].values() if s.get("actor") == actor and s["channelId"] == channel and not s["closed"]]
     check("with the baseline back: one execution", len(current) == 1, current)
+    check("lead's clone: a fresh execution is bound to it", current[0]["executionBinding"].get("agents") == str(sibling), current[0]["executionBinding"])
     third = h.mention(actor, channel, "@Keystone three")
     h.answer_to(actor, channel, third, 60)
     check("a mention reaches the execution after all of that", any(r[0] == "turn_started" and r[1] == current[0]["sessionId"] for r in receipts(third)), receipts(third))

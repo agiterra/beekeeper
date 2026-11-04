@@ -440,6 +440,9 @@ pub struct PreparedExecution {
     /// The claude-agent-acp session options (`_meta.claudeCode.options`) a
     /// Claude execution opens with; `None` for every other runtime.
     pub claude_options: Option<serde_json::Map<String, serde_json::Value>>,
+    /// [`ScopeInputs::agents_outside_digest`]: a lead's own sibling clone, which
+    /// no seat paragraph describes.
+    pub lead_agents: bool,
     /// The project's agents repository this execution reads, and whether it
     /// may write there.
     pub agents: Option<(PathBuf, bool)>,
@@ -625,6 +628,10 @@ pub struct ScopeInputs<'a> {
     /// whether it may write there: a seat's own clone, or the read-only clone
     /// the host staged for an unseated execution.
     pub agents_checkout: Option<(&'a Path, bool)>,
+    /// That clone is a project lead's own sibling (`lead_agents_clone`), a
+    /// grant within the project the scope already names. It stays out of the
+    /// scope digest, so giving it to a lead does not cost the conversation.
+    pub agents_outside_digest: bool,
     /// The seat's role bundle directory (created by the host if it does not
     /// exist yet: the skills are materialized into it before the spawn).
     pub seat_bundle: Option<&'a Path>,
@@ -697,6 +704,7 @@ impl<'a> ScopeInputs<'a> {
             identity_env: &[],
             project_env: &[],
             agents_checkout: None,
+            agents_outside_digest: false,
             seat_bundle: None,
             role_contract: None,
             context_mcp: None,
@@ -937,7 +945,9 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         } else {
             Access::ReadOnly
         };
-        agents_digest = format!("{}|{}", path.display(), access.as_str());
+        if !inputs.agents_outside_digest {
+            agents_digest = format!("{}|{}", path.display(), access.as_str());
+        }
         grants.push(Grant::tree(
             &path,
             access,
@@ -1297,6 +1307,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         native_refusal,
         runtime: inputs.runtime,
         claude_options,
+        lead_agents: inputs.agents_outside_digest,
         agents,
         full_access: false,
         operator_git_withheld: withhold_git,
@@ -2426,6 +2437,10 @@ mod tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_prep_tests.rs"]
 mod prep_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "execution_scope_lead_agents_tests.rs"]
+mod lead_agents_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_isolation_tests.rs"]

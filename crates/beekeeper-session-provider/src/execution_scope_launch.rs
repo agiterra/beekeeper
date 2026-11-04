@@ -1,6 +1,75 @@
 //! Existing session boundary preparation with protected managed adapter selection.
 use super::*;
 
+/// The `<tree>-agents` clone a project lead's conversation reads, and whether
+/// it may write there. A conversational lead holds no role seat, so nothing else
+/// grants it the project's agents repository.
+///
+/// Only an installed project lead, working in the project's trusted checkout,
+/// with a clone whose origin is that project's trusted agents repository. Its
+/// access is what `team.yml` in that clone gives the role, and `none` is no
+/// grant. Anything else is `None`, and the boundary refuses the path as before.
+pub(crate) fn lead_agents_clone(
+    config: &crate::config::Config,
+    projects: &crate::commands::ProjectsFile,
+    actor: Option<&str>,
+    project: Option<&str>,
+    cwd: &Path,
+) -> Option<(PathBuf, bool)> {
+    let (actor, project) = (actor?, project?);
+    let context: crate::conversation_project::ProjectContext = serde_json::from_slice(
+        &std::fs::read(
+            config
+                .state_dir
+                .join("conversation-projects")
+                .join(format!("{actor}.json")),
+        )
+        .ok()?,
+    )
+    .ok()?;
+    if context.actor != actor || context.project != project {
+        return None;
+    }
+    let tree = canonical(cwd)?;
+    if canonical(projects.projects.get(project)?)? != tree {
+        return None;
+    }
+    let url = projects.agents_repos.get(project)?.url.as_deref()?;
+    let clone = beekeeper_core::model_registry_source::seat_agents_clone_path(&tree)?;
+    if !clone.join(".git").is_dir() {
+        return None;
+    }
+    let mut origin = std::process::Command::new("git");
+    origin
+        .arg("-C")
+        .arg(&clone)
+        .args(["config", "--get", "remote.origin.url"]);
+    for name in crate::git_probe::GIT_REPO_SELECTION_VARS {
+        origin.env_remove(name);
+    }
+    let origin = origin.output().ok()?;
+    if !origin.status.success()
+        || String::from_utf8_lossy(&origin.stdout)
+            .trim()
+            .trim_end_matches('/')
+            != url.trim_end_matches('/')
+    {
+        tracing::warn!(
+            target: "csp::scope",
+            clone = %clone.display(),
+            "this clone's origin is not the project's agents repository, so it was not granted"
+        );
+        return None;
+    }
+    use beekeeper_persona::team::AgentsRepoAccess;
+    let manifest = beekeeper_persona::team::load_team(&clone).ok()??;
+    match manifest.agents_access(crate::commands::LEAD_ROLE) {
+        AgentsRepoAccess::Write => Some((clone, true)),
+        AgentsRepoAccess::Read => Some((clone, false)),
+        AgentsRepoAccess::None => None,
+    }
+}
+
 /// [`crate::Provider::execution_plan`] from the provider's configuration
 /// alone, so a restore can prepare its scope off the run loop (SV-76).
 pub(crate) fn execution_plan_for(
@@ -12,11 +81,24 @@ pub(crate) fn execution_plan_for(
         .project_ref
         .and_then(|project| projects.projects.get(project))
         .cloned();
+    let lead_agents =
+        lead_agents_clone(config, &projects, facts.actor, facts.project_ref, facts.cwd)
+            // A lead's pack gives it seat skills too, with no agents grant of their own.
+            .filter(|_| {
+                facts
+                    .seat_skills
+                    .is_none_or(|skills| skills.agents_checkout.is_none())
+            });
     let agents = facts
         .seat_skills
         .and_then(|skills| skills.agents_checkout.as_ref())
         .map(|agents| (agents.path.as_path(), agents.writable()))
-        .or_else(|| facts.unseated_agents.map(|path| (path, false)));
+        .or_else(|| facts.unseated_agents.map(|path| (path, false)))
+        .or_else(|| {
+            lead_agents
+                .as_ref()
+                .map(|(path, writable)| (path.as_path(), *writable))
+        });
     let role_contract = role_contract(facts.role, facts.seat_skills);
     let hermit_state = crate::execution_scope_host::host_hermit_state();
     // Every bounded session gets the host's own `bee`: offline commands
@@ -88,6 +170,7 @@ pub(crate) fn execution_plan_for(
     inputs.agent_env = facts.agent_env;
     inputs.identity_env = facts.identity_env;
     inputs.agents_checkout = agents;
+    inputs.agents_outside_digest = lead_agents.is_some();
     inputs.seat_bundle = facts.seat_skills.map(|skills| skills.bundle_dir.as_path());
     inputs.role_contract = role_contract.as_deref();
     inputs.configured_mcp_command = configured_mcp.as_deref();
