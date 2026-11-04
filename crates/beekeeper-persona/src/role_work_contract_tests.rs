@@ -69,14 +69,14 @@ const CURRENT: [(&str, &str); 11] = [
     ("architect", "1.1.0"),
     ("builder", "1.2.0"),
     ("designer", "1.1.0"),
-    ("lead", "1.2.8"),
-    ("memory", "1.1.0"),
+    ("lead", "1.2.9"),
+    ("memory", "1.1.1"),
     ("poker", "1.1.0"),
-    ("project-pulse", "1.1.0"),
+    ("project-pulse", "1.1.1"),
     ("project-setup", "1.1.0"),
-    ("runner", "1.2.0"),
-    ("verifier", "1.2.1"),
-    ("working-contract", "1.2.2"),
+    ("runner", "1.2.1"),
+    ("verifier", "1.2.2"),
+    ("working-contract", "1.2.3"),
 ];
 
 /// The roles 1.2.0 thinned, and the version each was thinned from. `verifier`
@@ -139,16 +139,16 @@ const LEAD_1_2_7_CARETS: [&str; 9] = [
 /// revision it names, so a change the lead makes after the review is either
 /// made before it or reviewed before evidence is bound. Every earlier caret
 /// takes it.
-const LEAD_1_2_8_CARETS: [&str; 10] = [
+const LEAD_1_2_8_CARETS: [&str; 11] = [
     "^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3", "^1.2.4", "^1.2.5", "^1.2.6",
-    "^1.2.7",
+    "^1.2.7", "^1.2.8",
 ];
 
 /// Verifier 1.2.1 (control run 6): `refuter-pass` states the assignmentRef
 /// rule the CLI now enforces — a verdict names the assignmentRef of the
 /// report it judges, never the verifier's own assignment. Every earlier
 /// caret takes it.
-const VERIFIER_1_2_1_CARETS: [&str; 3] = ["^1.0.0", "^1.1.0", "^1.2.0"];
+const VERIFIER_1_2_1_CARETS: [&str; 4] = ["^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1"];
 
 /// Every file under `<name>/<version>/`, relative path to bytes.
 fn version_files(name: &str, version: &str) -> BTreeMap<String, Vec<u8>> {
@@ -493,6 +493,62 @@ fn the_lead_1_2_7_template_is_byte_for_byte_what_it_shipped_as() {
     );
 }
 
+/// The `$BEE` quoting revision (patch versions): each version below shipped
+/// before it, so its bytes are frozen; the next patch is a new directory.
+#[test]
+fn the_lead_1_2_8_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("lead", "1.2.8"),
+        "f5e667f41b37a29efa0d665b4d60335a3428b00bae9a515a953f6cd4a03bf32b",
+        "lead/1.2.8 changed; a published version is immutable — add a new version instead"
+    );
+}
+
+#[test]
+fn the_memory_1_1_0_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("memory", "1.1.0"),
+        "b78cce4e820f2a10e211fbd01fbce15ece40bb7b7b2c26d7ae6dede7a1ba31dd",
+        "memory/1.1.0 changed; a published version is immutable — add a new version instead"
+    );
+}
+
+#[test]
+fn the_project_pulse_1_1_0_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("project-pulse", "1.1.0"),
+        "a0db365a46647a4fefda631243b7bb75876e5a29de65d29035a9320e7d1fe052",
+        "project-pulse/1.1.0 changed; a published version is immutable — add a new version instead"
+    );
+}
+
+#[test]
+fn the_runner_1_2_0_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("runner", "1.2.0"),
+        "d093bd0dfe0afb2b734eaa317d44194d7b703f3b0263700126d8d690b0f375dd",
+        "runner/1.2.0 changed; a published version is immutable — add a new version instead"
+    );
+}
+
+#[test]
+fn the_verifier_1_2_1_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("verifier", "1.2.1"),
+        "c16cd9d6893c796a60bec8f29c343567e9df442adde15fa950def8839eea33d8",
+        "verifier/1.2.1 changed; a published version is immutable — add a new version instead"
+    );
+}
+
+#[test]
+fn the_working_contract_1_2_2_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("working-contract", "1.2.2"),
+        "e9f3d01be7bf14ada7bae706ae2de2ee97167a57f56737c0995f5d6e44098778",
+        "working-contract/1.2.2 changed; a published version is immutable — add a new version instead"
+    );
+}
+
 /// Memory 1.1.0 (ledger 288, durable-work plan § 6): a memory carries its
 /// scope and revision, a changed fact supersedes the old memory, and current
 /// instructions and fresh observations outrank a recollection.
@@ -544,8 +600,12 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
             assert!(resolved.warning.is_none(), "{name}@{range}: {resolved:?}");
             assert_eq!(
                 resolved.template.version.to_string(),
-                "1.2.2",
-                "{name}@{range} must take 1.2.2 without anyone editing a role file"
+                if name == "working-contract" {
+                    "1.2.3"
+                } else {
+                    "1.2.2"
+                },
+                "{name}@{range} must take its newest 1.2.x without anyone editing a role file"
             );
         }
         for exact in ["1.0.0", "1.1.0", "1.2.0", "1.2.1"] {
@@ -576,12 +636,13 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         assert!(resolved.warning.is_none(), "lead@{range}: {resolved:?}");
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.2.8",
-            "lead@{range} must take 1.2.8 without anyone editing a role file"
+            "1.2.9",
+            "lead@{range} must take 1.2.9 without anyone editing a role file"
         );
     }
     for exact in [
         "1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6", "1.2.7",
+        "1.2.8",
     ] {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", exact).expect("range"))
@@ -600,11 +661,11 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         assert!(resolved.warning.is_none(), "verifier@{range}: {resolved:?}");
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.2.1",
-            "verifier@{range} must take 1.2.1 without anyone editing a role file"
+            "1.2.2",
+            "verifier@{range} must take 1.2.2 without anyone editing a role file"
         );
     }
-    for exact in ["1.0.0", "1.1.0", "1.2.0"] {
+    for exact in ["1.0.0", "1.1.0", "1.2.0", "1.2.1"] {
         let resolved = catalog
             .resolve(
                 "verifier",
