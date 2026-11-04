@@ -2101,6 +2101,15 @@ fn scope_digest(inputs: &ScopeInputs<'_>, tree: &Path, agents: &str) -> String {
     hex::encode(Sha256::digest(facts.as_bytes()))
 }
 
+/// Makes Cargo fetch Git dependencies with the `git` program.
+///
+/// Cargo's built-in libgit2 ignores `GIT_CONFIG_GLOBAL` and opens
+/// `$HOME/.gitconfig`, which the boundary refuses by design (see
+/// [`TOOLCHAIN_INSTALLATIONS`]), so every Git dependency failed with
+/// `NotFound (-3)`. The `git` program reads the staged configuration
+/// ([`crate::execution_scope_git::stage_git_config`]) and needs no new grant.
+pub(crate) const CARGO_GIT_FETCH_WITH_CLI: &str = "CARGO_NET_GIT_FETCH_WITH_CLI";
+
 /// The scope-owned locations the environment points at.
 struct ScopeEnv<'a> {
     temp: &'a Path,
@@ -2224,6 +2233,12 @@ fn resolve_env(
     }
     for (name, value) in scoped {
         env.scope(name, &value).map_err(invalid)?;
+    }
+    // A default rather than a location the scope owns, so a project or runtime
+    // that declares its own value keeps it instead of being refused.
+    if env.get(CARGO_GIT_FETCH_WITH_CLI).is_none() {
+        env.scope(CARGO_GIT_FETCH_WITH_CLI, "true")
+            .map_err(invalid)?;
     }
     if scope.withhold_git {
         env.remove("SSH_AUTH_SOCK");
@@ -2433,6 +2448,10 @@ pub(crate) async fn stage_unseated_agents_for(
 #[cfg(test)]
 #[path = "execution_scope_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "execution_scope_cargo_tests.rs"]
+mod cargo_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_prep_tests.rs"]

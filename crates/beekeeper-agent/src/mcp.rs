@@ -52,6 +52,10 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "GIT_ASKPASS",
     "GIT_SSH_COMMAND",
     "GIT_CONFIG_GLOBAL",
+    // Cargo — sends Git dependencies through `git`, so they read the staged
+    // GIT_CONFIG_GLOBAL above. Inside an execution boundary, libgit2 fails on
+    // the `$HOME/.gitconfig` it cannot open.
+    "CARGO_NET_GIT_FETCH_WITH_CLI",
     // Proxy — on a host whose only route out is a CONNECT proxy, dropping
     // these does not degrade the tools, it blinds them: apt, curl, pip and git
     // all connect directly instead, and the egress firewall resets the socket.
@@ -1039,6 +1043,16 @@ fn configure_no_window(cmd: &mut Command) {
 #[cfg(test)]
 mod content_tests {
     use super::*;
+
+    #[test]
+    fn passthrough_keeps_cargos_git_transport_on_the_staged_config() {
+        for var in ["GIT_CONFIG_GLOBAL", "CARGO_NET_GIT_FETCH_WITH_CLI"] {
+            assert!(
+                PASSTHROUGH_ENV.contains(&var),
+                "{var} must survive env_clear() or Cargo's Git fetches fail in the boundary"
+            );
+        }
+    }
 
     #[test]
     fn passthrough_includes_beekeeper_owner_attestation() {

@@ -681,6 +681,13 @@ Five things that will mislead you:
   link into `project_scope_pool_dir`, inside the directory the project's
   executions are already granted. That is why the entry is `share` and not an
   env var.
+- **Cargo fetches Git dependencies with the `git` program in an execution.**
+  Its built-in libgit2 opens `$HOME/.gitconfig`, which the boundary refuses, and
+  fails with `NotFound (-3)`. The execution scope therefore defaults
+  `CARGO_NET_GIT_FETCH_WITH_CLI=true`, so `git` reads the staged
+  `GIT_CONFIG_GLOBAL` and no grant on the owner's configuration is needed. A
+  project or runtime that declares its own value keeps it. A running session
+  picks the default up the next time it launches.
 - **A shared `target/` serializes your lanes.** CI gets away with one shared
   target directory only because `WOODPECKER_MAX_WORKFLOWS=1` runs one workflow
   at a time (see the cache-mount table above). Local sandboxes build in parallel
