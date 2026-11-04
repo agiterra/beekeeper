@@ -68,9 +68,11 @@ async fn isolated_provider_child_fixture() {
             record.project_ref = Some(project.clone());
         })
         .expect("closed before marker");
-    std::fs::write(
-        root.join("ready.json"),
-        serde_json::to_vec(
+    // The parent treats this name appearing as the manifest being complete, and
+    // `std::fs::write` creates the name empty before it writes the bytes.
+    beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+        &root.join("ready.json"),
+        &serde_json::to_vec(
             &serde_json::json!({"target":target,"pid":pid,"umbrella":umbrella,"project":project}),
         )
         .expect("ready"),
