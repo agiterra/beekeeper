@@ -18,10 +18,12 @@ pub(super) async fn additional_workspace(
     let held = ownership::for_pair(home, *instance, actor, &config.relay_url)
         .map_err(|_| refused("ownership unavailable"))?
         .ok_or_else(|| refused("new channel requires modern host ownership"))?;
+    let baseline = AdoptedBaseline::read(config, actor);
     if !ownership::is_modern_enrollment(&held)
         || !matches!(held.phase, Phase::Adopted | Phase::HostStopped)
         || state.sessions().any(|record| {
             record.actor.as_deref() == Some(actor)
+                && !baseline.settled_before_adoption(config, record)
                 && record.closed
                 && record.process_witness.as_ref().is_none_or(|witness| {
                     !witness.proves_absent(&record.target(&config.instance_id))

@@ -6,9 +6,14 @@ place, no setup, no ownership row, no route, an old session still open. Custody 
 already there, so the adoption reads no key store. The store's own paths are tested
 with a fake in `adopt_identity_tests.rs`. No real Keychain is touched here.
 
-HM_BIN_DIR names frozen binaries, as for the other host-manage checks.
+HM_BIN_DIR names frozen binaries, as for the other host-manage checks. HM_UPGRADE_PROVIDER
+names a fixed provider: HM_BIN_DIR must then be a writable copy holding the provider that
+refuses, the first apply must refuse, and that setup is retried once the fixed one is in.
+
+The identity's history has the real shape: 23 sessions, 3 open, 13 closed ones carrying a
+stop fence from before the adoption, and no process witness on any of them.
 """
-import hashlib, importlib.util, json, pathlib, secrets, sys, time, uuid
+import datetime, hashlib, importlib.util, json, os, pathlib, secrets, shutil, sys, time, uuid
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("recovery", HERE / "host-manage-recovery-check.py")
@@ -194,11 +199,46 @@ try:
     h.publish_as(h.owner_key, {"kind": 44221, "content": json.dumps(orphan), "tags": [tag for tag in created["tags"] if tag[0] != "csl-command"] + [["csl-command", orphan["commandId"]]]}, "orphan-create")
     old_commands = {e["id"] for e in h.read([44221], "old-before.json", channel=old_channel)}
 
+    # The history a real identity brings: nothing here runs, and nothing should touch it.
+    h.stop_host()
+    state_path = h.state_dir() / "state.json"
+    snapshot = json.loads(state_path.read_text())
+    prior_ids = [old["sessionId"]]
+    fence_time = datetime.datetime(2026, 10, 14, 20, 13, tzinfo=datetime.timezone.utc).timestamp()
+    for index in range(22):
+        clone = json.loads(json.dumps(old))
+        sid = str(uuid.uuid4())
+        clone.pop("processWitness", None)
+        clone.update(sessionId=sid, commandId=f"prior-{sid}", generationCommandId=f"prior-{sid}", sessionRef=str(uuid.uuid4()), genesisRef=secrets.token_hex(32), closed=index >= 2, openTurn=None)
+        snapshot["sessions"][sid] = clone
+        prior_ids.append(sid)
+    state_path.write_text(json.dumps(snapshot))
+    fenced_ids = prior_ids[3:16]
+    def fence_path(sid):
+        return h.state_dir() / f"stop-quiescence-{sid}.json"
+    for sid in fenced_ids:
+        fence_path(sid).write_text(json.dumps({"commandId": "settled-umbrella", "schema": "beekeeper-stop-quiescence/v1", "target": {"driver": old["driver"], "generation": 1, "instanceId": "1958c6c448e05eed", "sessionId": sid}}))
+        fence_path(sid).chmod(0o600)
+        os.utime(fence_path(sid), (fence_time, fence_time))
+    h.start_host()
+    def history():
+        rows = state()["sessions"]
+        closed = {sid: rows[sid] for sid in prior_ids if rows[sid]["closed"]}
+        opened = {sid: {k: rows[sid].get(k) for k in ("closed", "generation", "nextSeq", "openTurn", "resumeCursor")} for sid in prior_ids if not rows[sid]["closed"]}
+        fences = {sid: (fence_path(sid).read_text(), fence_path(sid).stat().st_mtime) for sid in fenced_ids}
+        return hashlib.sha256(json.dumps([closed, opened, fences], sort_keys=True).encode()).hexdigest()
+    def status_rows():
+        rows = json.loads(h.raw("host", "status").stdout)["sessions"]["sessions"]
+        return {r["sessionId"]: r for r in rows if r["sessionId"] in prior_ids}
+    history_digest = history()
+    status_digest = status_rows()
+    check("history: 23 records, 3 open, 13 fenced, no witness", len(prior_ids) == 23 and sum(not state()["sessions"][s]["closed"] for s in prior_ids) == 3 and len(fenced_ids) == 13 and not any(state()["sessions"][s].get("processWitness") for s in prior_ids[1:]))
+
     code, adopted, message = h.manage("adopt-identity", "--pubkey", actor)
     check("adopt: custody already held, so no store read", code == 0 and adopted["keyStoreRead"] is False, message)
-    check("adopt: the old session is the baseline", code == 0 and adopted["priorSessions"] == 1, adopted)
+    check("adopt: the whole history is the baseline", code == 0 and adopted["priorSessions"] == 23, adopted)
     code, again, message = h.manage("adopt-identity", "--pubkey", actor)
-    check("adopt: repeating is the same answer", code == 0 and again["priorSessions"] == 1, message)
+    check("adopt: repeating is the same answer", code == 0 and again["priorSessions"] == 23 and again["keyStoreRead"] is False, message)
     assert code == 0
     code, _, message = h.manage("adopt-identity", "--pubkey", "ab" * 32)
     check("adopt: an identity this owner never defined refuses", code != 0 and "IDENTITY_NOT_OWNED" in message, message)
@@ -229,8 +269,28 @@ try:
     code, report, message = h.manage("preflight", "--spec-file", "-", stdin=plan_spec())
     row = next((c for c in (report or {}).get("checks", []) if c["code"] == "DEFINITION_WILL_CHANGE"), None)
     check("preflight says what the definition will lose", bool(row) and row["ok"] and unpinned in row["message"] and "builtin:fizz" in row["message"], row)
+    fixed_provider = os.environ.get("HM_UPGRADE_PROVIDER")
+    if fixed_provider:
+        code, refused_apply, message = h.manage("apply", "--setup", planned["setupId"])
+        words = message + json.dumps(refused_apply or {})
+        check("before the fix: Start refuses on the old fences", "AGENT_ENROLLMENT_UNAVAILABLE" in words and "process quiescence" in words, words[-400:])
+        journal = json.loads((h.state_dir() / "agent-setups" / f"{planned['setupId']}.json").read_text())
+        closed_attempt = journal["attempts"][0]["operationId"]
+        closed_path = h.home / ".local/state/buzz/host/management/operations" / f"{closed_attempt}.json"
+        closed_bytes = closed_path.read_bytes()
+        identity_before = journal["agentPubkey"]; revision_before = journal["revision"]; count_before = len({e["id"] for e in h.definitions(NAME)})
+        check("before the fix: terminal refusal, fresh attempt pending, not attempted", journal["lastRefusal"]["attemptClosed"] is True and journal["pendingAction"]["attempted"] is False and journal["pendingAction"]["operationId"] != closed_attempt, journal.get("pendingAction"))
+        check("before the fix: nothing opened", not [s for s in state()["sessions"].values() if s.get("actor") == actor and s["channelId"] == channel])
+        h.stop_host()
+        shutil.copy2(fixed_provider, pathlib.Path(os.environ["HM_BIN_DIR"]) / "beekeeper-session-provider")
+        h.start_host()
     code, applied, message = h.manage("apply", "--setup", planned["setupId"])
     check("apply runs", code == 0 and applied["state"] == "running", message or applied)
+    if fixed_provider:
+        check("retry: the same setup, identity and revision", applied.get("setupId") == planned["setupId"] and applied.get("agentPubkey") == identity_before and applied.get("revision") == revision_before)
+        check("retry: the refused command is byte for byte the same", closed_path.read_bytes() == closed_bytes)
+        check("retry: the refusal is on record as a closed attempt", any(a["operationId"] == closed_attempt and a["reason"] == "AGENT_ENROLLMENT_UNAVAILABLE" for a in applied.get("attempts", [])), applied.get("attempts"))
+        check("retry: no further definition published", len({e["id"] for e in h.definitions(NAME)}) == count_before)
     if code or applied.get("state") != "running":
         for op in (h.home / ".local/state/buzz/host/management/operations").glob("*.json"):
             held = json.loads(op.read_text())
@@ -245,7 +305,7 @@ try:
     kept = json.loads(kept_path.read_text()) if kept_path.exists() else {}
     check("the prior definition is kept exactly", kept.get("id") == unpinned and kept.get("sig") == unpinned_event["sig"] and kept.get("content") == unpinned_event["content"], kept.get("id"))
     row = agent_row(actor)
-    check("inventory separates current and prior", row["openSessions"] == 1 and row.get("priorOpenSessions") == 1 and row.get("priorTurnsInFlight") == 0, row)
+    check("inventory separates current and prior", row["openSessions"] == 1 and row.get("priorOpenSessions") == 3 and row.get("priorTurnsInFlight") == 0, row)
     check("the definition now says the model", json.loads(defs[-1]["content"])["model"] == made["model"], defs[-1]["content"][:200])
     check("the persona link gave way to the role pack", json.loads(defs[-1]["content"]).get("persona_id") is None)
     check("name, role and project stay", all(json.loads(defs[-1]["content"]).get(k) == content.get(k) for k in ("name", "home_role", "project_digest", "respond_to")))
@@ -293,6 +353,53 @@ try:
     now = state()["sessions"][old["sessionId"]]
     check("old session still untouched", now["closed"] == old["closed"] and now["nextSeq"] == old["nextSeq"] and now["generation"] == old["generation"], {k: (old.get(k), now.get(k)) for k in ("closed", "nextSeq", "generation", "channelId")})
     print("old-receipts", [(json.loads(json.dumps(r))) for r in receipts_for_session(old["sessionId"])], flush=True)
+    check("history unchanged: every closed record, the open ones' position, all 13 fences", history() == history_digest)
+    check("history unchanged: the same status rows", status_rows() == status_digest, [s[:8] for s in prior_ids if status_rows().get(s) != status_digest.get(s)])
+
+    # The boundary holds only for the history the adoption found.
+    def refused_start(why):
+        code, held, message = h.manage("start", "--setup", planned["setupId"])
+        words = message + json.dumps(held or {})
+        refused = code != 0 or (held or {}).get("state") != "running"
+        check(f"{why}: Start refuses", refused, words[-300:])
+        check(f"{why}: nothing opened", not [s for s in state()["sessions"].values() if s.get("actor") == actor and s["channelId"] == channel and not s["closed"]])
+        return words
+    code, _, message = h.manage("stop", "--setup", planned["setupId"])
+    assert code == 0, message
+    this_host = current[0]["sessionId"]
+    fence_path(this_host).write_text(json.dumps({"commandId": "interrupted", "schema": "beekeeper-stop-quiescence/v1"}))
+    fence_path(this_host).chmod(0o600)
+    words = refused_start("a fence on this Host's own session")
+    check("a fence on this Host's own session: the provider's quiescence refusal", "quiescence" in words.lower(), words[-300:])
+    fence_path(this_host).unlink()
+    newer = fence_path(fenced_ids[0])
+    newer_bytes, newer_stat = newer.read_bytes(), newer.stat()
+    os.utime(newer, None)
+    words = refused_start("an old session's fence written after the adoption")
+    check("a later fence: the provider's quiescence refusal", "quiescence" in words.lower(), words[-300:])
+    os.utime(newer, (newer_stat.st_atime, newer_stat.st_mtime))
+    check("the fence is restored exactly", newer.read_bytes() == newer_bytes and newer.stat().st_mtime == newer_stat.st_mtime)
+    adoption_path = h.state_dir() / "actors" / actor / "adoption.json"
+    adoption_bytes = adoption_path.read_bytes()
+    adoption_path.write_text("{not json")
+    refused_start("an unreadable baseline")
+    adoption_path.write_bytes(adoption_bytes)
+    adoption_path.unlink()
+    refused_start("a missing baseline")
+    adoption_path.write_bytes(adoption_bytes)
+    adoption_path.chmod(0o600)
+    tampered = json.loads(adoption_bytes); tampered["owner"] = "ab" * 32
+    adoption_path.write_text(json.dumps(tampered))
+    refused_start("a baseline naming another owner")
+    adoption_path.write_bytes(adoption_bytes)
+    code, resumed, message = h.manage("apply", "--setup", planned["setupId"])
+    check("with the baseline back: Retry runs", code == 0 and resumed["state"] == "running", message or resumed)
+    current = [s for s in state()["sessions"].values() if s.get("actor") == actor and s["channelId"] == channel and not s["closed"]]
+    check("with the baseline back: one execution", len(current) == 1, current)
+    third = h.mention(actor, channel, "@Keystone three")
+    h.answer_to(actor, channel, third, 60)
+    check("a mention reaches the execution after all of that", any(r[0] == "turn_started" and r[1] == current[0]["sessionId"] for r in receipts(third)), receipts(third))
+    check("history still unchanged", history() == history_digest)
 
     # A Start that aged out, with the member gone: refuse, say how, then re-add and Retry.
     code, _, message = h.manage("stop", "--setup", planned["setupId"])
@@ -363,6 +470,7 @@ try:
     check("aged install: the owner's revision stands", head_id() == owner_head, head_id()[:8])
     check("aged install: the journal is still untouched", journal_events() == op_events)
 
+    check("history unchanged at the end", history() == history_digest)
     check("nothing was signed in the old channel", {e["id"] for e in h.read([44221], "old-after.json", channel=old_channel)} == old_commands)
 
     # Delta 1's blocker: cancel, plan another, resume the first.

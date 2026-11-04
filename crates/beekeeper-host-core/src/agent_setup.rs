@@ -429,6 +429,9 @@ pub struct AdoptionRecord {
     pub actor: String,
     pub owner: String,
     pub prior_sessions: std::collections::BTreeSet<String>,
+    /// When the adoption took its snapshot, as written; absent trusts no fence.
+    #[serde(default)]
+    pub adopted_at: Option<String>,
 }
 
 /// The adoption record, strictly: absent is `Ok(None)`, and anything unreadable,

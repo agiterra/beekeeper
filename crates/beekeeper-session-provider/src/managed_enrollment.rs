@@ -13,9 +13,26 @@ use nostr::{Event, Keys};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+#[path = "adopted_baseline.rs"]
+pub(crate) mod adopted_baseline;
 #[path = "managed_enrollment_channel.rs"]
 mod managed_enrollment_channel;
+use adopted_baseline::AdoptedBaseline;
 use managed_enrollment_channel::additional_workspace;
+
+/// An actor's stop fence this Host's work still answers for. A fence an adoption
+/// found on a record it left settled is history; see [`AdoptedBaseline`].
+pub(crate) fn has_current_stop_fence(config: &Config, state: &StateStore, actor: &str) -> bool {
+    let baseline = AdoptedBaseline::read(config, actor);
+    state.sessions().any(|record| {
+        record.actor.as_deref() == Some(actor)
+            && config
+                .state_dir
+                .join(format!("stop-quiescence-{}.json", record.session_id))
+                .exists()
+            && !baseline.settled_before_adoption(config, record)
+    })
+}
 
 fn refused(message: &str) -> CreateFailure {
     crate::execution_scope::refuse("AGENT_ENROLLMENT_UNAVAILABLE", message)
@@ -93,13 +110,7 @@ fn admit_team_hire(
     if state.unresolved_actor_start(Some(actor)) {
         return Err(refused("a managed actor startup outcome is unconfirmed"));
     }
-    if state.sessions().any(|record| {
-        record.actor.as_deref() == Some(actor)
-            && config
-                .state_dir
-                .join(format!("stop-quiescence-{}.json", record.session_id))
-                .exists()
-    }) {
+    if has_current_stop_fence(config, state, actor) {
         return Err(refused(
             "a responsibility has unconfirmed process quiescence; explicit recovery is required",
         ));
@@ -226,13 +237,7 @@ async fn stage_with_context(
             "start must preserve the protected project association",
         ));
     }
-    if state.sessions().any(|record| {
-        record.actor.as_deref() == Some(actor)
-            && config
-                .state_dir
-                .join(format!("stop-quiescence-{}.json", record.session_id))
-                .exists()
-    }) {
+    if has_current_stop_fence(config, state, actor) {
         return Err(refused(
             "a responsibility has unconfirmed process quiescence; explicit recovery is required",
         ));
@@ -315,16 +320,14 @@ async fn stage_with_context(
             if held.phase == Phase::Adopted && held.operation_id != payload.command_id {
                 // An explicitly requested additional Solo responsibility remains
                 // host-owned. Only the all-terminal boundary changes the primary journal.
+                let baseline = AdoptedBaseline::read(config, actor);
                 let active = state.sessions().any(|record| {
-                    record.actor.as_deref() == Some(actor) && !record.closed && !record.is_retired()
-                });
-                if state.sessions().any(|record| {
                     record.actor.as_deref() == Some(actor)
-                        && config
-                            .state_dir
-                            .join(format!("stop-quiescence-{}.json", record.session_id))
-                            .exists()
-                }) {
+                        && !record.closed
+                        && !record.is_retired()
+                        && !baseline.names(&record.session_id)
+                });
+                if has_current_stop_fence(config, state, actor) {
                     return Err(refused("a responsibility has unconfirmed process quiescence; explicit recovery is required"));
                 }
                 if let Some(target) = held.target.as_ref().filter(|_| !active) {

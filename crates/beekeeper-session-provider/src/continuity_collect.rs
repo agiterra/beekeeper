@@ -231,7 +231,15 @@ impl crate::Provider {
             return Err(Refusal::Unavailable);
         }
         let actor = record.actor.as_deref().ok_or(Refusal::Unavailable)?;
-        if self.actor_has_unproved_stop(Some(actor)) {
+        // Leaving an adopted identity's history out of the scan frees its new
+        // work, not the old sessions themselves.
+        if self.actor_has_unproved_stop(Some(actor))
+            || crate::managed_enrollment::adopted_baseline::AdoptedBaseline::read(
+                &self.config,
+                actor,
+            )
+            .names(&record.session_id)
+        {
             return Err(Refusal::Unavailable);
         }
         let _ownership = crate::host_ownership::admit(

@@ -215,8 +215,11 @@ impl crate::Provider {
         let Some(actor) = actor else {
             return false;
         };
+        let baseline =
+            crate::managed_enrollment::adopted_baseline::AdoptedBaseline::read(&self.config, actor);
         self.state.sessions().any(|record| {
             record.actor.as_deref() == Some(actor)
+                && !baseline.settled_before_adoption(&self.config, record)
                 && (self
                     .config
                     .state_dir
