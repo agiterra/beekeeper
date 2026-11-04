@@ -19,6 +19,10 @@
 //! mean the agent has answered anyone: only a signed turn result proves the
 //! runtime's account works. Nothing here says otherwise.
 
+#[path = "project_agent_setup_model.rs"]
+mod model;
+pub use model::{plan_model_change, record_model_change, ModelChangePlan};
+
 use crate::hire_source::{host, materialize, projects};
 use crate::management::configuration::{current_head, require_private_channel};
 use crate::management::local::{self, fail};
@@ -1022,6 +1026,7 @@ pub async fn plan(
         }],
         last_refusal: None,
         readback: None,
+        model_change: None,
     };
     save(&config, &mut setup)?;
     Ok(setup)

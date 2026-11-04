@@ -38,6 +38,35 @@ AGENT_NAME = "acme-acp"
 AGENT_VERSION = "0.1.0"
 
 
+# Off unless a check puts this file in the session's directory, as `hire-proof.json`
+# is: an adapter offering this is a different adapter to the provider, so the
+# ordinary conformance runs must not see it.
+MODEL_CONTROL_FILE = "acme-model-control.json"
+
+
+def offered_models(cwd) -> list:
+    if not cwd:
+        return []
+    try:
+        with open(os.path.join(cwd, MODEL_CONTROL_FILE)) as source:
+            return list(json.load(source))
+    except OSError:
+        return []
+
+
+def model_options(models: list, current: str) -> list:
+    return [
+        {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": current,
+            "options": [{"value": model, "name": model} for model in models],
+        }
+    ]
+
+
 def log(message: str) -> None:
     sys.stderr.write(f"acme-acp: {message}\n")
     sys.stderr.flush()
@@ -105,7 +134,20 @@ def main() -> int:
             session_id = f"acme-session-{session_counter}"
             sessions[session_id] = {"open_prompt": None, "cwd": params.get("cwd")}
             log(f"opened {session_id} in {params.get('cwd')!r}")
-            reply(request_id, {"sessionId": session_id})
+            answer = {"sessionId": session_id}
+            models = offered_models(params.get("cwd"))
+            if models:
+                sessions[session_id]["models"] = models
+                answer["configOptions"] = model_options(models, models[0])
+            reply(request_id, answer)
+        elif method == "session/set_config_option" and sessions.get(params.get("sessionId"), {}).get("models"):
+            models = sessions[params["sessionId"]]["models"]
+            value = params.get("value")
+            if params.get("configId") != "model" or value not in models:
+                refuse(request_id, -32602, f"no such model setting {value!r}")
+                continue
+            log(f"model set to {value}")
+            reply(request_id, {"configOptions": model_options(models, value)})
         elif method == "session/prompt":
             session_id = params.get("sessionId")
             session = sessions.get(session_id)

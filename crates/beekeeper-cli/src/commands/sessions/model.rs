@@ -457,9 +457,47 @@ async fn await_metadata(
     }
 }
 
+/// One read for the case where `model_applied` caused no republish: the provider
+/// skips metadata identical to what it last published, so a switch to the model
+/// the execution already reports leaves nothing new to find. The newest signed
+/// record is then current, and it confirms only if it names `selection`.
+async fn current_metadata(
+    client: &BeekeeperClient,
+    channel_id: &str,
+    provider: &str,
+    target: &CodingSessionTarget,
+    selection: &str,
+) -> MetadataModel {
+    let filter = json!({
+        "kinds": [KIND_CODING_SESSION_METADATA],
+        "#h": [channel_id],
+        "#cs-target": [coding_session_target_key(target)],
+    });
+    match client.query_all(filter).await {
+        Ok(events) => unrepublished_confirmation(&events, provider, target, selection),
+        Err(_) => MetadataModel::Absent,
+    }
+}
+
+/// The newest provider-signed record for `target`, if it names `selection`.
+pub(super) fn unrepublished_confirmation(
+    events: &[Value],
+    provider: &str,
+    target: &CodingSessionTarget,
+    selection: &str,
+) -> MetadataModel {
+    match metadata_after_receipt(events, provider, target, &HashSet::new(), 0) {
+        MetadataModel::Confirmed { event_id, model } if model.as_deref() == Some(selection) => {
+            MetadataModel::Confirmed { event_id, model }
+        }
+        _ => MetadataModel::Absent,
+    }
+}
+
 /// `bee sessions model` — publish one `thread.model.set` to the execution
-/// `--to` names, wait for its receipt, then read the model now in effect from
-/// the generation's republished metadata.
+/// `--to` names, wait for its receipt, then read the model the adapter
+/// acknowledged from the generation's republished metadata. That is not a turn
+/// on the model, and it proves nothing about effort.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_model(
     client: &BeekeeperClient,
@@ -470,6 +508,51 @@ pub async fn cmd_model(
     no_wait: bool,
     timeout_secs: Option<u64>,
 ) -> Result<(), CliError> {
+    let merged = publish_switch(
+        client,
+        channel_id,
+        to,
+        session_ref,
+        selection,
+        no_wait,
+        timeout_secs,
+    )
+    .await?;
+    println!("{merged}");
+    Ok(())
+}
+
+/// Switch and wait, and return the same report `bee sessions model` prints.
+pub(crate) async fn switch_model(
+    client: &BeekeeperClient,
+    channel_id: &str,
+    to: &str,
+    session_ref: Option<&str>,
+    selection: &str,
+    timeout_secs: Option<u64>,
+) -> Result<Value, CliError> {
+    publish_switch(
+        client,
+        channel_id,
+        to,
+        session_ref,
+        selection,
+        false,
+        timeout_secs,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn publish_switch(
+    client: &BeekeeperClient,
+    channel_id: &str,
+    to: &str,
+    session_ref: Option<&str>,
+    selection: &str,
+    no_wait: bool,
+    timeout_secs: Option<u64>,
+) -> Result<Value, CliError> {
     let channel = Uuid::parse_str(channel_id)
         .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
     if let Some(session_ref) = session_ref {
@@ -573,7 +656,12 @@ pub async fn cmd_model(
     };
     let metadata_read = match &wait {
         Some(ReceiptWait::Answered(ModelAnswer::Applied { created_at, .. })) => {
-            await_metadata(client, channel_id, &provider, &target, &seen, *created_at).await
+            match await_metadata(client, channel_id, &provider, &target, &seen, *created_at).await {
+                MetadataModel::Absent => {
+                    current_metadata(client, channel_id, &provider, &target, &selection).await
+                }
+                read => read,
+            }
         }
         _ => MetadataModel::Absent,
     };
@@ -582,8 +670,7 @@ pub async fn cmd_model(
         eprintln!("bee sessions model: {}", report.delivery);
     }
     merge_model_report(&mut merged, report, !no_wait);
-    println!("{merged}");
-    Ok(())
+    Ok(merged)
 }
 
 /// Write `report` into the relay's write response.

@@ -30,6 +30,11 @@ answers what this one answers and commission it the same way.
 | `session/cancel` | ends an open turn with `stopReason: "cancelled"`; silent otherwise. |
 | `session/load`, `session/resume`, `_session/steering`, `session/set_model`, `authenticate`, anything else | JSON-RPC `-32601` method not found. |
 
+With a JSON list of model ids in `acme-model-control.json` in the session's
+directory, and only then, `session/new` also offers a `model` config option over
+them and `session/set_config_option` sets it. A check that needs a live model
+switch writes that file; nothing else should.
+
 Nothing is faked: unsupported is refused by code, never answered with an
 empty success.
 

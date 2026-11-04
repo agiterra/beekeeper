@@ -29,7 +29,8 @@ use beekeeper_sdk::builders::{
 use super::crew_cmds::ReceiptWait;
 use super::model::{
     classify_model_receipts, cmd_model, fold_model_report, merge_model_report,
-    metadata_after_receipt, MetadataModel, ModelAnswer, MODEL_WAIT_SECONDS,
+    metadata_after_receipt, unrepublished_confirmation, MetadataModel, ModelAnswer,
+    MODEL_WAIT_SECONDS,
 };
 use crate::client::BeekeeperClient;
 use crate::error::CliError;
@@ -717,4 +718,44 @@ fn inbox_and_send_fold_read_model_applied_as_delivered_without_naming_a_model() 
     assert_eq!(report.delivered, Some(true));
     assert_eq!(report.status, "model_applied");
     assert!(report.detail.contains("metadata"), "{}", report.detail);
+}
+
+/// A repeated switch republishes nothing, so the newest signed record answers.
+#[test]
+fn an_applied_switch_with_no_republish_confirms_only_from_the_exact_current_model() {
+    let keys = nostr::Keys::generate();
+    let provider = keys.public_key().to_hex();
+    let target = target(1);
+    let on = |model: &str, at: u64| signed_metadata(&keys, &target, Some(model), at);
+    let wanted = "opus[low]";
+    assert!(matches!(
+        unrepublished_confirmation(
+            &[on("sonnet[low]", 100), on(wanted, 200)],
+            &provider,
+            &target,
+            wanted
+        ),
+        MetadataModel::Confirmed { model: Some(model), .. } if model == wanted
+    ));
+    assert_eq!(
+        unrepublished_confirmation(
+            &[on(wanted, 100), on("sonnet[low]", 200)],
+            &provider,
+            &target,
+            wanted
+        ),
+        MetadataModel::Absent,
+        "an older record naming it is not the current one"
+    );
+    assert_eq!(
+        unrepublished_confirmation(&[on("opus", 200)], &provider, &target, wanted),
+        MetadataModel::Absent,
+        "the base model alone does not confirm the effort asked for"
+    );
+    let other = signed_metadata(&nostr::Keys::generate(), &target, Some(wanted), 300);
+    assert_eq!(
+        unrepublished_confirmation(&[other], &provider, &target, wanted),
+        MetadataModel::Absent,
+        "another signer's record proves nothing"
+    );
 }

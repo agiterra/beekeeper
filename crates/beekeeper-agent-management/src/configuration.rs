@@ -388,4 +388,4 @@ pub(crate) async fn require_private_channel(
 
 #[cfg(test)]
 #[path = "configuration_cas_tests.rs"]
-mod cas_tests;
+pub(crate) mod cas_tests;

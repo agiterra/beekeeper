@@ -85,6 +85,22 @@ pub enum ManageCmd {
         #[command(flatten)]
         owner: OwnerArgs,
     },
+    /// Change an installed agent's model and effort, keeping its identity and conversation.
+    /// A running execution takes it at its next boundary, and a refusal changes nothing
+    SetModel {
+        #[arg(long)]
+        setup: Uuid,
+        /// A model id from the running provider's catalog.
+        #[arg(long)]
+        model: String,
+        /// Keeps the setup's current effort when absent.
+        #[arg(long)]
+        effort: Option<String>,
+        #[arg(long)]
+        templates: Option<PathBuf>,
+        #[command(flatten)]
+        owner: OwnerArgs,
+    },
     /// Record a project's checkout and agents clone on this Host.
     Trust {
         #[arg(long)]
@@ -445,6 +461,78 @@ pub async fn dispatch(
             let scope = scope()?;
             let client = owner_client(&target.owner, env_key, delegated, &scope.config)?;
             report(&setup::stop(&scope.context, &client, target.setup).await?)
+        }
+        ManageCmd::SetModel {
+            setup: setup_id,
+            model,
+            effort,
+            templates: explicit,
+            owner,
+        } => {
+            let scope = scope()?;
+            let client = owner_client(owner, env_key, delegated, &scope.config)?;
+            let plan = setup::plan_model_change(
+                &scope.context,
+                &client,
+                &probe(&scope.socket).await,
+                *setup_id,
+                model,
+                effort.as_deref(),
+                &templates(explicit.as_deref())?,
+            )
+            .await?;
+            let switch = match &plan.session {
+                Some(session) => {
+                    let report = super::sessions::model::switch_model(
+                        &client,
+                        &plan.channel.to_string(),
+                        session,
+                        Some(&plan.session_ref.to_string()),
+                        &plan.selection,
+                        None,
+                    )
+                    .await?;
+                    if report["modelStatus"] != "confirmed"
+                        || report["model"].as_str() != Some(plan.selection.as_str())
+                    {
+                        return Err(CliError::Refused(format!(
+                            "MODEL_NOT_SWITCHED: the journal and definition were not changed. \
+                             Provider status {}, provider-signed model {}. {} If the switch \
+                             applied, or applies later at its boundary, the execution differs \
+                             from the definition and mentions refuse with \
+                             AGENT_MODEL_UPDATE_PENDING until they agree. Run this again to \
+                             record it, or name the previous model to go back.",
+                            report["deliveryStatus"],
+                            report["model"],
+                            report["delivery"]
+                                .as_str()
+                                .unwrap_or("no answer from the provider")
+                        )));
+                    }
+                    report
+                }
+                None => serde_json::Value::Null,
+            };
+            let recorded = setup::record_model_change(
+                &scope.context,
+                &client,
+                *setup_id,
+                model,
+                effort.as_deref(),
+            )
+            .await?;
+            println!(
+                "{}",
+                json!({
+                    "setupId": recorded.setup_id,
+                    "agentPubkey": recorded.agent_pubkey,
+                    "selection": recorded.spec.selection(),
+                    "revision": recorded.revision,
+                    "session": plan.session,
+                    "switch": switch,
+                })
+            );
+            Ok(())
         }
         ManageCmd::Inspect(target) => {
             let scope = scope()?;

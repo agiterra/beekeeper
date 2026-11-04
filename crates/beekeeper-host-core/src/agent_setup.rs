@@ -195,6 +195,20 @@ pub struct ConfirmedSetupStart {
     pub target: beekeeper_core::coding_session_command::CodingSessionTarget,
 }
 
+/// A model change being recorded, written only once the execution took it or
+/// there was none to take it. A retry repeats this exact request: the revision and
+/// snapshot it started from, not the ones its own first attempt left behind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelChange {
+    pub operation_id: Uuid,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    pub expected_revision: String,
+    pub snapshot_hash: String,
+}
+
 /// The journal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -245,6 +259,9 @@ pub struct AgentSetup {
     /// The signed readback the running state rests on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readback: Option<serde_json::Value>,
+    /// A model change the execution took and the journal has not finished recording.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_change: Option<ModelChange>,
 }
 
 /// What a reader should call a stored state.
@@ -490,6 +507,22 @@ pub fn read_open_executions(provider_state_dir: &Path) -> Result<Vec<OpenExecuti
         .collect())
 }
 
+/// Whether the provider's own record of this open execution already reads
+/// `selection`, both as asked and as the adapter acknowledged it. Unreadable or
+/// absent reads as no, so the caller falls back to asking the provider.
+pub fn execution_already_on(provider_state_dir: &Path, session_id: &str, selection: &str) -> bool {
+    let Ok(bytes) = std::fs::read(provider_state_dir.join("state.json")) else {
+        return false;
+    };
+    let Ok(state) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let session = &state["sessions"][session_id];
+    session["closed"].as_bool() == Some(false)
+        && session["model"].as_str() == Some(selection)
+        && session["modelRequested"].as_str() == Some(selection)
+}
+
 /// Every open record, including an adopted identity's prior sessions, for a reader
 /// that shows them separately.
 pub fn read_all_open_executions(provider_state_dir: &Path) -> Result<Vec<OpenExecution>, String> {
@@ -627,6 +660,7 @@ mod tests {
             steps: Vec::new(),
             last_refusal: None,
             readback: None,
+            model_change: None,
         }
     }
 

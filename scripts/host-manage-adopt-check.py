@@ -444,6 +444,135 @@ try:
     check("a mention reaches the execution after all of that", any(r[0] == "turn_started" and r[1] == current[0]["sessionId"] for r in receipts(third)), receipts(third))
     check("history still unchanged", history() == history_digest)
 
+    # Changing the model keeps the identity, and a refused switch changes nothing.
+    # The stub is commissioned with one model; a Host offering two is what this needs.
+    host_json = h.home / ".local/state/buzz/host/host.json"
+    h.stop_host()
+    commissioned = json.loads(host_json.read_text())
+    commissioned["runtimes"][0]["allowedModels"] = sorted(set(commissioned["runtimes"][0].get("allowedModels") or []) | {"second-model"})
+    host_json.write_text(json.dumps(commissioned, indent=2))
+    h.start_host()
+    other_models = [m["id"] for m in h.inventory()["runtimes"][0]["selectableModels"] if m["id"] != made["model"]]
+    check("the fixture offers a second model, so these rows run", bool(other_models), other_models)
+    setup_path_m = h.state_dir() / "agent-setups" / f"{planned['setupId']}.json"
+    if other_models:
+        target_model = other_models[0]
+        journal_before = setup_path_m.read_bytes(); head_before = head_id()
+        # The role names its model here, so a change would strand the next retried Start.
+        code, _, message = h.manage("set-model", "--setup", planned["setupId"], "--model", target_model)
+        check("set-model: a role that declares another model refuses up front", code != 0 and "ROLE_DECLARATION_CONFLICT" in message, message[-240:])
+        check("set-model, role conflict: the journal is byte for byte the same", setup_path_m.read_bytes() == journal_before)
+        # A role that names no model, as Keystone's does.
+        team_path = pathlib.Path(project_row["agentsRepo"]) / "team.yml"
+        team = team_path.read_text()
+        declared = f"  lead:\n    runtime: acme\n    model: {made['model']}\n"
+        assert declared in team, team
+        team_path.write_text(team.replace(declared, "  lead:\n    runtime: acme\n"))
+        h.git("-C", project_row["agentsRepo"], "add", "team.yml")
+        h.git("-C", project_row["agentsRepo"], "commit", "-s", "-m", "The lead names no model")
+        h.git("-C", project_row["agentsRepo"], "push", "origin", "HEAD:main")
+        code, _, message = h.manage("set-model", "--setup", planned["setupId"], "--model", target_model)
+        check("set-model, running, switch off here: refused by the provider", code != 0 and "MODEL_NOT_SWITCHED" in message, message[-260:])
+        check("set-model refused: the journal is byte for byte the same", setup_path_m.read_bytes() == journal_before)
+        check("set-model refused: the definition is the same", head_id() == head_before)
+        code, _, message = h.manage("set-model", "--setup", planned["setupId"], "--model", "no-such-model")
+        check("set-model: a model not on offer refuses", code != 0 and "MODEL_NOT_IN_EFFECTIVE_CATALOG" in message, message[-200:])
+        code, _, message = h.manage("stop", "--setup", planned["setupId"])
+        assert code == 0, message
+        code, changed, message = h.manage("set-model", "--setup", planned["setupId"], "--model", target_model)
+        check("set-model, stopped: recorded", code == 0 and changed["selection"] == target_model and changed["agentPubkey"] == actor and changed["switch"] is None, message or changed)
+        journal = json.loads(setup_path_m.read_text())
+        check("set-model: journal moved together", journal["spec"]["model"] == target_model and journal["revision"] == head_id() and "modelChange" not in journal, journal.get("revision"))
+        latest = sorted(h.definitions(NAME), key=lambda e: e["created_at"])[-1]
+        check("set-model: the definition names it, nothing else moved", json.loads(latest["content"])["model"] == target_model and all(json.loads(latest["content"]).get(k) == content.get(k) for k in ("name", "home_role", "project_digest", "respond_to")))
+        private = json.loads((h.state_dir() / "actors" / actor / "configuration.json").read_text())
+        check("set-model: the private settings moved too", private["record"]["model"] == target_model and private["definition"]["id"] == head_id())
+        code, again, message = h.manage("set-model", "--setup", planned["setupId"], "--model", target_model)
+        check("set-model: repeating is safe", code == 0 and again["selection"] == target_model, message)
+        code, started, message = h.manage("start", "--setup", planned["setupId"])
+        check("after set-model: Start runs the same identity on it", code == 0 and started["state"] == "running" and started["agentPubkey"] == actor, message or started)
+        current = [s for s in state()["sessions"].values() if s.get("actor") == actor and s["channelId"] == channel and not s["closed"]]
+        check("after set-model: one execution, on the new model", len(current) == 1 and current[0]["model"] == target_model, [(c["sessionId"][:8], c["model"]) for c in current])
+        check("after set-model: history unchanged", history() == history_digest)
+
+        # The running path: a stub that offers a model control, with the flag on.
+        def switch_env():
+            return {"BEEKEEPER_CSP_MODEL_SWITCH": "1"}
+        def applied_count():
+            # From the relay: the provider's outbox is compacted once published.
+            return sum(json.loads(e["content"])["status"] == "model_applied" for e in h.read([44224], "receipts.json", channel=channel))
+        def refused_codes(mention):
+            answers = [json.loads(e["content"]) for e in h.read([44224], "receipts.json", channel=channel)]
+            return [(a.get("error") or {}).get("code") for a in answers if a["commandId"] == mention and a["status"] == "turn_refused"]
+        def on_model(model):
+            return [e for e in h.definitions(NAME) if json.loads(e["content"])["model"] == model]
+        def execution():
+            rows = [s for s in state()["sessions"].values() if s.get("actor") == actor and s["channelId"] == channel and not s["closed"]]
+            assert len(rows) == 1, rows
+            return rows[0]
+        session_ref = json.loads(setup_path_m.read_text())["sessionRef"]
+        control_file = pathlib.Path(execution()["cwd"]) / "acme-model-control.json"
+        control_file.write_text(json.dumps([target_model, made["model"]]))
+        h.stop_host(); h.start_host(switch_env())
+        this_execution = execution()["sessionId"]
+        this_generation = execution()["generation"]
+        def started_on_it(mention):
+            # It answered (the caller waited), on this execution and generation only.
+            return execution()["sessionId"] == this_execution and execution()["generation"] == this_generation
+
+        # After a restart nothing is live to take a switch, and that changes nothing.
+        journal_before = setup_path_m.read_bytes()
+        code, _, message = h.manage("set-model", "--setup", planned["setupId"], "--model", made["model"])
+        check("set-model, flag on, nothing live: refused", code != 0 and "MODEL_NOT_SWITCHED" in message and "NO_LIVE_EXECUTION" in message, message[-300:])
+        check("set-model, nothing live: the refusal names what a switch would leave", "AGENT_MODEL_UPDATE_PENDING" in message, message[-300:])
+        check("set-model, nothing live: the journal is byte for byte the same", setup_path_m.read_bytes() == journal_before)
+        live = h.mention(actor, channel, "@Keystone reopen")
+        h.answer_to(actor, channel, live, 60)
+        check("a mention reopens the same execution", started_on_it(live), execution().get("generation"))
+
+        # Switched and confirmed, then killed while recording, then the same command.
+        applied, revisions = applied_count(), len(on_model(made["model"]))
+        killed = h.kill_when(planned["setupId"], lambda j: j.get("modelChange"), verb="set-model", extra=("--model", made["model"]))
+        check("running set-model: killed with the change held", killed and json.loads(setup_path_m.read_text()).get("modelChange"), setup_path_m.read_text()[-400:])
+        check("running set-model: the switch was applied before the hold", applied_count() == applied + 1, applied_count())
+        code, rerun, message = h.manage("set-model", "--setup", planned["setupId"], "--model", made["model"])
+        check("the interrupted record: the same command finishes it", code == 0 and rerun["selection"] == made["model"] and rerun["agentPubkey"] == actor, message or rerun)
+        check("the interrupted record: no second switch was sent", rerun and rerun["switch"] is None and applied_count() == applied + 1, applied_count())
+        journal = json.loads(setup_path_m.read_text())
+        check("the interrupted record: journal moved, hold cleared", journal["spec"]["model"] == made["model"] and journal["revision"] == head_id() and "modelChange" not in journal, journal.get("modelChange"))
+        check("the interrupted record: one new definition", len(on_model(made["model"])) == revisions + 1, len(on_model(made["model"])))
+        admitted = h.mention(actor, channel, "@Keystone on it now")
+        h.answer_to(actor, channel, admitted, 60)
+        check("after the running change: a mention is admitted on the same execution", started_on_it(admitted), execution().get("generation"))
+        check("after the running change: the provider record reads it", execution()["model"] == made["model"] and execution()["sessionId"] == this_execution, execution().get("model"))
+
+        # A repeated switch republishes nothing, and that is still a confirmation.
+        repeat = json.loads(h.owner_bee("sessions", "model", "--channel", channel, "--to", this_execution, "--session-ref", session_ref, "--model", made["model"]))
+        check("a repeated switch: applied, confirmed from the current signed record", repeat["deliveryStatus"] == "model_applied" and repeat["modelStatus"] == "confirmed" and repeat["model"] == made["model"], repeat)
+
+        # Applied and never recorded, then a restart: mentions refuse and nothing is live.
+        direct = json.loads(h.owner_bee("sessions", "model", "--channel", channel, "--to", this_execution, "--session-ref", session_ref, "--model", target_model))
+        check("the crash window: switched, not recorded", direct["modelStatus"] == "confirmed" and json.loads(setup_path_m.read_text())["spec"]["model"] == made["model"], direct)
+        pending = h.mention(actor, channel, "@Keystone refused for now")
+        h.wait_for("the pending refusal", lambda: refused_codes(pending), 60)
+        check("the crash window: a mention refuses until they agree", "AGENT_MODEL_UPDATE_PENDING" in refused_codes(pending), refused_codes(pending))
+        h.stop_host(); h.start_host(switch_env())
+        applied = applied_count()
+        code, closed, message = h.manage("set-model", "--setup", planned["setupId"], "--model", target_model)
+        check("the crash window, restarted: the provider's record lets it finish, with no switch", code == 0 and closed["switch"] is None and applied_count() == applied, message or closed)
+        check("the crash window: journal and definition agree", json.loads(setup_path_m.read_text())["spec"]["model"] == target_model and json.loads(sorted(h.definitions(NAME), key=lambda e: e["created_at"])[-1]["content"])["model"] == target_model)
+        # Past the definition's gate: this stub cannot resume, so the restore is where
+        # it stops, as for the lead's clone above. `model_switch_survives_a_resume` is
+        # the provider's own proof of the rest, and the real adapter resumes.
+        back = h.mention(actor, channel, "@Keystone back")
+        h.wait_for("the mention's answer", lambda: refused_codes(back), 60)
+        check("the crash window: a mention now passes the definition's gate", refused_codes(back) == ["NATIVE_RESTORE_UNSUPPORTED"], refused_codes(back))
+        check("the crash window: same execution and generation, no Stop or Start", started_on_it(back), execution().get("generation"))
+        check("after the running change: history unchanged", history() == history_digest)
+        # The flag lives as long as the Host: only a second restart clears it.
+        control_file.unlink()
+        h.stop_host(); h.start_host()
+
     # A Start that aged out, with the member gone: refuse, say how, then re-add and Retry.
     code, _, message = h.manage("stop", "--setup", planned["setupId"])
     setup_path = h.state_dir() / "agent-setups" / f"{planned['setupId']}.json"

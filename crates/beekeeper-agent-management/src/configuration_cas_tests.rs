@@ -4,13 +4,13 @@ use std::sync::{
     Mutex,
 };
 
-struct Relay {
+pub(crate) struct Relay {
     keys: Keys,
     url: String,
-    events: Mutex<Vec<Event>>,
+    pub(crate) events: Mutex<Vec<Event>>,
     writes: AtomicUsize,
     queries: AtomicUsize,
-    lose_publication_reply: AtomicBool,
+    pub(crate) lose_publication_reply: AtomicBool,
 }
 impl RelayTransport for Relay {
     fn keys(&self) -> &Keys {
@@ -62,7 +62,7 @@ impl RelayTransport for Relay {
         Ok(json!({"event_id":event.id.to_hex(),"accepted":true}))
     }
 }
-fn fixture() -> (
+pub(crate) fn fixture() -> (
     tempfile::TempDir,
     Context,
     Relay,
@@ -98,6 +98,14 @@ fn fixture() -> (
         written_at: provider.created_at.clone(),
     };
     provision::write_commissioning(&context.home, &config, &provider).expect("commission");
+    let mut store = beekeeper_host_core::record::CodingSessionProviderStore::default();
+    store.upsert(&url, provider.clone());
+    std::fs::create_dir_all(&config.session_provider_base_dir).expect("provider dir");
+    std::fs::write(
+        config.record_store_path(),
+        serde_json::to_vec(&store).expect("store"),
+    )
+    .expect("store written");
     actor_custody(
         &config.provider_state_dir,
         &actor.provider_pubkey,
