@@ -1832,6 +1832,15 @@ fn decorate_refusal(message: String) -> String {
     )
 }
 
+/// Whether this refusal came from the relay's membership gate, by the same
+/// markers that earn [`REMEDY_MEMBERSHIP`], so a caller's join advice cannot
+/// drift from the table or fire on another gate's 401 or 403.
+pub(crate) fn is_membership_refusal(message: &str) -> bool {
+    REFUSAL_GATES
+        .iter()
+        .any(|gate| gate.remedy == REMEDY_MEMBERSHIP && message.contains(gate.marker))
+}
+
 /// The relay's refusal, plus one sentence naming the gate that refused it.
 ///
 /// A refusal this table does not recognise is returned **verbatim**: the relay

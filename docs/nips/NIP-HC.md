@@ -22,7 +22,7 @@ The operator runbook is [`docs/headless-extensions.md`](../headless-extensions.m
 
 | key | held by | appears on the wire as |
 | --- | --- | --- |
-| owner | the person commissioning (`BEEKEEPER_PRIVATE_KEY`, env only) | the first element of the `auth` tag; never the signer of a provider event |
+| owner | the person commissioning (`--owner-key-file`, or `BEEKEEPER_PRIVATE_KEY`; never kept) | the first element of the `auth` tag; never the signer of a provider event |
 | provider | the host (minted at commission, restricted file) | `pubkey` of every 44222/44223/44224/44225/46022/46023/24223/24224 the host publishes |
 | relay | the relay (`self` in NIP-11) | signer of 46013/46014/46015 and NIP-29 metadata |
 

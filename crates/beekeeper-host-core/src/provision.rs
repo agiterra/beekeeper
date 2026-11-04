@@ -77,6 +77,29 @@ pub fn mint_provider_record(
     })
 }
 
+/// Refuse custody targets [`write_commissioning`] could not safely replace.
+/// Reads only, so a caller can ask before it writes anything of its own.
+pub fn check_commissioning_targets(home: &Path, instance: layout::Instance) -> Result<(), String> {
+    let key_path = layout::host_key_file_path(home, instance);
+    let config_path = layout::host_config_path(home, instance);
+    // The atomic helper follows existing symlinks for other callers. Custody
+    // targets must instead stay in the selected host layout.
+    for path in [&key_path, &config_path] {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return Err(format!(
+                    "commissioning target is not a regular file: {}",
+                    path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("inspect {}: {error}", path.display())),
+        }
+    }
+    Ok(())
+}
+
 /// Write a validated provider key and host configuration in the host's layout.
 ///
 /// Validates everything before writing; repeating with the same identity is
@@ -116,21 +139,7 @@ pub fn write_commissioning(
         .map_err(|error| format!("failed to encode host config: {error}"))?;
     let key_path = layout::host_key_file_path(home, config.instance);
     let config_path = layout::host_config_path(home, config.instance);
-    // The atomic helper follows existing symlinks for other callers. Custody
-    // targets must instead stay in the selected host layout.
-    for path in [&key_path, &config_path] {
-        match std::fs::symlink_metadata(path) {
-            Ok(metadata) if !metadata.file_type().is_file() => {
-                return Err(format!(
-                    "commissioning target is not a regular file: {}",
-                    path.display()
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("inspect {}: {error}", path.display())),
-        }
-    }
+    check_commissioning_targets(home, config.instance)?;
     create_dir_all_restricted(&layout::host_dir(home, config.instance))?;
     atomic_write_json_restricted(&key_path, record.private_key_nsec.trim().as_bytes())?;
     atomic_write_json_restricted(&config_path, &payload)

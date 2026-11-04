@@ -254,7 +254,8 @@ just install-headless
 # that a model/account is usable.
 export BEEKEEPER_HOST_HOME=/absolute/durable/service-home
 export BEEKEEPER_RELAY_URL=wss://hive.example.org
-# Supply BEEKEEPER_PRIVATE_KEY through your existing secret custodian, not argv.
+# Supply the owner's key through your existing secret custodian, not argv: a
+# chmod 600 file named with --owner-key-file (below), or BEEKEEPER_PRIVATE_KEY.
 bee community join-policy
 # For an invited identity, accept the displayed revision when required, then:
 bee community claim-invite --code '<invite>' --policy-receipt '<receipt>'
@@ -283,6 +284,87 @@ carries the selected service home. On a headless Mac, use the system registratio
 above under the designated operating-system account. Local `bee host status`
 reports supervision; relay catalog/session evidence reports connection and
 runtime availability. These observations are separate.
+
+### Commissioning from an agent or a client
+
+`bee host commission` never prompts and needs no terminal. It reads no stdin,
+prints one JSON object on stdout when it succeeds, and one JSON object on stderr
+(`{"error","message","retryable"}`) when it does not. The key goes in by path, so
+it stays out of the process arguments, and no output carries it.
+
+```bash
+bee host commission --owner-key-file /absolute/owner.key --check \
+  --home /absolute/home --runtime codex --adapter /absolute/bin/codex-acp   # changes nothing
+bee host commission --owner-key-file /absolute/owner.key \
+  --home /absolute/home --runtime codex --adapter /absolute/bin/codex-acp   # safe to repeat
+```
+
+**Where the owner's key comes from**, first match wins:
+
+1. `--owner-key-file <path>`: an owner-only regular file of at most 512 bytes, holding
+   hex or nsec. Not a link. `BEEKEEPER_PRIVATE_KEY`, and any auth tag in the
+   environment, are then not read. Beside a typed `--private-key` it is refused.
+2. `BEEKEEPER_PRIVATE_KEY`, or the older `--private-key`, unchanged. A parent may
+   set the variable for a child process.
+
+There is no third source. Unlike Manage Host, commissioning does not fall back to
+`~/.nostr/key`: naming no key is a refusal, because this step attests the Host's
+identity under an owner.
+
+**The owner guard is per relay.** One home holds one identity per relay, and only
+that identity's owner may re-commission it. A second owner commissioning the same
+home against a *different* relay is not refused: it mints a second identity and
+replaces the active `provider-key` and `host.json`. Give each owner its own `--home`.
+
+**Success.** `--check` prints `check: true`, `changed: false`, `can_commission: true`,
+`identity` (`would_mint` or `would_retain`), `provider_pubkey` (null for a mint),
+`owner_pubkey`, `owner_key_source` (`file` or `environment_or_flag`), `relay`, `home`
+and `not_checked`. `can_commission: true` means no check it ran refused. It is not a
+promise that apply succeeds: `not_checked` names what it did not establish
+(`home_writable`, `relay_admission`, `runtime_account`, `credential_file`,
+`runtime_install_root`), and apply can still fail on those. Without `--check`:
+`commissioned: true`, `relay_admitted: true`, `identity` (`minted` or `retained`),
+`provider_pubkey`, `instance_id`, `owner_pubkey`, `owner_key_source`, `home`,
+`state_dir`, `runtime_prerequisite: "adapter_executable"` and `next_steps`.
+
+**`next_steps`** is a list of `{argv, env, when}` to spawn, not shell lines. `bee host
+install`, `bind` and `status` take no `--home`, so `env` carries the exact
+`BEEKEEPER_HOST_HOME` and `BEEKEEPER_HOST_INSTANCE`; running one without it reads a
+different home. Read `when`: the steps are alternatives, not a sequence. The list
+depends on the home:
+
+- **The account's OS home:** `bee host install`, and on macOS the headless
+  alternative `sudo bee host install --system --user <account>`, which carries
+  `human_action_required: "root_authorization"` and `placeholders`, because it needs
+  root and an account you name.
+- **Any other home:** `beekeeper-host run`, and `bee host install`, which writes the
+  registration and activates nothing. No system daemon is offered, because it cannot
+  carry a custom home.
+
+**What success does not say.** `runtime_account: "unconfirmed"` and
+`worker: "not_started"` are printed on every success because commissioning proves
+neither: not that the model account works, not that any worker runs. Read
+`bee host status` for the worker and a session for the account.
+
+**Refusals.** The code starts `message`, after the category's own prefix (`key
+error: OWNER_KEY_UNAVAILABLE: ...`). Match on the code; the prose may change.
+
+| Code | Exit | Means | Do |
+| --- | --- | --- | --- |
+| `OWNER_KEY_REQUIRED` | 3 | no key named | pass `--owner-key-file` |
+| `OWNER_KEY_UNAVAILABLE` | 3 | the file is missing, a link, too large, readable by others, or holds no key; or the value is itself a key, which is not repeated | what the message names |
+| `OWNER_KEY_INVALID` | 3 | `BEEKEEPER_PRIVATE_KEY` is not a key, including an all-zero one | fix the setting |
+| `OWNER_KEY_CONFLICT` | 1 | `--owner-key-file` beside a typed `--private-key` | drop `--private-key` |
+| `HOST_OWNER_MISMATCH` | 3 | this home's identity for this relay has another owner, and is kept | that owner's key, or a fresh `--home` |
+| `HOST_KEY_UNAVAILABLE`, `HOST_KEY_INVALID`, `HOST_KEY_MISMATCH`, `HOST_ATTESTATION_INVALID`, `HOST_RELAY_SCOPE_MISMATCH` | 3 | the existing identity is damaged; nothing is minted over it | restore from backup, or a fresh `--home` |
+| `HOST_CUSTODY_TARGET_INVALID` | 1 | `provider-key` or `host.json` is a link or a directory, or cannot be inspected | move it aside, or a fresh `--home` |
+| `RELAY_ADMISSION_REFUSED` | 3 | files are written, identity kept, the relay refused it; `message` carries its reason | what the message names, then repeat the command. It advises joining only when the relay's membership gate refused |
+
+All but the last change nothing. A network failure is `network_error`, exit 2,
+`retryable: true`, after the files are written: repeat the same command, which
+keeps the same identity. Other usage refusals (an adapter not found, a bad
+`--runtime`) are exit 1, `user_error`, and carry no code yet. Commissioning needs
+no operating-system consent itself; the root step above is the only one that does.
 
 Use `--credential-file /absolute/restricted/runtime-credentials.json` at
 commissioning to select an explicit runtime credential source. Its owner-only

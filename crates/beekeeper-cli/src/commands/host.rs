@@ -24,8 +24,9 @@ use crate::error::CliError;
 pub enum HostCmd {
     /// Set up this machine as an agent host from a terminal: mint its identity,
     /// name the runtime and its driver, prove the relay admits it. No desktop
-    /// needed; run once, then `bee host install` and `bee agents create`.
-    Commission(super::host_commission::CommissionArgs),
+    /// needed; run once, then `bee host install` and `bee agents create`. It never
+    /// prompts, starts nothing, and does not prove a model account works.
+    Commission(Box<super::host_commission::CommissionArgs>),
     /// Record an existing project checkout and agents-repo clone on this host
     /// as the project's authorized workspace, after verifying the project on
     /// the relay, so agents created with `--project` can work in it. No

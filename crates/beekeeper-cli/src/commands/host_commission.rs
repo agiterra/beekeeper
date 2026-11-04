@@ -13,15 +13,19 @@ use crate::{client::BeekeeperClient, error::CliError};
 
 /// Set up this machine as an agent host from a terminal. No desktop needed.
 ///
-/// Runs once per machine as the owner (BEEKEEPER_PRIVATE_KEY): mints the
-/// host's own scoped identity, writes `host.json` naming the runtime and the
-/// ACP adapter that drives it, and proves the relay admits that identity.
-/// It does not start anything. Next: `bee host install` (or `beekeeper-host
-/// run` in the foreground), then `bee host status`, then `bee agents create
-/// --provider-instance <runtime>-primary ...`.
+/// Runs once per machine as the owner (--owner-key-file, or
+/// BEEKEEPER_PRIVATE_KEY): mints the host's own scoped identity, writes
+/// `host.json` naming the runtime and the ACP adapter that drives it, and
+/// proves the relay admits that identity. It never prompts, and it does not
+/// start anything or prove a model account works. Next: `bee host install` (or
+/// `beekeeper-host run` in the foreground), then `bee host status`, then `bee
+/// agents create --provider-instance <runtime>-primary ...`.
 #[derive(Args)]
 #[command(after_help = "Examples:\n  \
-bee host commission --runtime claude --adapter /opt/beekeeper/bin/claude-agent-acp\n  \
+bee host commission --owner-key-file ~/.nostr/key --check --runtime claude \\\n      \
+--adapter /opt/beekeeper/bin/claude-agent-acp\n  \
+bee host commission --owner-key-file ~/.nostr/key --runtime claude \\\n      \
+--adapter /opt/beekeeper/bin/claude-agent-acp\n  \
 bee host commission --runtime acme --driver /opt/acme/bin/acme-acp \\\n      \
 --credential-env ACME_TOKEN --credential-file /etc/beekeeper/acme.json \\\n      \
 --credential-source acme-vault\n\n\
@@ -29,9 +33,24 @@ Re-running with the same --home keeps the same host identity. Running again \
 after a change to --runtime, --driver or --model rewrites host.json; then \
 `bee host bind` restarts the running host onto it.")]
 pub struct CommissionArgs {
+    /// Owner-only (chmod 600) regular file holding the owner's key, hex or
+    /// nsec; the same file `bee host manage --owner-key-file` takes. Wins over
+    /// BEEKEEPER_PRIVATE_KEY, which is then not read. Refused beside a typed
+    /// --private-key. Read for this run only and never copied into host state.
+    #[arg(long)]
+    pub owner_key_file: Option<PathBuf>,
+    /// Report what commissioning would do and change nothing: runs the owner,
+    /// runtime, existing-identity and custody-target checks, writes no file and
+    /// does not contact the relay. `can_commission: true` means no check it ran
+    /// refused; `not_checked` names what it did not establish, so apply can
+    /// still fail on those.
+    #[arg(long)]
+    pub check: bool,
     /// Directory the host keeps its state in. Defaults to BEEKEEPER_HOST_HOME,
-    /// then the OS home. Must be absolute; pass the same value to every
-    /// later `bee host ...` and `bee agents ...` call that takes --home.
+    /// then the OS home. Must be absolute. `bee host install`, `bind` and
+    /// `status` take no --home: they read BEEKEEPER_HOST_HOME, which this
+    /// command's `next_steps` carries. Pass the same value to any later call
+    /// that does take --home.
     #[arg(long)]
     pub home: Option<PathBuf>,
     /// Which runtime this host runs. `claude`, `codex` and `goose` have
@@ -134,23 +153,69 @@ pub enum ExecutionArg {
     Remote,
 }
 
+/// Both explicit owner sources at once. Neither is guessed to be the one meant,
+/// and the refusal echoes neither.
+pub(crate) fn owner_key_conflict() -> CliError {
+    CliError::Usage(
+        "OWNER_KEY_CONFLICT: --owner-key-file and --private-key name two owner sources; keep \
+         --owner-key-file, which does not put a key in the process arguments"
+            .into(),
+    )
+}
+
+/// A value that is itself a key rather than a path. Every path refusal names
+/// the path, so this one has to run first or it would print the key.
+fn looks_like_a_key(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    let text = text.trim();
+    text.get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nsec1"))
+        || (text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// The owner's signer and where it came from: the named file, else the
+/// BEEKEEPER_PRIVATE_KEY setting. `~/.nostr/key` is deliberately not a default
+/// here, unlike Manage Host: commissioning attests a host identity for this
+/// relay under the owner, so naming no key stays a refusal, not an inference.
+fn resolve_owner(
+    file: Option<&Path>,
+    setting: Option<&str>,
+) -> Result<(Keys, &'static str), CliError> {
+    if let Some(path) = file {
+        if looks_like_a_key(path) {
+            return Err(CliError::Key(
+                "OWNER_KEY_UNAVAILABLE: --owner-key-file takes the path of a key file, and this \
+                 value looks like a key itself, so it is not repeated here. Put the key in an \
+                 owner-only file and name that file; a key already typed may be in the shell's \
+                 history"
+                    .into(),
+            ));
+        }
+        return Ok((super::host_manage::read_key_file(path)?, "file"));
+    }
+    let key = setting.ok_or_else(|| {
+        CliError::Auth(
+            "OWNER_KEY_REQUIRED: attesting this host needs the owner's key: pass --owner-key-file \
+             <path> naming an owner-only key file, or set BEEKEEPER_PRIVATE_KEY (hex or nsec)"
+                .into(),
+        )
+    })?;
+    let keys = Keys::parse(key).map_err(|_| {
+        CliError::Auth(
+            "OWNER_KEY_INVALID: BEEKEEPER_PRIVATE_KEY is not a valid key (expected 64 hex chars \
+             or an nsec)"
+                .into(),
+        )
+    })?;
+    Ok((keys, "environment_or_flag"))
+}
+
 pub async fn commission(
     args: &CommissionArgs,
     relay: &str,
     owner_key: Option<&str>,
 ) -> Result<(), CliError> {
-    let owner = Keys::parse(owner_key.ok_or_else(|| {
-        CliError::Auth(
-            "BEEKEEPER_PRIVATE_KEY is required to attest this host: export the owner's key (hex \
-             or nsec) or pass --private-key"
-                .into(),
-        )
-    })?)
-    .map_err(|_| {
-        CliError::Auth(
-            "BEEKEEPER_PRIVATE_KEY is not a valid key (expected 64 hex chars or an nsec)".into(),
-        )
-    })?;
+    let (owner, owner_key_source) = resolve_owner(args.owner_key_file.as_deref(), owner_key)?;
     let home = args
         .home
         .clone()
@@ -175,68 +240,105 @@ pub async fn commission(
             })?,
     )?;
     let descriptor = runtime_descriptor(args, &adapter)?;
+    beekeeper_core::host_step::validate_host_capabilities("--capability", &args.capabilities)
+        .map_err(CliError::Usage)?;
+    let provider_command = args
+        .provider_command
+        .as_ref()
+        .map(|p| executable(p))
+        .transpose()?;
     let relay = crate::client::to_ws_url(relay);
-    let base = layout::host_dir(
-        &home,
-        layout::Instance::from_env().map_err(CliError::Usage)?,
-    )
-    .join("service/session-provider");
-    atomic_write::create_dir_all_restricted(&base).map_err(CliError::Other)?;
+    let instance = layout::Instance::from_env().map_err(CliError::Usage)?;
+    let base = layout::host_dir(&home, instance).join("service/session-provider");
     let store_path = base.join(record::STORE_FILE_NAME);
     // Persist mint before contacting the relay: lost replies/retry retain identity.
     let mut store = record::load_provider_store_from(&store_path).map_err(CliError::Other)?;
+    provision::check_commissioning_targets(&home, instance).map_err(|error| {
+        CliError::Refused(format!(
+            "HOST_CUSTODY_TARGET_INVALID: {error}. provider-key and host.json must be regular \
+             files, not links or directories: move it aside, or commission a fresh --home"
+        ))
+    })?;
+    let retained = store.get(&relay).is_some();
     let mut identity = match store.get(&relay) {
         Some(existing) => existing.clone(),
         None => provision::mint_provider_record(&owner, &relay).map_err(CliError::Other)?,
     };
-    let attestation = identity
-        .auth_tag
-        .clone()
-        .ok_or_else(|| CliError::Auth("provider has no owner attestation".into()))?;
-    let auth: Vec<String> = serde_json::from_str(&attestation)
-        .map_err(|_| CliError::Auth("invalid provider attestation".into()))?;
+    let attestation = identity.auth_tag.clone().ok_or_else(|| {
+        CliError::Auth("HOST_ATTESTATION_INVALID: provider has no owner attestation".into())
+    })?;
+    let auth: Vec<String> = serde_json::from_str(&attestation).map_err(|_| {
+        CliError::Auth("HOST_ATTESTATION_INVALID: invalid provider attestation".into())
+    })?;
     if auth.get(1) != Some(&owner.public_key().to_hex()) {
         return Err(CliError::Auth(format!(
-            "this host was commissioned by a different owner; its identity is preserved. Re-run \
-             with that owner's BEEKEEPER_PRIVATE_KEY, or commission a fresh --home ({} holds \
-             the existing one)",
+            "HOST_OWNER_MISMATCH: this host was commissioned for this relay by a different owner; \
+             its identity is preserved. Re-run with that owner's key (--owner-key-file or \
+             BEEKEEPER_PRIVATE_KEY), or commission a fresh --home ({} holds the existing one)",
             store_path.display()
         )));
     }
     if identity.private_key_nsec.is_empty() {
-        let key_file = layout::host_key_file_path(
-            &home,
-            layout::Instance::from_env().map_err(CliError::Usage)?,
-        );
+        let key_file = layout::host_key_file_path(&home, instance);
         identity.private_key_nsec = std::fs::read_to_string(&key_file).map_err(|_| {
             CliError::Auth(format!(
-                "this host already has an identity but its key file {} cannot be read; refusing \
-                 to mint a replacement. Restore the file, or commission a fresh --home",
+                "HOST_KEY_UNAVAILABLE: this host already has an identity but its key file {} cannot \
+                 be read; refusing to mint a replacement. Restore the file, or commission a fresh --home",
                 key_file.display()
             ))
         })?;
     }
     let keys = Keys::parse(&identity.private_key_nsec).map_err(|_| {
         CliError::Auth(
-            "the existing host key is not a valid key; restore it from backup or commission a \
+            "HOST_KEY_INVALID: the existing host key is not a valid key; restore it from backup or commission a \
              fresh --home"
                 .into(),
         )
     })?;
     if keys.public_key().to_hex() != identity.provider_pubkey {
         return Err(CliError::Auth(format!(
-            "the existing host key does not match the identity recorded in {}; restore both \
-             from the same backup, or commission a fresh --home",
+            "HOST_KEY_MISMATCH: the existing host key does not match the identity recorded in {}; \
+             restore both from the same backup, or commission a fresh --home",
             store_path.display()
         )));
     }
+    // write_commissioning refuses these later, by which time a mint is saved.
+    let attested = beekeeper_sdk::nip_oa::verify_auth_tag(&attestation, &keys.public_key());
+    if attested.ok() != Some(owner.public_key()) {
+        return Err(CliError::Auth(
+            "HOST_ATTESTATION_INVALID: the recorded owner attestation does not verify for this \
+             host's key; nothing was changed. Restore the identity from backup, or commission a \
+             fresh --home"
+                .into(),
+        ));
+    }
+    if record::canonical_relay_key(&identity.relay_url) != record::canonical_relay_key(&relay) {
+        return Err(CliError::Auth(format!(
+            "HOST_RELAY_SCOPE_MISMATCH: the identity recorded for this relay in {} names another \
+             relay; nothing was changed. Restore it from backup, or commission a fresh --home",
+            store_path.display()
+        )));
+    }
+    // Everything above only reads, and a mint exists only in memory until here.
+    if args.check {
+        println!(
+            "{}",
+            serde_json::json!({"check":true,"changed":false,"can_commission":true,
+            "identity":if retained {"would_retain"} else {"would_mint"},
+            "provider_pubkey":retained.then_some(&identity.provider_pubkey),
+            "owner_pubkey":owner.public_key().to_hex(),"owner_key_source":owner_key_source,
+            "relay":relay,"home":home,"worker":"not_started","runtime_account":"unconfirmed",
+            "not_checked":["home_writable","relay_admission","runtime_account","credential_file","runtime_install_root"]})
+        );
+        return Ok(());
+    }
+    atomic_write::create_dir_all_restricted(&base).map_err(CliError::Other)?;
     store.upsert(&relay, identity.clone());
     atomic_write::atomic_write_json_restricted(
         &store_path,
         &serde_json::to_vec_pretty(&store).map_err(|e| CliError::Other(e.to_string()))?,
     )
     .map_err(CliError::Other)?;
-    let instance = layout::Instance::from_env().map_err(CliError::Usage)?;
     let state =
         record::provider_state_dir_in(&base, &identity.provider_pubkey).map_err(CliError::Other)?;
     atomic_write::create_dir_all_restricted(&state).map_err(CliError::Other)?;
@@ -326,8 +428,6 @@ pub async fn commission(
         )
         .map_err(CliError::Other)?;
     }
-    beekeeper_core::host_step::validate_host_capabilities("--capability", &args.capabilities)
-        .map_err(CliError::Usage)?;
     let config = config::HostConfig {
         version: config::HOST_CONFIG_VERSION,
         instance,
@@ -341,11 +441,7 @@ pub async fn commission(
         turn_budget: store.turn_budget,
         checkpoint_on_stop: store.checkpoint_on_stop,
         capabilities: args.capabilities.clone(),
-        provider_command: args
-            .provider_command
-            .as_ref()
-            .map(|p| executable(p))
-            .transpose()?,
+        provider_command,
         written_at: chrono::Utc::now().to_rfc3339(),
     };
     persist_commissioned_custody(&home, &config, &store_path, &mut store, &identity)?;
@@ -361,14 +457,91 @@ pub async fn commission(
     // admission, not model/account readiness or that a worker is running.
     client
         .query(&serde_json::json!({"kinds":[44220],"authors":[identity.provider_pubkey],"limit":1}))
-        .await?;
+        .await
+        .map_err(|error| match error {
+            CliError::Relay { status, body } if status == 401 || status == 403 => {
+                let remedy = if crate::client::is_membership_refusal(&body) {
+                    "have the owner join this relay (`bee community join-policy`, then `bee \
+                     community claim-invite`, which read BEEKEEPER_PRIVATE_KEY)"
+                } else {
+                    "correct what the relay names"
+                };
+                CliError::Auth(format!(
+                    "RELAY_ADMISSION_REFUSED: the relay answered {status} to this host's identity \
+                     ({body}). The files are written and the identity is kept: {remedy}, and run \
+                     this same command again"
+                ))
+            }
+            other => other,
+        })?;
     println!(
         "{}",
         serde_json::json!({"provider_pubkey":identity.provider_pubkey,"instance_id":identity.instance_id,
         "commissioned":true,"relay_admitted":true,"runtime_prerequisite":"adapter_executable",
-        "runtime_account":"unconfirmed","worker":"not_started","home":home,"state_dir":config.provider_state_dir})
+        "runtime_account":"unconfirmed","worker":"not_started","home":home,"state_dir":config.provider_state_dir,
+        "identity":if retained {"retained"} else {"minted"},
+        "owner_pubkey":owner.public_key().to_hex(),"owner_key_source":owner_key_source,
+        "next_steps":next_steps(&home, instance)})
     );
     Ok(())
+}
+
+/// What to run next, as argv and environment for a caller to spawn; none of it
+/// is a shell line. `bee host install`, `bind` and `status` take no --home, so
+/// every step carries the home and instance just commissioned rather than
+/// relying on what the caller's environment happens to hold.
+///
+/// Install only starts the service for the account's own OS home. Elsewhere it
+/// writes the registration and leaves the service manager alone
+/// (`beekeeper_host::install::home_is_ours`), and the system daemon cannot carry
+/// a custom home at all, so that case gets the foreground route instead.
+fn next_steps(home: &Path, instance: layout::Instance) -> serde_json::Value {
+    let env = serde_json::json!({
+        layout::HOME_VAR: home,
+        layout::INSTANCE_VAR: instance.namespace_value(),
+    });
+    let step = |argv: &[&str], when: &str| serde_json::json!({"argv":argv,"env":env,"when":when});
+    let resolve = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let os_home = layout::os_home_dir().is_some_and(|os| resolve(&os) == resolve(home));
+    let mut steps = Vec::new();
+    if os_home {
+        steps.push(step(
+            &["bee", "host", "install"],
+            "the host has no login registration yet; on Linux with nobody logged in, also \
+             `loginctl enable-linger`",
+        ));
+        if cfg!(target_os = "macos") {
+            let mut argv = vec!["sudo", "bee", "host", "install", "--system", "--user"];
+            argv.push("<account>");
+            if instance == layout::Instance::Dev {
+                argv.push("--dev");
+            }
+            steps.push(serde_json::json!({"argv":argv,"env":{},
+                "human_action_required":"root_authorization","placeholders":["<account>"],
+                "when":"instead of the login registration, on a Mac nobody logs in to; <account> \
+                        is the account whose OS home this is"}));
+        }
+    } else {
+        steps.push(step(
+            &["beekeeper-host", "run"],
+            "to run this host in the foreground or under your own supervisor; this home is not \
+             the account's OS home, so no service manager will start it",
+        ));
+        steps.push(step(
+            &["bee", "host", "install"],
+            "to write a registration into this home for your own service manager; it activates \
+             nothing here",
+        ));
+    }
+    steps.push(step(
+        &["bee", "host", "bind"],
+        "a host is already running on an earlier commissioning",
+    ));
+    steps.push(step(
+        &["bee", "host", "status"],
+        "always, to read whether the worker runs",
+    ));
+    serde_json::Value::from(steps)
 }
 
 /// The driver slug and default adapter arguments a known runtime word mints
@@ -579,6 +752,8 @@ mod tests {
 
     fn args(runtime: &str) -> CommissionArgs {
         CommissionArgs {
+            owner_key_file: None,
+            check: false,
             home: None,
             runtime: runtime.to_owned(),
             adapter: None,

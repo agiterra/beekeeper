@@ -189,7 +189,7 @@ fn scope() -> Result<Scope, CliError> {
 
 /// Read a key file, refusing anything but a small owner-only regular file. The
 /// error names the path and never the contents.
-fn read_key_file(path: &Path) -> Result<Keys, CliError> {
+pub(super) fn read_key_file(path: &Path) -> Result<Keys, CliError> {
     let shown = path.display();
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|_| CliError::Key(format!("OWNER_KEY_UNAVAILABLE: no key file at {shown}")))?;

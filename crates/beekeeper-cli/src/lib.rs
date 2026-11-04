@@ -79,6 +79,17 @@ where
         error::print_error(&CliError::Auth("sessions found takes the owner key from BEEKEEPER_PRIVATE_KEY only; do not put it in --private-key".into()));
         return 3;
     }
+    if matches
+        .subcommand_matches("host")
+        .and_then(|host| host.subcommand_matches("commission"))
+        .and_then(|commission| commission.get_one::<std::path::PathBuf>("owner_key_file"))
+        .is_some()
+        && matches.value_source("private_key") == Some(clap::parser::ValueSource::CommandLine)
+    {
+        let refusal = commands::host_commission::owner_key_conflict();
+        error::print_error(&refusal);
+        return error::exit_code(&refusal);
+    }
     let format_explicit =
         matches.value_source("format") == Some(clap::parser::ValueSource::CommandLine);
     // An `--auth-tag` typed on the command line is a deliberate choice for
