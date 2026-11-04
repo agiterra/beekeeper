@@ -111,8 +111,9 @@ struct Registry {
     /// A shorter dequeue wait per seat, for tests that have to observe the
     /// custody-unavailable answer without waiting minutes for it. Per seat
     /// because tests run in one process: a global bound can make another test's
-    /// turn on a shared seat id refuse `SeatBusy`, as reproduced by a probe.
-    /// Whether this caused CI 370 or 378 is unproven.
+    /// turn on a shared seat id refuse `SeatBusy`, as reproduced by a probe. CI
+    /// 370, 378 and 387 were a retirement's seat fence on such an id instead;
+    /// tests now take unique ids from `session::tests::seat`.
     #[cfg(test)]
     test_wait_bounds: HashMap<String, Duration>,
     /// Seats whose predecessor could not be proven dead.

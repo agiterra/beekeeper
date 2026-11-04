@@ -670,8 +670,30 @@ mod tests {
             .is_none());
     }
 
+    /// Runs in a process of its own. `flock` belongs to the open file
+    /// description, and while another thread's `Command::spawn` is between
+    /// creating its child and `exec` the child holds a copy of every descriptor,
+    /// so a sibling test that spawns keeps the lock alive past `drop` (CI 392).
     #[test]
     fn the_lock_excludes_a_second_apply_and_falls_with_its_holder() {
+        const CHILD: &str = "BEEKEEPER_AGENT_SETUP_LOCK_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "agent_setup::tests::the_lock_excludes_a_second_apply_and_falls_with_its_holder",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         assert!(!apply_lock_held(dir.path()), "no file, no holder");
         let held = try_apply_lock(dir.path()).unwrap().expect("first");

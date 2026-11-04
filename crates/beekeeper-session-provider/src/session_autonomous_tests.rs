@@ -111,10 +111,16 @@ async fn an_unprompted_cycle_is_published_live_as_its_own_turn() {
     let (tx, mut rx) = mpsc::channel(64);
     let mut manager = SessionManager::new(tx);
     manager
-        .create(legacy_request(&agent, dir.path(), "s1"))
+        .create(legacy_request(
+            &agent,
+            dir.path(),
+            crate::session::tests::seat(),
+        ))
         .await
         .expect("create");
-    let handle = manager.handle("s1").expect("handle");
+    let handle = manager
+        .handle(crate::session::tests::seat())
+        .expect("handle");
 
     handle.deliver(turn("turn-1")).expect("deliver");
     let mut seen = Seen::default();
@@ -171,7 +177,7 @@ async fn an_unprompted_cycle_is_published_live_as_its_own_turn() {
         !third_text.contains("woke on its own"),
         "autonomous work was glued onto the next prompt: {third_text}"
     );
-    manager.shutdown("s1");
+    manager.shutdown(crate::session::tests::seat());
 }
 
 /// A prompt that arrives while an unprompted turn runs waits for it: the
@@ -189,10 +195,16 @@ async fn a_prompt_during_an_unprompted_turn_runs_after_it() {
     let (tx, mut rx) = mpsc::channel(64);
     let mut manager = SessionManager::new(tx);
     manager
-        .create(legacy_request(&agent, dir.path(), "s1"))
+        .create(legacy_request(
+            &agent,
+            dir.path(),
+            crate::session::tests::seat(),
+        ))
         .await
         .expect("create");
-    let handle = manager.handle("s1").expect("handle");
+    let handle = manager
+        .handle(crate::session::tests::seat())
+        .expect("handle");
 
     handle.deliver(turn("turn-1")).expect("deliver");
     let mut seen = Seen::default();
@@ -239,7 +251,7 @@ async fn a_prompt_during_an_unprompted_turn_runs_after_it() {
     );
     assert!(seen.lifecycle[4].starts_with("started turn-2"));
     assert!(seen.text_by_turn[&prompted].contains("answer 2"));
-    manager.shutdown("s1");
+    manager.shutdown(crate::session::tests::seat());
 }
 
 /// An adapter whose unprompted cycle is the audit's (BK-AUDIT-1006) final
@@ -279,10 +291,16 @@ async fn the_wake_row_never_splits_the_final_answer() {
     let (tx, mut rx) = mpsc::channel(64);
     let mut manager = SessionManager::new(tx);
     manager
-        .create(legacy_request(&agent, dir.path(), "s1"))
+        .create(legacy_request(
+            &agent,
+            dir.path(),
+            crate::session::tests::seat(),
+        ))
         .await
         .expect("create");
-    let handle = manager.handle("s1").expect("handle");
+    let handle = manager
+        .handle(crate::session::tests::seat())
+        .expect("handle");
     handle.deliver(turn("turn-1")).expect("deliver");
 
     // Collect the autonomous turn's items in publication order.
@@ -330,5 +348,5 @@ async fn the_wake_row_never_splits_the_final_answer() {
         prose.iter().all(|at| *at < wake_row),
         "the wake row interrupted the answer: {items:?}"
     );
-    manager.shutdown("s1");
+    manager.shutdown(crate::session::tests::seat());
 }

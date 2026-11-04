@@ -278,6 +278,25 @@ describe("visibility-gated hooks", () => {
       }, [refetchInterval]);
       return null;
     }
+    // Resume is task -> frame -> task, and each step schedules the next, so a
+    // wall-clock wait cannot be ordered against it: a loop stalled past the
+    // wait runs the first task and then the wait's own timer ahead of the
+    // resume (gate 388). The test runs each boundary itself instead.
+    const tasks = [];
+    const frames = [];
+    Object.assign(dom.window, {
+      cancelAnimationFrame() {},
+      clearTimeout() {},
+      requestAnimationFrame(callback) {
+        frames.push(callback);
+        return frames.length;
+      },
+      setTimeout(callback) {
+        tasks.push(callback);
+        return tasks.length;
+      },
+    });
+    const runNext = (queue) => act(async () => queue.shift()());
     const root = createRoot(document.getElementById("root"));
 
     await act(async () => root.render(React.createElement(Harness)));
@@ -287,10 +306,19 @@ describe("visibility-gated hooks", () => {
     focused = true;
     await act(async () => window.dispatchEvent(new window.Event("focus")));
     assert.deepEqual(observed, [1_000, false]);
-    await act(
-      async () => new Promise((resolve) => window.setTimeout(resolve, 10)),
-    );
+    assert.equal(tasks.length, 1, "activation has not yielded yet");
+
+    await runNext(tasks);
+    assert.deepEqual(observed, [1_000, false]);
+    assert.equal(frames.length, 1, "the first task waits for a frame");
+
+    await runNext(frames);
+    assert.deepEqual(observed, [1_000, false]);
+    assert.equal(tasks.length, 1, "the frame hands off to a following task");
+
+    await runNext(tasks);
     assert.deepEqual(observed, [1_000, false, 1_000]);
+    assert.deepEqual([tasks.length, frames.length], [0, 0]);
 
     await act(async () => root.unmount());
     dom.window.close();

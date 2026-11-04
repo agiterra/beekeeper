@@ -111,14 +111,18 @@ async fn model_switch_sent_mid_turn_applies_after_that_turn_in_mailbox_order() {
     let (tx, mut rx) = mpsc::channel(64);
     let mut manager = SessionManager::new(tx);
     let startup = manager
-        .create(legacy_request(&agent, dir.path(), "s1"))
+        .create(legacy_request(
+            &agent,
+            dir.path(),
+            crate::session::tests::seat(),
+        ))
         .await
         .expect("create");
     assert!(
         startup.model_switch_supported,
         "the adapter offered a model select"
     );
-    let handle = manager.handle("s1").expect("live");
+    let handle = manager.handle(crate::session::tests::seat()).expect("live");
     handle.deliver(turn("t1")).expect("deliver t1");
     // Wait until t1 is running, then switch, then send t2.
     loop {
@@ -130,7 +134,7 @@ async fn model_switch_sent_mid_turn_applies_after_that_turn_in_mailbox_order() {
             break;
         }
     }
-    let handle = manager.handle("s1").expect("live");
+    let handle = manager.handle(crate::session::tests::seat()).expect("live");
     handle
         .deliver(SessionCommand::SetModel {
             command_id: "m1".into(),
@@ -193,7 +197,7 @@ async fn model_switch_sent_mid_turn_applies_after_that_turn_in_mailbox_order() {
             "session/prompt",
         ],
     );
-    manager.shutdown("s1");
+    manager.shutdown(crate::session::tests::seat());
 }
 
 /// Acceptance: an adapter error keeps the previous model and the snapshot.

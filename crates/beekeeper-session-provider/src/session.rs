@@ -5358,6 +5358,28 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// This test's seat id, unique in the test process.
+    ///
+    /// Custody and its fence live in one process-global registry keyed by seat
+    /// id, which is sound in production because ids are unique there. Tests
+    /// sharing an id are not isolated: a retirement fences the seat until its
+    /// process group is gone, and another test's turn on that id answers
+    /// `SeatBusy` at once (CI 370, 378 and 387). One id per test thread; a
+    /// serial `--test-threads=1` run shares one, and has no concurrency to race.
+    pub(super) fn seat() -> &'static str {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        thread_local! {
+            static SEAT: &'static str = Box::leak(
+                format!(
+                    "test-seat-{}",
+                    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                )
+                .into_boxed_str(),
+            );
+        }
+        SEAT.with(|seat| *seat)
+    }
+
     /// Build a create request that runs `script` under `bash` instead of
     /// exec'ing it.
     ///
@@ -5386,7 +5408,7 @@ done
             target: CodingSessionTarget {
                 driver: "claude-agent-acp".into(),
                 instance_id: "instance-1".into(),
-                session_id: "s1".into(),
+                session_id: seat().into(),
                 generation: 1,
             },
             channel_id: Uuid::nil(),
@@ -5467,7 +5489,7 @@ done
         let target = coding_session_target_key(&CodingSessionTarget {
             driver: "claude-agent-acp".into(),
             instance_id: "instance-1".into(),
-            session_id: "s1".into(),
+            session_id: seat().into(),
             generation: 1,
         });
         assert_eq!(
@@ -5582,7 +5604,7 @@ done
             dumped.contains("PATH="),
             "the fence emptied the agent's environment:\n{dumped}"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// A seat bundle directory a test owns, in the shape
@@ -5715,7 +5737,7 @@ done
             agents_checkout: None,
         });
         manager.create(create).await.expect("seated create");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         let session_new = request_by_method(&log_path, "session/new");
         let system_prompt = session_new["params"]["systemPrompt"]
@@ -5790,7 +5812,7 @@ done
             relay_url: "wss://relay.test".into(),
         });
         manager.create(create).await.expect("seated create");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         let session_new = request_by_method(&log_path, "session/new");
         assert_eq!(
@@ -5822,7 +5844,7 @@ done
             ("MCP_TEST_AGENT_NAME".to_owned(), "claude-code".to_owned()),
         ];
         manager.create(create).await.expect("unseated create");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         let session_new = request_by_method(&log_path, "session/new");
         assert_eq!(
@@ -6424,7 +6446,7 @@ done
         // The developer toolchain is untouched by seating.
         assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
         assert!(dumped.contains("PATH="), "{dumped}");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// The other half of the same guarantee: with an empty `post_fence_env`
@@ -6497,7 +6519,7 @@ done
              hold: {injected:?}\n{dumped}"
         );
         assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// A `CreateRequest` travels through the create path and is `Debug`; the
@@ -6570,7 +6592,7 @@ done
             framing: None,
         };
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::GuardedCiTurn {
                 turn: Box::new(turn("denied")),
@@ -6593,7 +6615,7 @@ done
         );
         decision.send(false).expect("deny");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(turn("ordinary"))
             .expect("deliver next");
@@ -6603,7 +6625,7 @@ done
             next_lifecycle_event(&mut rx).await,
             SessionEvent::TurnFinished { .. }
         ));
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// Holds every prompt open; answers `session/cancel` by failing the held
@@ -6636,7 +6658,7 @@ done
             .create(request(agent, dir.path()))
             .await
             .expect("create");
-        let handle = manager.handle("s1").expect("handle");
+        let handle = manager.handle(seat()).expect("handle");
         handle
             .deliver(SessionCommand::Turn {
                 command_id: "work".into(),
@@ -6659,7 +6681,7 @@ done
         let SessionEvent::TurnFinished { outcome, .. } = next_lifecycle_event(&mut rx).await else {
             panic!("the interrupted turn must finish");
         };
-        manager.shutdown("s1");
+        manager.shutdown(seat());
         outcome
     }
 
@@ -6698,7 +6720,7 @@ done
             .await
             .expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "work".into(),
@@ -6712,7 +6734,7 @@ done
             next_lifecycle_event(&mut rx).await,
             SessionEvent::TurnStarted { .. }
         ));
-        manager.shutdown("s1");
+        manager.shutdown(seat());
         let SessionEvent::TurnFinished { outcome, .. } = next_lifecycle_event(&mut rx).await else {
             panic!("the stopped turn must finish");
         };
@@ -6732,6 +6754,19 @@ done
     #[tokio::test]
     async fn a_cancel_the_adapter_confirms_is_still_cancelled() {
         let outcome = interrupted_outcome("stalling-agent", STALLING_AGENT).await;
+        assert!(matches!(outcome, TurnOutcome::Cancelled), "{outcome:?}");
+    }
+
+    /// Another test's retirement fences its own seat, and must not reach this
+    /// one: on a shared id this turn is dropped `SeatBusy`, as in CI 387.
+    #[tokio::test]
+    async fn a_fence_on_another_tests_seat_leaves_this_turn_alone() {
+        let other = std::thread::spawn(|| seat().to_owned())
+            .join()
+            .expect("another test thread");
+        crate::assignment_custody::fence_seat(&other);
+        let outcome = interrupted_outcome("stalling-agent", STALLING_AGENT).await;
+        crate::assignment_custody::clear_seat_fence(&other);
         assert!(matches!(outcome, TurnOutcome::Cancelled), "{outcome:?}");
     }
 
@@ -6761,7 +6796,7 @@ done
             operator_pubkey: None,
             framing: None,
         };
-        let handle = manager.handle("s1").expect("handle");
+        let handle = manager.handle(seat()).expect("handle");
         handle.deliver(turn("busy")).expect("busy turn");
         assert!(matches!(
             next_lifecycle_event(&mut rx).await,
@@ -6791,7 +6826,7 @@ done
         };
         assert_eq!(command_id, "ci-queued");
         decision.send(false).expect("deny queued turn");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
         assert!(matches!(
             next_lifecycle_event(&mut rx).await,
             SessionEvent::Exited { .. }
@@ -6812,7 +6847,7 @@ done
         assert_eq!(startup.acp_session_id, "acp-session-1");
 
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -6836,7 +6871,7 @@ done
             ),
             other => panic!("expected a finished turn, got {other:?}"),
         }
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// The legacy launch starts the adapter **in the session's checkout**,
@@ -6866,7 +6901,7 @@ pwd -P > '{}'
             .create(request(agent, &checkout))
             .await
             .expect("create");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         let seen = std::fs::read_to_string(&cwd_log).expect("the adapter recorded its directory");
         assert_eq!(
@@ -6902,7 +6937,7 @@ pwd -P > '{}'
 
         manager.create(create).await.expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -6980,7 +7015,7 @@ pwd -P > '{}'
             wire.chars().count()
         );
 
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// A healthy turn does not carry a diagnostic it has no use for.
@@ -6998,7 +7033,7 @@ pwd -P > '{}'
             .await
             .expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -7026,7 +7061,7 @@ pwd -P > '{}'
             rows.is_empty(),
             "a clean turn should carry no wire diagnostic; got {rows:?}"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// Raw SDK frames are host-private and must stay that way.
@@ -7045,7 +7080,7 @@ pwd -P > '{}'
         create.emit_raw_sdk_frames = true;
         manager.create(create).await.expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -7081,7 +7116,7 @@ pwd -P > '{}'
             published.contains("answered"),
             "the agent's own answer must still publish: {published}"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// The row is built from an unbounded tally, so it has to be trimmed to
@@ -7138,7 +7173,7 @@ pwd -P > '{}'
         let startup = manager.create(reattach).await.expect("reattach");
         assert_eq!(startup.acp_session_id, "saved-acp-session");
         assert_eq!(startup.continuity, SessionContinuity::Resumed);
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     #[tokio::test]
@@ -7259,7 +7294,7 @@ pwd -P > '{}'
                     assert_eq!(open["params"]["mcpServers"], serde_json::json!([]));
                 }
             }
-            manager.shutdown("s1");
+            manager.shutdown(seat());
         }
     }
 
@@ -7311,7 +7346,7 @@ pwd -P > '{}'
         let startup = manager.create(create).await.expect("rehydrated create");
         assert_eq!(startup.continuity, SessionContinuity::Rehydrated);
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -7330,7 +7365,7 @@ pwd -P > '{}'
                 _ => {}
             }
         }
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         RehydratedTurn {
             startup,
@@ -7520,7 +7555,7 @@ pwd -P > '{}'
             !appended.contains("continuity mode is Rehydrated"),
             "a fresh open must not claim reconstructed context"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// A native reattachment carries its own context, so it is never given a
@@ -7537,7 +7572,7 @@ pwd -P > '{}'
         let startup = manager.create(reattach).await.expect("reattach");
         assert_eq!(startup.continuity, SessionContinuity::Resumed);
         assert_eq!(startup.bootstrap_transport, None);
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     #[test]
@@ -7634,7 +7669,7 @@ pwd -P > '{}'
             Some("gpt-5.6-terra"),
             "the adapter's own current model, not the unofferable request"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// A model the adapter *does* offer is applied, and the applied value is
@@ -7661,7 +7696,7 @@ pwd -P > '{}'
 
         let startup = manager.create(create).await.expect("create");
         assert_eq!(startup.model.as_deref(), Some("gpt-5.6-sol"));
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// Runs a create asking for `selection` against an adapter whose model
@@ -7691,7 +7726,7 @@ pwd -P > '{}'
             ("MCP_TEST_SET_RESULT".to_owned(), set_result.to_owned()),
         ];
         let startup = manager.create(create).await.expect("create");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
         let sets = std::fs::read_to_string(&log_path)
             .expect("read ACP request log")
             .lines()
@@ -7916,7 +7951,7 @@ pwd -P > '{}'
             startup.continuity,
             SessionContinuity::RestartedWithoutContext { .. }
         ));
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// The translator is driven from the actor's own task, so the items of a
@@ -7934,7 +7969,7 @@ pwd -P > '{}'
             .await
             .expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -7953,7 +7988,7 @@ pwd -P > '{}'
         assert_eq!(kinds, vec!["user_prompt", "assistant_text"]);
         assert_eq!(items[0]["content"], "go");
         assert_eq!(items[1]["text"], "working");
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// Drive one create plus one framed turn against the recording agent, and
@@ -7980,7 +8015,7 @@ pwd -P > '{}'
         ];
         manager.create(create).await.expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -7991,7 +8026,7 @@ pwd -P > '{}'
             })
             .expect("deliver");
         let items = collect_items(&mut rx).await;
-        manager.shutdown("s1");
+        manager.shutdown(seat());
         (request_by_method(&log_path, "session/prompt"), items)
     }
 
@@ -8116,7 +8151,7 @@ pwd -P > '{}'
             .expect("create");
         let operator = "c".repeat(64);
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -8130,7 +8165,7 @@ pwd -P > '{}'
         let items = collect_items(&mut rx).await;
         assert_eq!(items[0]["kind"], "user_prompt");
         assert_eq!(items[0]["operatorPubkey"], operator);
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     #[tokio::test]
@@ -8144,7 +8179,7 @@ pwd -P > '{}'
             .await
             .expect("create");
 
-        let handle = manager.handle("s1").expect("handle");
+        let handle = manager.handle(seat()).expect("handle");
         handle
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -8170,7 +8205,7 @@ pwd -P > '{}'
             }
             other => panic!("expected a cancelled turn, got {other:?}"),
         }
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// An agent that dies mid-turn must produce a terminal outcome and take the
@@ -8187,7 +8222,7 @@ pwd -P > '{}'
             .await
             .expect("create");
         manager
-            .handle("s1")
+            .handle(seat())
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
@@ -8319,7 +8354,7 @@ pwd -P > '{}'
         let (tx, _rx) = mpsc::channel(1);
         let (shutdown, _shutdown_rx) = watch::channel(false);
         let handle = SessionHandle {
-            session_id: "s1".into(),
+            session_id: seat().into(),
             instance: ActorInstance::next(),
             tx,
             shutdown,
@@ -8345,7 +8380,7 @@ pwd -P > '{}'
         let (tx, _rx) = mpsc::channel(1);
         let (shutdown, shutdown_rx) = watch::channel(false);
         let handle = SessionHandle {
-            session_id: "s1".into(),
+            session_id: seat().into(),
             instance: ActorInstance::next(),
             tx,
             shutdown,
@@ -8374,7 +8409,7 @@ pwd -P > '{}'
         let (shutdown, _shutdown_rx) = watch::channel(false);
         drop(rx);
         let handle = SessionHandle {
-            session_id: "s1".into(),
+            session_id: seat().into(),
             instance: ActorInstance::next(),
             tx,
             shutdown,
@@ -8447,7 +8482,7 @@ pwd -P > '{}'
             !startup.steering_supported,
             "an adapter that advertised nothing must not be credited with steering"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         let steering = fake_agent(dir.path(), "steering-agent", STEERING_AGENT);
         let (tx, _rx) = mpsc::channel(16);
@@ -8460,7 +8495,7 @@ pwd -P > '{}'
             startup.steering_supported,
             "`_meta.steering.supported` at initialize is what this fact is made of"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 
     /// Whether an execution takes image prompts is witnessed the same way, and
@@ -8480,7 +8515,7 @@ pwd -P > '{}'
             !startup.prompt_image_supported,
             "an adapter that advertised nothing must not be credited with images"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
 
         let imaging = fake_agent(dir.path(), "image-agent", IMAGE_AGENT);
         let (tx, _rx) = mpsc::channel(16);
@@ -8493,7 +8528,7 @@ pwd -P > '{}'
             startup.prompt_image_supported,
             "`agentCapabilities.promptCapabilities.image` is what this fact is made of"
         );
-        manager.shutdown("s1");
+        manager.shutdown(seat());
     }
 }
 
