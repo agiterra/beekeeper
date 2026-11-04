@@ -14,6 +14,25 @@ use std::time::{Duration, Instant};
 
 const PUBKEY: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const FAKE_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
+/// Retries only `ExecutableFileBusy`, for up to five seconds. This binary is
+/// copied in fresh by each test, and a sibling test's `fork` inherits the write
+/// descriptor until that child's `execve`, so on Linux a run straight after the
+/// copy can be refused though the copy is closed. Any other error stands.
+fn past_text_busy<T>(mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match attempt() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            other => return other,
+        }
+    }
+}
 const RELAY: &str = "wss://unreachable.invalid";
 const HELPERS: [&str; 4] = [
     "beekeeper-session-provider",
@@ -126,7 +145,8 @@ impl Rig {
     }
 
     fn check(&self) -> String {
-        let output: Output = self.host(&["check"]).output().expect("check runs");
+        let mut host = self.host(&["check"]);
+        let output: Output = past_text_busy(|| host.output()).expect("check runs");
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
@@ -149,12 +169,9 @@ impl Rig {
     }
 
     fn run_until(&self, done: impl Fn() -> bool) -> bool {
-        let mut host = self
-            .host(&["run"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("the host starts");
+        let mut command = self.host(&["run"]);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let mut host = past_text_busy(|| command.spawn()).expect("the host starts");
         let deadline = Instant::now() + Duration::from_secs(30);
         let mut reached = false;
         while Instant::now() < deadline {
@@ -224,7 +241,8 @@ fn a_host_reached_through_a_symlink_still_reads_as_bundled() {
             linked.env(key, value);
         }
     }
-    let stdout = String::from_utf8_lossy(&linked.output().expect("runs").stdout).into_owned();
+    let stdout = String::from_utf8_lossy(&past_text_busy(|| linked.output()).expect("runs").stdout)
+        .into_owned();
     assert!(stdout.contains("<unresolved:"), "{stdout}");
 }
 
