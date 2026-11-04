@@ -8,13 +8,16 @@
 
 use std::path::{Path, PathBuf};
 
+use beekeeper_host_core::command_paths::{
+    executable_basename, is_executable_file, macos_bundle_dir,
+};
 use beekeeper_host_core::config::HostConfig;
 use beekeeper_host_core::env::{build_provider_env, ProviderEnvInputs, INHERITED_KEYS_TO_CLEAR};
 use beekeeper_host_core::layout::{self, CHILD_MARKER_VAR, HOME_VAR, INSTANCE_VAR};
 use beekeeper_host_core::logs::{append_log_marker, now_iso, open_log_file};
 use beekeeper_host_core::record::CodingSessionProviderRecord;
 
-use crate::discovery::{augmented_path, resolve_command};
+use crate::discovery::{augmented_path, own_executable, resolve_command};
 
 /// Binary name of the provider.
 pub const PROVIDER_BINARY: &str = "beekeeper-session-provider";
@@ -24,6 +27,16 @@ const PROVIDER_AGENT_BINARY: &str = "claude-agent-acp";
 const CONTEXT_MCP_BINARY: &str = "beekeeper-dev-mcp";
 /// The CLI the ACP adapter drives.
 const CLAUDE_CLI_BINARY: &str = "claude";
+/// What a provider started from a bundle reaches for beside itself. `bee` and
+/// the credential helper are the provider's own lookups, and `bee` would go on
+/// to `PATH` without saying so (`beekeeper-session-provider`'s `seat_bee`), so
+/// they are checked here, before it starts.
+const BUNDLE_MUST_HOLD: [&str; 4] = [
+    PROVIDER_BINARY,
+    CONTEXT_MCP_BINARY,
+    "bee",
+    "git-credential-nostr",
+];
 
 /// Resolve the provider binary, saying how to get one when it is missing.
 pub fn resolve_provider_binary(config: &HostConfig) -> Result<PathBuf, String> {
@@ -35,12 +48,34 @@ pub fn resolve_provider_binary(config: &HostConfig) -> Result<PathBuf, String> {
             )
         });
     }
+    let executable = own_executable();
+    if let Some(bundle_dir) = executable.as_deref().and_then(macos_bundle_dir) {
+        return provider_from_bundle(bundle_dir);
+    }
     resolve_command(PROVIDER_BINARY).ok_or_else(|| {
         format!(
             "{PROVIDER_BINARY} was not found beside this host, in its workspace, or on PATH — \
              build it with `cargo build -p beekeeper-session-provider`, or name it in host.json"
         )
     })
+}
+
+/// The provider of the bundle at `bundle_dir`, if that bundle is whole.
+fn provider_from_bundle(bundle_dir: &Path) -> Result<PathBuf, String> {
+    let missing: Vec<&str> = BUNDLE_MUST_HOLD
+        .into_iter()
+        .filter(|name| !is_executable_file(&bundle_dir.join(executable_basename(name))))
+        .collect();
+    if missing.is_empty() {
+        return Ok(bundle_dir.join(executable_basename(PROVIDER_BINARY)));
+    }
+    Err(format!(
+        "this host's bundle is missing {} in {}, so the provider will not start. It will not \
+         use a same-named binary from PATH or a build directory. Replace the bundle, then \
+         `bee host start`",
+        missing.join(", "),
+        bundle_dir.display()
+    ))
 }
 
 /// Resolve the Claude Code CLI the adapter should drive.
@@ -212,6 +247,35 @@ mod tests {
         assert!(
             error.contains("nowhere/beekeeper-session-provider"),
             "{error}"
+        );
+    }
+
+    /// Every missing helper is named at once, and the provider is only answered
+    /// from a whole bundle.
+    #[cfg(unix)]
+    #[test]
+    fn a_bundle_short_of_a_helper_names_it_and_a_whole_one_answers_its_own_provider() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle_dir = dir.path().join("Host.app/Contents/MacOS");
+        std::fs::create_dir_all(&bundle_dir).expect("mkdir");
+        let place = |name: &str| {
+            use std::os::unix::fs::PermissionsExt;
+            let path = bundle_dir.join(name);
+            std::fs::write(&path, "#!/bin/sh\n").expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        };
+        place(PROVIDER_BINARY);
+        place(CONTEXT_MCP_BINARY);
+
+        let error = provider_from_bundle(&bundle_dir).expect_err("two helpers are missing");
+        assert!(error.contains("bee, git-credential-nostr"), "{error}");
+        assert!(!error.contains(PROVIDER_BINARY), "{error}");
+
+        place("bee");
+        place("git-credential-nostr");
+        assert_eq!(
+            provider_from_bundle(&bundle_dir),
+            Ok(bundle_dir.join(PROVIDER_BINARY))
         );
     }
 

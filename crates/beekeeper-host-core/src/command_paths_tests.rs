@@ -76,6 +76,44 @@ fn unbundled_development_preserves_the_workspace_profile_preference() {
 }
 
 #[test]
+fn only_a_bundles_own_helpers_are_confined_to_it() {
+    let bundled = Path::new("/x/Beekeeper Host.app/Contents/MacOS/beekeeper-host");
+    let loose = Path::new("/x/target/debug/beekeeper-host");
+    for helper in ["beekeeper-session-provider", "beekeeper-dev-mcp", "bee"] {
+        assert!(must_come_from_bundle(helper, Some(bundled)), "{helper}");
+        assert!(!must_come_from_bundle(helper, Some(loose)), "{helper}");
+        assert!(!must_come_from_bundle(helper, None), "{helper}");
+    }
+    for external in ["claude-agent-acp", "claude", "node", "git", "sh"] {
+        assert!(
+            !must_come_from_bundle(external, Some(bundled)),
+            "{external}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_into_a_bundle_reads_as_the_bundle_and_any_other_stays_as_given() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let real = temp
+        .path()
+        .canonicalize()
+        .expect("canonical")
+        .join("Host.app/Contents/MacOS/bee");
+    executable_file(&real);
+    let link = temp.path().join("bee");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    assert_eq!(through_bundle_symlink(&link), real);
+
+    let loose = temp.path().join("target/debug/bee");
+    executable_file(&loose);
+    let loose_link = temp.path().join("loose-bee");
+    std::os::unix::fs::symlink(&loose, &loose_link).expect("symlink");
+    assert_eq!(through_bundle_symlink(&loose_link), loose_link);
+}
+
+#[test]
 fn explicit_command_override_remains_explicit_in_a_bundle() {
     let temp = tempfile::tempdir().expect("tempdir");
     let custom = temp.path().join(executable_basename("custom-provider"));

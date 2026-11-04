@@ -12,6 +12,9 @@
 //! `bee` is the binary that is already on an agent's `PATH`.
 
 use beekeeper_host::install::{launchd_daemon, Domain, Service};
+use beekeeper_host_core::command_paths::{
+    is_executable_file, macos_bundle_dir, through_bundle_symlink,
+};
 use beekeeper_host_core::layout::{self, Instance};
 use clap::Subcommand;
 
@@ -59,10 +62,14 @@ pub enum HostCmd {
     /// user service (Linux) — or, with `--system`, as a macOS LaunchDaemon
     /// that starts at boot with nobody logged in.
     ///
-    /// Only the host. The menu bar app is registered by Beekeeper itself,
-    /// because it is nested inside that bundle and is meaningless without a
-    /// logged-in session — which a server does not have.
+    /// Only the host. The Beekeeper app registers its own nested menu bar; in a
+    /// standalone `Beekeeper Host.app`, `--menu-bar` registers that bundle's.
     Install {
+        /// Register the `beekeeper-menubar` beside this `bee` instead of the
+        /// host, which is left running and untouched. Needs a standalone
+        /// `Beekeeper Host.app`. macOS only.
+        #[arg(long, conflicts_with_all = ["program", "system", "user", "print"])]
+        menu_bar: bool,
         /// The host binary to register. Defaults to the `beekeeper-host` beside
         /// this `bee`.
         #[arg(long)]
@@ -189,6 +196,23 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
     let home = layout::home_dir().map_err(CliError::Other)?;
 
     match command {
+        HostCmd::Install { menu_bar: true, .. } => {
+            let program = resolve_menu_bar_binary()?;
+            let registration =
+                beekeeper_host::install::install(Service::MenuBar, &home, instance, &program)
+                    .map_err(CliError::Other)?;
+            print_json(&registration)?;
+            for warning in &registration.warnings {
+                eprintln!("bee: {warning}");
+            }
+            if !beekeeper_host::install::status(Service::AgentHost, &home, instance).installed {
+                eprintln!(
+                    "bee: the agent host itself is not registered, and the menu bar only shows \
+                     it. Register it with `bee host install`."
+                );
+            }
+            Ok(())
+        }
         HostCmd::Install { program, .. } => {
             let program = resolve_host_binary(program.as_deref())?;
             let registration =
@@ -375,11 +399,45 @@ fn host_error(
     })
 }
 
+/// The `beekeeper-menubar` of the standalone bundle holding this `bee`.
+///
+/// Only there. A Beekeeper app nests its menu bar elsewhere and registers it
+/// itself, and a loose binary launchd started would have no bundle to give it
+/// its identity or keep it out of the Dock. `PATH` is never consulted.
+fn resolve_menu_bar_binary() -> Result<std::path::PathBuf, CliError> {
+    if !cfg!(target_os = "macos") {
+        return Err(CliError::Usage(
+            "--menu-bar is macOS only: there is no menu bar app on this platform".to_string(),
+        ));
+    }
+    let exe = std::env::current_exe()
+        .map_err(|error| CliError::Other(format!("cannot resolve this executable: {error}")))?;
+    let exe = through_bundle_symlink(&exe);
+    let Some(bundle_dir) = macos_bundle_dir(&exe) else {
+        return Err(CliError::Usage(format!(
+            "--menu-bar registers the menu bar of a Beekeeper Host.app, and this bee ({}) is not \
+             in an app bundle. Nothing was registered.",
+            exe.display()
+        )));
+    };
+    let beside = bundle_dir.join("beekeeper-menubar");
+    if !is_executable_file(&beside) {
+        return Err(CliError::Usage(format!(
+            "no beekeeper-menubar in {}. Nothing was registered. A Beekeeper Host.app that lost \
+             it needs replacing; the Beekeeper app registers its own menu bar.",
+            bundle_dir.display()
+        )));
+    }
+    std::fs::canonicalize(&beside)
+        .map_err(|error| CliError::Other(format!("cannot resolve {}: {error}", beside.display())))
+}
+
 /// The `beekeeper-host` this `bee` should register.
 ///
 /// Beside this executable first, because that is the one shipped with this
-/// build; then `PATH`. Never a bare name in the registration itself — launchd
-/// and systemd run with a minimal `PATH` and neither looks a program up.
+/// build; then `PATH`, unless this `bee` is in a bundle, where a missing host
+/// means a broken bundle. Never a bare name in the registration itself —
+/// launchd and systemd run with a minimal `PATH` and neither looks a program up.
 fn resolve_host_binary(explicit: Option<&std::path::Path>) -> Result<std::path::PathBuf, CliError> {
     if let Some(explicit) = explicit {
         return std::fs::canonicalize(explicit).map_err(|error| {
@@ -387,6 +445,22 @@ fn resolve_host_binary(explicit: Option<&std::path::Path>) -> Result<std::path::
         });
     }
     let name = format!("beekeeper-host{}", std::env::consts::EXE_SUFFIX);
+    let exe = std::env::current_exe()
+        .ok()
+        .map(|exe| through_bundle_symlink(&exe));
+    if let Some(bundle_dir) = exe.as_deref().and_then(macos_bundle_dir) {
+        let beside = bundle_dir.join(&name);
+        if !is_executable_file(&beside) {
+            return Err(CliError::Usage(format!(
+                "no executable {name} in {}, and this bee will not register one from PATH. \
+                 Replace the bundle, or name one with `--program`",
+                bundle_dir.display()
+            )));
+        }
+        return std::fs::canonicalize(&beside).map_err(|error| {
+            CliError::Other(format!("cannot resolve {}: {error}", beside.display()))
+        });
+    }
     if let Some(beside) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(&name)))

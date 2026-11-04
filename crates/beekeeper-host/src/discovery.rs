@@ -15,7 +15,8 @@
 //! - [`beekeeper_host_core::command_paths::resolve_workspace_command`] runs
 //!   first, so an installed bundle prefers the `beekeeper-session-provider` shipped
 //!   inside it over a stale `target/debug` — the stale-binary hazard that
-//!   function exists for.
+//!   function exists for. Inside a bundle a miss on one of its own helpers
+//!   stops there ([`beekeeper_host_core::command_paths::must_come_from_bundle`]).
 //! - [`beekeeper_host_core::managed_node`] names the app-private npm and
 //!   Node directories, so both launchers find the same `claude-agent-acp`.
 //!
@@ -31,14 +32,26 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use beekeeper_host_core::command_paths::{
-    command_looks_like_path, executable_basename, is_executable_file, resolve_workspace_command,
+    command_looks_like_path, executable_basename, is_executable_file, must_come_from_bundle,
+    resolve_workspace_command, through_bundle_symlink,
 };
 use beekeeper_host_core::managed_node::{
     beekeeper_managed_command_path, beekeeper_managed_node_bin_dir, beekeeper_managed_npm_bin_dir,
 };
 
+/// This process's executable, as the bundle rules read it.
+pub fn own_executable() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| through_bundle_symlink(&exe))
+}
+
 /// Resolve `command` to an absolute path, or `None`.
 pub fn resolve_command(command: &str) -> Option<PathBuf> {
+    resolve_command_for(command, own_executable().as_deref())
+}
+
+fn resolve_command_for(command: &str, executable: Option<&Path>) -> Option<PathBuf> {
     // Explicit paths stay explicit — an operator who wrote one in `host.json`
     // means it.
     if command_looks_like_path(command) {
@@ -52,9 +65,16 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
         command,
         workspace_root_dir(),
         std::env::current_dir().ok().as_deref(),
-        std::env::current_exe().ok().as_deref(),
+        executable,
     ) {
         return Some(path);
+    }
+
+    // A bundle's own helper that is not in the bundle is a broken bundle. A
+    // same-named file further along is some other build, and running it would
+    // look like this one working.
+    if must_come_from_bundle(command, executable) {
+        return None;
     }
 
     // 2. The app-private npm/Node directories, for the ACP adapters.
@@ -230,9 +250,7 @@ pub fn augmented_path() -> Option<String> {
     use beekeeper_host_core::path_env::{compose_path_entries, should_use_inherited};
 
     let home = dirs::home_dir();
-    let exe_parent = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let exe_parent = own_executable().and_then(|exe| exe.parent().map(Path::to_path_buf));
     let has_local_context = home.is_some() || exe_parent.is_some();
 
     let mut managed: Vec<PathBuf> = Vec::new();
@@ -325,6 +343,43 @@ mod tests {
         assert_eq!(
             resolve_command(dir.path().join("absent").to_str().expect("utf8")),
             None
+        );
+    }
+
+    /// Inside a bundle a missing helper ends the search, and something the
+    /// bundle never carries keeps the wider lookup.
+    #[cfg(unix)]
+    #[test]
+    fn a_bundle_refuses_a_missing_helper_and_still_finds_what_it_never_carries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("Host.app/Contents/MacOS/beekeeper-host");
+        executable(&exe);
+        for helper in [
+            "beekeeper-session-provider",
+            "beekeeper-dev-mcp",
+            "bee",
+            "git-credential-nostr",
+        ] {
+            assert_eq!(resolve_command_for(helper, Some(&exe)), None, "{helper}");
+        }
+        assert!(
+            resolve_command_for("sh", Some(&exe)).is_some(),
+            "a tool the bundle does not ship is still looked up"
+        );
+
+        let beside = exe.with_file_name("beekeeper-dev-mcp");
+        executable(&beside);
+        assert_eq!(
+            resolve_command_for("beekeeper-dev-mcp", Some(&exe)),
+            Some(beside)
+        );
+
+        // An explicit path is the operator's, bundle or not.
+        let elsewhere = dir.path().join("elsewhere/beekeeper-session-provider");
+        executable(&elsewhere);
+        assert_eq!(
+            resolve_command_for(elsewhere.to_str().expect("utf8"), Some(&exe)),
+            Some(elsewhere)
         );
     }
 

@@ -159,6 +159,35 @@ bee host installed     # both services, and anything wrong with either
 bee host status        # what the running host says about the provider
 ```
 
+### From a standalone `Beekeeper Host.app`
+
+There is no app to ask, so each registration is a command, run with the `bee`
+inside the package ([package notes](standalone-host-package.md)):
+
+```bash
+bee host install             # the host
+bee host install --menu-bar  # the menu bar beside this bee, and nothing else
+```
+
+`--menu-bar` never touches the host's job, so it does not interrupt running
+agents, and it leaves a recorded refusal of the host in place. It refuses
+outside a bundle, and in a bundle with no `beekeeper-menubar` beside this `bee`:
+the Beekeeper app nests its menu bar elsewhere and registers it itself. Both
+labels are per instance, not per bundle, so a Beekeeper app of the same instance
+shares them with the package. `bee host uninstall` removes both.
+
+**Inside a `.app`, a missing helper is a refusal.** Without a `provider_command`
+in `host.json`, the host starts the provider only if the bundle holds
+`beekeeper-session-provider`, `beekeeper-dev-mcp`, `bee` and
+`git-credential-nostr`. Otherwise the supervisor gives up, the provider log names
+what is missing, and `beekeeper-host check` prints the same line. `bee host
+install` likewise will not register a `beekeeper-host` from `PATH`. Adapters and
+tools a bundle never carries (`claude-agent-acp`, `claude`, `node`, `git`) keep
+the wider lookup, and so does every binary outside a bundle. An explicit path
+stays the operator's own: `provider_command`, `--program`. This is checked when
+the provider starts, so a helper removed while it runs is not noticed until the
+next start.
+
 ## On a headless Mac
 
 A login item runs only while its user is logged in at the screen: launchd

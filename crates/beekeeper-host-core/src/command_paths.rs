@@ -63,7 +63,8 @@ fn profile_target_dirs(root: &Path) -> [PathBuf; 2] {
     }
 }
 
-fn macos_bundle_dir(executable: &Path) -> Option<&Path> {
+/// `Contents/MacOS` of the `.app` holding `executable`, if one does.
+pub fn macos_bundle_dir(executable: &Path) -> Option<&Path> {
     let binary_dir = executable.parent()?;
     let contents = binary_dir.parent()?;
     let bundle = contents.parent()?;
@@ -71,6 +72,37 @@ fn macos_bundle_dir(executable: &Path) -> Option<&Path> {
         && contents.file_name()? == "Contents"
         && bundle.extension()? == "app")
         .then_some(binary_dir)
+}
+
+/// `executable` with a symlink into a `.app` resolved, and otherwise as given.
+///
+/// `std::env::current_exe` on macOS reports the path the process was started
+/// by, so a `~/.local/bin/bee` linked into a bundle would not read as bundled.
+/// A symlink to a binary outside any bundle keeps its old meaning.
+pub fn through_bundle_symlink(executable: &Path) -> PathBuf {
+    match std::fs::canonicalize(executable) {
+        Ok(real) if macos_bundle_dir(&real).is_some() => real,
+        _ => executable.to_path_buf(),
+    }
+}
+
+/// The binaries a bundle ships as one reviewed set, and that a launcher inside
+/// it must therefore never replace with a same-named file from elsewhere.
+///
+/// Adapters and tools (`claude-agent-acp`, `claude`, `node`, `git`) are not on
+/// this list: a bundle does not contain them, so looking further is correct.
+const BUNDLED_HELPERS: [&str; 6] = [
+    "beekeeper-session-provider",
+    "beekeeper-dev-mcp",
+    "bee",
+    "beekeeper-acp",
+    "beekeeper-agent",
+    "git-credential-nostr",
+];
+
+/// Whether a miss on `command` beside `executable` is the end of the search.
+pub fn must_come_from_bundle(command: &str, executable: Option<&Path>) -> bool {
+    BUNDLED_HELPERS.contains(&command) && executable.and_then(macos_bundle_dir).is_some()
 }
 
 fn command_search_dirs(
@@ -100,8 +132,8 @@ fn command_search_dirs(
 
 /// Resolve `command` against this build's own artifacts, or `None`.
 ///
-/// This is the *first* thing a launcher tries; a miss falls through to the
-/// caller's own `PATH` search.
+/// This is the *first* thing a launcher tries. A miss falls through to the
+/// caller's own `PATH` search, unless [`must_come_from_bundle`] says otherwise.
 pub fn resolve_workspace_command(
     command: &str,
     workspace: &Path,

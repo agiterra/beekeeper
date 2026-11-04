@@ -583,6 +583,11 @@ fn install_at(
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    // The registration points its output at this directory, and an install can
+    // come before the commissioning that would otherwise create it.
+    if let Some(parent) = layout::host_log_path(home, instance).parent() {
+        beekeeper_host_core::atomic_write::create_dir_all_restricted(parent)?;
+    }
     std::fs::write(
         &path,
         registration_contents(service, instance, program, home),
@@ -599,11 +604,15 @@ fn install_at(
         let _ = std::fs::remove_file(&path);
         return Err(error);
     }
-    // Installing is the operator asking for this, which supersedes any earlier
-    // refusal. Best-effort: a stale refusal file must not fail an install that
-    // worked, and `login_autostart` reads `installed` first anyway.
-    if let Err(error) = allow_login(home, instance) {
-        eprintln!("beekeeper-host: could not clear the login refusal: {error}");
+    // Installing the host is the operator asking for this, which supersedes any
+    // earlier refusal. Best-effort: a stale refusal file must not fail an
+    // install that worked, and `login_autostart` reads `installed` first anyway.
+    // Not for the menu bar: wanting the icon does not answer the question about
+    // running agents at login.
+    if service == Service::AgentHost {
+        if let Err(error) = allow_login(home, instance) {
+            eprintln!("beekeeper-host: could not clear the login refusal: {error}");
+        }
     }
     Ok(status_at(service, home, instance, lookup))
 }
@@ -1028,6 +1037,29 @@ mod tests {
         activate(Service::AgentHost, &path, Instance::Dev, &home).expect("no-op");
         deactivate(Service::AgentHost, &path, Instance::Dev, &home);
         assert!(daemon_lookup_user(Service::AgentHost, &home).is_none());
+    }
+
+    /// Wanting the icon does not answer the question about running agents at
+    /// login, and an install ahead of commissioning still has somewhere to log.
+    #[test]
+    fn a_menu_bar_install_keeps_the_hosts_refusal_and_makes_its_log_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let program = home.join("beekeeper-menubar");
+        std::fs::write(&program, b"#!/bin/sh\n").expect("write program");
+        refuse_login(home, Instance::Production).expect("refuse");
+
+        let menu_bar =
+            install(Service::MenuBar, home, Instance::Production, &program).expect("install");
+        assert!(menu_bar.installed);
+        assert!(login_refused(home, Instance::Production));
+        assert!(layout::host_log_path(home, Instance::Production)
+            .parent()
+            .expect("parent")
+            .is_dir());
+
+        install(Service::AgentHost, home, Instance::Production, &program).expect("install");
+        assert!(!login_refused(home, Instance::Production));
     }
 
     /// A registration on disk that the service manager does not have loaded.

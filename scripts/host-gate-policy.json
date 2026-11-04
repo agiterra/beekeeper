@@ -31,7 +31,8 @@
     "desktop/src-tauri/Cargo.lock",
     "Justfile",
     "TESTING.md",
-    "docs/agent-host.md"
+    "docs/agent-host.md",
+    "docs/standalone-host-package.md"
   ],
   "shared_fanout": {
     "crates/beekeeper-core/": "the relay, desktop and most of the workspace (24 of 40 crates at the time of writing)",
