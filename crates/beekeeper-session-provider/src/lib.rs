@@ -5923,7 +5923,12 @@ impl Provider {
                     .to_owned(),
             ));
         }
-        if !commands::operator_may_steer(record, &attempt.operator_pubkey) {
+        // A conversation message is delivered as a steer by this provider, not
+        // by its sender, so the author it admitted needs no steering authority
+        // to reach the boundary. Interrupts and lifecycle keep their own rules.
+        if !commands::operator_may_steer(record, &attempt.operator_pubkey)
+            && !self.conversation_admitted_author(attempt)
+        {
             return Some((
                 payload::UNAUTHORIZED_OPERATOR,
                 "the sender's authority to steer this execution was withdrawn before the steer \
@@ -22917,6 +22922,154 @@ done
             vec![SteerDisposition::NotDelivered]
         );
         assert!(provider.state().is_command_consumed("steer-idle"));
+    }
+
+    /// A conversation message is a steer because this provider made it one. The
+    /// author it admitted, with no steering authority, reaches the boundary; nobody
+    /// else does, and being admitted lets no one past a closed execution.
+    #[tokio::test]
+    async fn an_admitted_conversation_author_reaches_the_boundary_and_nobody_else_does() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = steering_provider(
+            &dir.path().join("state"),
+            Some(&projects),
+            &held_open_steer_agent(),
+            Some(SteerIdleGuard::PromptRequired),
+        );
+        let target = create_steer_session(&mut provider, channel_id).await;
+        // The conversation's answers are signed by its participant, from custody.
+        let actor_keys = nostr::Keys::generate();
+        let actor = actor_keys.public_key().to_hex();
+        let custody = provider.config.state_dir.join("actors").join(&actor);
+        std::fs::create_dir_all(&custody).expect("custody");
+        beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+            &custody.join("key"),
+            actor_keys.secret_key().to_secret_hex().as_bytes(),
+        )
+        .expect("key");
+        beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+            &custody.join("auth-tag.json"),
+            beekeeper_sdk::nip_oa::compute_auth_tag(
+                test_operator_keys(),
+                &actor_keys.public_key(),
+                "",
+            )
+            .expect("tag")
+            .as_bytes(),
+        )
+        .expect("tag");
+        std::fs::write(
+            provider.config.state_dir.join("conversation-routes.json"),
+            serde_json::to_vec(&serde_json::json!({"routes": [{
+                "actorPubkey": actor, "channelId": channel_id, "target": target,
+            }]}))
+            .expect("json"),
+        )
+        .expect("route");
+        let sibling = nostr::Keys::generate();
+        let message = |text: &str, keys: &nostr::Keys| {
+            nostr::EventBuilder::new(nostr::Kind::Custom(9), text)
+                .sign_with_keys(keys)
+                .expect("signed")
+        };
+        let attempt = |event: &Event, operator: &str| state::SteerAttemptRecord {
+            attempt_id: format!("{}#1", event.id.to_hex()),
+            command_id: event.id.to_hex(),
+            session_id: target.session_id.clone(),
+            generation: target.generation,
+            channel_id,
+            target: target.clone(),
+            created_at: event.created_at.as_secs(),
+            operation_key: None,
+            operator_pubkey: operator.to_owned(),
+            sender_role: None,
+            text: event.content.clone(),
+            disposition: SteerDisposition::Intent,
+            at: now_secs(),
+            turn_id: None,
+        };
+        let sibling_hex = sibling.public_key().to_hex();
+        let refused_as = |provider: &Provider, attempt: &state::SteerAttemptRecord| {
+            provider
+                .steer_fallback_refusal(attempt)
+                .map(|refusal| refusal.0)
+        };
+
+        let no_origin = message("never admitted", &sibling);
+        assert_eq!(
+            refused_as(&provider, &attempt(&no_origin, &sibling_hex)),
+            Some(payload::UNAUTHORIZED_OPERATOR),
+            "no origin"
+        );
+        let refused = message("refused at admission", &sibling);
+        provider.fixture_admitted_origin(&refused, &actor, &target, channel_id, true);
+        assert_eq!(
+            refused_as(&provider, &attempt(&refused, &sibling_hex)),
+            Some(payload::UNAUTHORIZED_OPERATOR),
+            "a refused admission"
+        );
+        let admitted = message("hello from a sibling", &sibling);
+        provider.fixture_admitted_origin(&admitted, &actor, &target, channel_id, false);
+        let stranger = nostr::Keys::generate().public_key().to_hex();
+        assert_eq!(
+            refused_as(&provider, &attempt(&admitted, &stranger)),
+            Some(payload::UNAUTHORIZED_OPERATOR),
+            "another signer naming that command"
+        );
+        let mut elsewhere = attempt(&admitted, &sibling_hex);
+        elsewhere.channel_id = Uuid::new_v4();
+        assert_eq!(
+            refused_as(&provider, &elsewhere),
+            Some(payload::UNAUTHORIZED_OPERATOR),
+            "another channel"
+        );
+        let mut other_generation = attempt(&admitted, &sibling_hex);
+        other_generation.target.generation += 1;
+        assert_eq!(
+            refused_as(&provider, &other_generation),
+            Some(payload::UNAUTHORIZED_OPERATOR),
+            "another target"
+        );
+
+        // The exact one runs as an ordinary boundary turn on the real actor.
+        let exact = attempt(&admitted, &sibling_hex);
+        assert_eq!(refused_as(&provider, &exact), None);
+        provider
+            .state
+            .stage_steer_intent(exact.clone())
+            .expect("intent");
+        provider
+            .fallback_steer_to_boundary(&exact, payload::STEER_TURN_ENDED)
+            .expect("fallback");
+        pump_until_turn_started(&mut provider).await;
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_codes(&sink, &exact.command_id),
+            vec![
+                (
+                    "turn_degraded".to_owned(),
+                    payload::STEER_TURN_ENDED.to_owned()
+                ),
+                ("turn_queued".to_owned(), String::new()),
+                ("turn_started".to_owned(), String::new()),
+            ]
+        );
+
+        // Admission does not outrank the execution's own state.
+        provider
+            .state
+            .update_session(&target.session_id, |record| record.closed = true)
+            .expect("closed");
+        assert_eq!(
+            refused_as(&provider, &exact),
+            Some(payload::SESSION_CLOSED),
+            "a closed execution"
+        );
     }
 
     /// (7) An acknowledgement carrying another attempt's id settles nothing

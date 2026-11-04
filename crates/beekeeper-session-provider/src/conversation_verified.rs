@@ -153,6 +153,49 @@ fn verified_source<'a>(
     Ok((origin, facts))
 }
 
+impl Admission {
+    /// This exact source, author, execution and channel, and not refused. Turn
+    /// start, not admission, sets `admitted`, so a steer on its way to the
+    /// boundary is not yet admitted.
+    pub(super) fn names_unrefused(
+        &self,
+        source: &str,
+        author: &str,
+        target: &CodingSessionTarget,
+        channel: Uuid,
+    ) -> bool {
+        !self.refused
+            && self.source == source
+            && self.author == author
+            && self.target == *target
+            && self.channel == channel
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture(
+        actor: &str,
+        channel: Uuid,
+        target: &CodingSessionTarget,
+        source: &str,
+        author: &str,
+        refused: bool,
+    ) -> Self {
+        Self {
+            actor: actor.to_owned(),
+            channel,
+            target: target.clone(),
+            source: source.to_owned(),
+            author: author.to_owned(),
+            root: source.to_owned(),
+            project: "project".to_owned(),
+            genesis: "ab".repeat(32),
+            owner: "cd".repeat(32),
+            admitted: false,
+            refused,
+        }
+    }
+}
+
 pub(crate) fn admitted_reply_origin(
     state_dir: &std::path::Path,
     actor: &str,

@@ -164,6 +164,75 @@ impl Provider {
         }))
     }
 
+    /// Whether this steer is the exact message conversation admission let in:
+    /// the same signed event, author, channel and execution, with an admission
+    /// proposed and not refused. A request refused at admission keeps an origin
+    /// too, with none. The author's policy was read from the relay just before
+    /// the steer was dispatched; a fallback does not read it again.
+    pub(crate) fn conversation_admitted_author(
+        &self,
+        attempt: &crate::state::SteerAttemptRecord,
+    ) -> bool {
+        self.conversation_origins().is_ok_and(|origins| {
+            origins
+                .requests
+                .get(&attempt.command_id)
+                .is_some_and(|origin| {
+                    origin.admission.as_ref().is_some_and(|admission| {
+                        admission.names_unrefused(
+                            &attempt.command_id,
+                            &attempt.operator_pubkey,
+                            &attempt.target,
+                            attempt.channel_id,
+                        )
+                    }) && origin.event == attempt.command_id
+                        && origin.channel == attempt.channel_id
+                        && origin.target == attempt.target
+                        && origin.author.as_deref() == Some(attempt.operator_pubkey.as_str())
+                        && origin.signed_source.as_ref().is_some_and(|source| {
+                            source.id.to_hex() == attempt.command_id
+                                && source.pubkey.to_hex() == attempt.operator_pubkey
+                        })
+                })
+        })
+    }
+
+    /// A conversation request as admission leaves it, for a test of what follows.
+    #[cfg(test)]
+    pub(crate) fn fixture_admitted_origin(
+        &self,
+        event: &Event,
+        actor: &str,
+        target: &CodingSessionTarget,
+        channel: Uuid,
+        refused: bool,
+    ) {
+        let mut origins = self.conversation_origins().expect("origins");
+        let author = event.pubkey.to_hex();
+        let source = event.id.to_hex();
+        origins.requests.insert(
+            source.clone(),
+            Origin {
+                actor: actor.to_owned(),
+                channel,
+                root: source.clone(),
+                event: source.clone(),
+                author: Some(author.clone()),
+                target: target.clone(),
+                definition_event_id: None,
+                linked_definition_event_id: None,
+                private_definition_event_id: None,
+                instructions: None,
+                signed_source: Some(event.clone()),
+                admission: Some(verified::Admission::fixture(
+                    actor, channel, target, &source, &author, refused,
+                )),
+                host_notice: None,
+            },
+        );
+        self.save_conversation_origins(&origins).expect("saved");
+    }
+
     pub(crate) fn refresh_conversation_generation(
         &self,
         old: &CodingSessionTarget,
