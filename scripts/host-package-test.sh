@@ -370,7 +370,7 @@ PY
 
     step "6. The Host picks this bundle's provider, past every trap"
     check=$(cd "$WORK" && isolated "$REAL/Contents/MacOS/beekeeper-host" check 2>&1)
-    [[ "$(sed -n 's/^provider bin:  //p' <<<"$check")" == "$REAL/Contents/MacOS/beekeeper-session-provider" ]] \
+    [[ "$(sed -n 's/^provider bin:  //p' <<<"$check")" == "$(cd "$REAL" && pwd -P)/Contents/MacOS/beekeeper-session-provider" ]] \
         && pass "beekeeper-host check names Contents/MacOS, from a directory with target/ traps and a poisoned PATH" \
         || fail "beekeeper-host check: $check"
 
