@@ -716,7 +716,7 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         resolved,
         vec![
             ("beekeeper/builder@^1.2.0", "1.2.0"),
-            ("beekeeper/working-contract@^1.2.0", "1.2.2"),
+            ("beekeeper/working-contract@^1.2.0", "1.2.3"),
         ],
         "a 1.2.0-era caret must carry the revised contract"
     );
@@ -828,7 +828,7 @@ fn every_current_template_is_what_a_caret_range_resolves_to_and_composes() {
             "{name}/{version} has no {TEMPLATE_MD}"
         );
     }
-    // `memory` 1.1.0 (ledger 288) rides the `^1.0.0` every seeded project
+    // `memory` 1.1.x (1.1.0 was ledger 288) rides the `^1.0.0` every seeded project
     // carries; an exact pin on 1.0.0 still answers with 1.0.0's bytes.
     let memory = catalog
         .resolve(
@@ -836,7 +836,7 @@ fn every_current_template_is_what_a_caret_range_resolves_to_and_composes() {
             &TemplateRange::parse("memory", "^1.0.0").expect("range"),
         )
         .expect("memory@^1.0.0");
-    assert_eq!(memory.template.version.to_string(), "1.1.0");
+    assert_eq!(memory.template.version.to_string(), "1.1.1");
     let memory_pin = catalog
         .resolve(
             "memory",
@@ -894,10 +894,10 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.2.8]]",
-        "![[beekeeper/working-contract@^1.2.2]]",
-        "![[beekeeper/memory@^1.1.0]]",
-        "![[beekeeper/project-pulse@^1.1.0]]",
+        "![[beekeeper/lead@^1.2.9]]",
+        "![[beekeeper/working-contract@^1.2.3]]",
+        "![[beekeeper/memory@^1.1.1]]",
+        "![[beekeeper/project-pulse@^1.1.1]]",
     ] {
         assert!(
             lead.contains(expected),
@@ -944,10 +944,10 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.2.8"),
-            ("beekeeper/working-contract@^1.0.0", "1.2.2"),
-            ("beekeeper/memory@^1.0.0", "1.1.0"),
-            ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
+            ("beekeeper/lead@^1.0.0", "1.2.9"),
+            ("beekeeper/working-contract@^1.0.0", "1.2.3"),
+            ("beekeeper/memory@^1.0.0", "1.1.1"),
+            ("beekeeper/project-pulse@^1.0.0", "1.1.1"),
         ],
         "an existing project's caret ranges must take the minor revision"
     );
@@ -1043,10 +1043,10 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.1.0", "1.2.8"),
-            ("beekeeper/working-contract@^1.1.0", "1.2.2"),
-            ("beekeeper/memory@^1.0.0", "1.1.0"),
-            ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
+            ("beekeeper/lead@^1.1.0", "1.2.9"),
+            ("beekeeper/working-contract@^1.1.0", "1.2.3"),
+            ("beekeeper/memory@^1.0.0", "1.1.1"),
+            ("beekeeper/project-pulse@^1.1.0", "1.1.1"),
         ],
         "a 1.1.0-era caret must carry the current lead"
     );

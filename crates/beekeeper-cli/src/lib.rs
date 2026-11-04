@@ -6729,7 +6729,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(" ");
             assert!(
-                body.contains("$BEE sessions operation get --id <operationId>")
+                body.contains("\"$BEE\" sessions operation get --id <operationId>")
                     || body.contains("bee sessions operation get --id <operationId>"),
                 "{} does not teach the exact pointer fetch command",
                 dir.display()

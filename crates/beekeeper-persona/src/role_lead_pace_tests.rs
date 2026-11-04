@@ -25,17 +25,17 @@ fn templates_dir() -> PathBuf {
 /// Each command shape the lead needs, in the order it runs them, exactly as
 /// the composed persona must carry it.
 const LEAD_COMMAND_SHAPES: [&str; 6] = [
-    "`$BEE sessions work adopt --plan <plan path> --commit <agents commit> --agents-repo <dir> \
+    "`\"$BEE\" sessions work adopt --plan <plan path> --commit <agents commit> --agents-repo <dir> \
      --channel <ch> --session-ref <ref>`",
-    "`$BEE sessions work bind evidence --channel <ch> --session-ref <ref> --declaration <decl> \
+    "`\"$BEE\" sessions work bind evidence --channel <ch> --session-ref <ref> --declaration <decl> \
      --criteria <id>[,<id>] --artifact <sha> --evidence verdict:<disposition id> \
      --agents-repo <dir>`",
-    "`$BEE sessions work bind evidence --channel <ch> --session-ref <ref> --declaration <decl> \
+    "`\"$BEE\" sessions work bind evidence --channel <ch> --session-ref <ref> --declaration <decl> \
      --criteria <id> --artifact <sha> --evidence action_result:<46023 id> --agents-repo <dir>`",
-    "`$BEE sessions work bind ref --channel <ch> --session-ref <ref> --declaration <decl> \
+    "`\"$BEE\" sessions work bind ref --channel <ch> --session-ref <ref> --declaration <decl> \
      --criteria <id> --commit <sha> --observed-by <46023 id> --agents-repo <dir>`",
-    "`$BEE sessions work status --channel <ch> --session-ref <ref> --agents-repo <dir>`",
-    "`$BEE sessions complete --channel <ch> --session-ref <ref> --genesis <genesis id> \
+    "`\"$BEE\" sessions work status --channel <ch> --session-ref <ref> --agents-repo <dir>`",
+    "`\"$BEE\" sessions complete --channel <ch> --session-ref <ref> --genesis <genesis id> \
      --agents-repo <dir> --body '{\"assignmentRefs\":[\"<id>\"],\"landedShas\":[\"<sha>\"],\
      \"followUps\":[],\"summary\":\"<one sentence>\"}'`",
 ];
@@ -82,12 +82,12 @@ const LEAD_SITUATION_CARD_RULES: [&str; 2] = [
 /// states the assignmentRef rule the CLI now enforces.
 const LEAD_1_2_5_RULES: [&str; 2] = [
     "`sessions assign` carries no criteria field, so name what the verifier judges right then, \
-     not after its verdict lands: `$BEE sessions work bind assignment --channel <ch> \
+     not after its verdict lands: `\"$BEE\" sessions work bind assignment --channel <ch> \
      --session-ref <ref> --declaration <decl> --criteria <id>[,<id>] --assignment <verifier \
      assignment id> --agents-repo <dir>`, immediately after publishing the verifier's \
      assignment.",
     "A verdict's `assignmentRef` must be the assignment named by the report it judges (the \
-     report's own `assignmentRef`), never the verifier's own assignment — `$BEE sessions \
+     report's own `assignmentRef`), never the verifier's own assignment — `\"$BEE\" sessions \
      verdict` fetches the report and refuses a mismatch.",
 ];
 
@@ -100,7 +100,7 @@ const LEAD_1_2_6_RULES: [&str; 2] = [
     "A verifier's disposition arrives as a wake; do not poll for it and do not ask the \
      verifier to message you.",
     "A verdict alone never settles the verifier's own assignment: before you complete, the \
-     verifier settles it with `$BEE sessions report --channel <ch> --session-ref <ref> \
+     verifier settles it with `\"$BEE\" sessions report --channel <ch> --session-ref <ref> \
      --genesis <genesis id> --body @report.json` naming its own assignment id as \
      `assignmentRef` — the same command any assignee uses to close its own assignment, run \
      against the verifier's assignment rather than the builder's.",
