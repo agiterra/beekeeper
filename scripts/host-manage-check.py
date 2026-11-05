@@ -202,7 +202,8 @@ class Harness:
         return json.loads(out("node", FOREIGN / "foreign-identity.mjs", env=env, cwd=FOREIGN))["pubkey"]
 
     def start_host(self, extra_env=None):
-        env = dict(self.env, RUST_LOG="info,csp=info", **(extra_env or {}))
+        env = dict(self.env, RUST_LOG="info,csp=info")
+        env.update(extra_env or {})
         log = (self.work / "host.log").open("a")
         self.host = subprocess.Popen([str(HOST), "run"], env=env, cwd=self.work, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         self.processes.append(self.host)

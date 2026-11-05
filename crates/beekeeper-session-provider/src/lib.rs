@@ -1980,6 +1980,14 @@ impl Provider {
             }
             _ => {
                 Box::pin(self.handle_command_event_inner(channel_id, event, Some(&*relay))).await?;
+                if matches!(
+                    kind,
+                    beekeeper_core::kind::KIND_CODING_SESSION_COMMAND
+                        | beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND
+                ) {
+                    tracing::debug!(target: "csp", event_id = %event.id, %channel_id,
+                        "relay command dispatch completed");
+                }
             }
         }
         Ok(())
