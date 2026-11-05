@@ -105,6 +105,11 @@ const shot = (name) =>
 const byTest = (id) => page.locator(`[data-testid="${id}"]`);
 const waitText = (locator, text, timeout = 60000) =>
   locator.filter({ hasText: text }).first().waitFor({ timeout });
+// Setup lives behind Add agent, which closes when a setup succeeds.
+const openAddAgent = async () => {
+  if (!(await page.locator("#setup-form").isVisible()))
+    await page.click("#add-agent");
+};
 
 try {
   await waitText(byTest("host-line"), "provider running");
@@ -136,6 +141,7 @@ try {
   check("the owner key is recognized by path alone", true);
 
   // Record the project through the window, with nothing else run by hand.
+  await openAddAgent();
   await page.locator("summary", { hasText: "Add a project" }).click();
   await page.fill("#trust-project", process.env.UI_PROJECT);
   await page.fill("#trust-checkout", process.env.UI_CHECKOUT);
@@ -203,6 +209,7 @@ try {
   const actor = (
     await card.locator('[data-testid="setup-identity"]').textContent()
   ).trim();
+  await card.locator("summary", { hasText: "Technical details" }).click();
   await waitText(
     card.locator('[data-testid="setup-readback"]'),
     "Provider signed model",
@@ -279,6 +286,7 @@ try {
 
   // A second setup for the same project and role is refused, with no new card.
   const cards = await page.locator('[data-testid="setups"] .card').count();
+  await openAddAgent();
   await page.fill("#display-name", "A second one");
   await page.click("#set-up");
   await waitText(byTest("refusal"), "SETUP_ALREADY_EXISTS");

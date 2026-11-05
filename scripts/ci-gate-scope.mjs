@@ -248,6 +248,7 @@ export function groups(policy) {
           fromDesktop,
           "../scripts/host-manage-ui-check.mjs",
           "../scripts/host-manage-page-step.mjs",
+          "../scripts/host-manage-ui-fixture-check.mjs",
         ],
         cwd: "desktop",
       },
@@ -258,12 +259,17 @@ export function groups(policy) {
           "lint",
           "--only=correctness/noUndeclaredVariables",
           `${fromDesktop}/manage-host.js`,
+          `${fromDesktop}/manage-host-view.js`,
         ],
         cwd: "desktop",
       },
       {
         name: "frontend: script parses",
         argv: ["node", "--check", `${frontend}/manage-host.js`],
+      },
+      {
+        name: "frontend: view script parses",
+        argv: ["node", "--check", `${frontend}/manage-host-view.js`],
       },
     ],
     "host-compat": [

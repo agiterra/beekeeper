@@ -82,6 +82,12 @@ async function text2(scope, id) {
     : null;
 }
 
+// Setup lives behind Add agent. An earlier page (HM_PAGE_FILE) shows it directly.
+async function openAddAgent() {
+  if (!(await page.locator("#project").isVisible()))
+    await page.click("#add-agent");
+}
+
 const result = {};
 try {
   await page.fill("#key-file", input.keyFile);
@@ -89,6 +95,7 @@ try {
   await page.locator('[data-testid="signer"].good').waitFor({ timeout: 20000 });
   result.before = await read();
   if (input.readEffort) {
+    await openAddAgent();
     await page.selectOption("#project", input.readEffort.project);
     await page.waitForTimeout(800);
     await page.selectOption("#model", input.readEffort.model);
@@ -100,6 +107,7 @@ try {
   if (input.setUp) {
     // A person's path: the form, the effort list, the button. Nothing injected.
     const form = input.setUp;
+    await openAddAgent();
     await page.selectOption("#project", form.project);
     await page.waitForFunction(
       () => document.getElementById("role").value,
