@@ -192,3 +192,84 @@ fn the_delegated_seat_is_the_projects_lead_role() {
         "under the default vocabulary a captain seat holds nothing"
     );
 }
+
+/// Bee issue 1f0d7b3e, through the real reads: run admission asks the save
+/// rule again, so a roster owner removed after saving no longer writes the
+/// project, while the creator always does and a stranger never did.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn owner_writes_project_follows_the_current_roster() {
+    use beekeeper_core::channel::ProjectRole;
+    use beekeeper_core::kind::KIND_PROJECT;
+    use beekeeper_core::tenant::TenantContext;
+    use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
+
+    use crate::handlers::ingest::{ingest_event, HttpAuthMethod, IngestAuth};
+
+    let state = crate::api::git::policy::tests::policy_test_state().await;
+    let host = format!("owner-writes-{}.example", Uuid::new_v4().simple());
+    let community = state
+        .db
+        .ensure_configured_community(&host)
+        .await
+        .expect("community")
+        .id;
+    let tenant = TenantContext::resolved(community, host);
+    let creator = Keys::generate();
+    let owner = Keys::generate();
+    let stranger = Keys::generate();
+    let project = format!("30621:{}:admission", creator.public_key().to_hex());
+    let head = EventBuilder::new(Kind::Custom(KIND_PROJECT as u16), r#"{"name":"admission"}"#)
+        .tags([Tag::parse(["d", "admission"]).expect("d")])
+        .sign_with_keys(&creator)
+        .expect("project signature");
+    let creator_auth = IngestAuth::Http {
+        pubkey: creator.public_key(),
+        scopes: vec![beekeeper_auth::Scope::ReposWrite],
+        auth_method: HttpAuthMethod::Nip98,
+    };
+    ingest_event(&state, &tenant, head, creator_auth)
+        .await
+        .expect("project ingest");
+    state
+        .db
+        .upsert_project_acl(
+            community,
+            creator.public_key().as_bytes(),
+            "admission",
+            "public",
+            &[(owner.public_key().to_bytes().to_vec(), ProjectRole::Owner)],
+            Timestamp::now().as_secs() as i64,
+        )
+        .await
+        .expect("roster");
+    let channel = Uuid::new_v4();
+    let writes = |keys: &Keys| {
+        let state = state.clone();
+        let project = project.clone();
+        let key = keys.public_key().to_bytes().to_vec();
+        async move { owner_writes_project(&state, community, channel, &project, &key).await }
+    };
+
+    assert_eq!(writes(&creator).await, Ok(true), "the creator writes");
+    assert_eq!(writes(&owner).await, Ok(true), "a roster owner writes");
+    assert_eq!(writes(&stranger).await, Ok(false), "a stranger never did");
+
+    state
+        .db
+        .remove_project_members(
+            community,
+            creator.public_key().as_bytes(),
+            "admission",
+            creator.public_key().as_bytes(),
+            &[owner.public_key().to_bytes().to_vec()],
+        )
+        .await
+        .expect("remove owner");
+    assert_eq!(
+        writes(&owner).await,
+        Ok(false),
+        "removed after saving: refused at admission"
+    );
+    assert_eq!(writes(&creator).await, Ok(true), "the creator still writes");
+}

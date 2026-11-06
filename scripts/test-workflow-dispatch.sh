@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # The Postgres-backed workflow dispatch and vendor ingress tests: the durable
 # queue (claim, lease reclaim and fencing, freeze, outcomes, exhaustion), B1
-# delivery recording, the SQL candidate prefilter, and the relay worker,
+# delivery recording, the SQL candidate prefilter, the relay worker,
 # including the end-to-end seal -> B1 -> run_once test against the built
-# test-webhook component. One list, run by both `.woodpecker/gate.yml`
-# (against its service containers) and `just test-workflow-dispatch` (against
-# a scratch database it creates and drops).
+# test-webhook component, and the project-access admission guards (a roster
+# change rechecked at run admission, in the workflow engine and in the relay
+# helper). One list, run by both `.woodpecker/gate.yml` (against its service
+# containers) and `just test-workflow-dispatch` (against a scratch database
+# it creates and drops).
 #
 # Needs, already set: DATABASE_URL and BEEKEEPER_TEST_DATABASE_URL naming a
 # migrated database this run owns, REDIS_URL, and BEEKEEPER_PLUGIN_ARTIFACTS
@@ -44,5 +46,8 @@ run beekeeper-db \
   workflow_dispatch:: \
   vendor_ingress::tests \
   workflow::tests::dispatch_channel_candidates_prefilter_and_refuse_to_truncate
+run beekeeper-workflow \
+  tests::owner_authority_rechecks_project_access
 run beekeeper-relay \
-  workflow_dispatch_runtime::tests
+  workflow_dispatch_runtime::tests \
+  handlers::project_action_grant::tests::owner_writes_project_follows_the_current_roster

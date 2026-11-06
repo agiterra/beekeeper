@@ -2652,6 +2652,22 @@ mod tests {
                 .push(request.clone());
             Box::pin(async { Ok("bb".repeat(32)) })
         }
+
+        fn owner_writes_project(
+            &self,
+            _community_id: CommunityId,
+            _channel_id: Uuid,
+            _project: &str,
+            _owner_pubkey: &[u8],
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<bool, beekeeper_workflow::ActionSinkError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok(true) })
+        }
     }
 
     /// Ledger 199, review finding 1: an action-scope grant must record the
