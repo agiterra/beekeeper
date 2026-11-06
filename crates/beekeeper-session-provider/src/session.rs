@@ -1076,6 +1076,10 @@ pub struct SessionHandle {
     /// agent spawned) free to keep writing the tree (ledger 227, the A8.1
     /// amendment).
     child_pid: Option<u32>,
+    /// The child's process creation time, read at spawn (Windows only; `None`
+    /// elsewhere). With `child_pid` it is the exact-generation identity a
+    /// recovering provider needs, since a PID alone is reused.
+    child_creation_filetime: Option<u64>,
     /// The actor task, kept so a successor can prove the predecessor ended.
     ///
     /// Detaching it — which is what this did before Astra's third look —
@@ -1383,6 +1387,12 @@ impl SessionHandle {
         self.child_pid
     }
 
+    /// The captured child's creation time (Windows), recorded beside
+    /// [`child_group`](Self::child_group) so the pair names one process.
+    pub(crate) fn child_creation_filetime(&self) -> Option<u64> {
+        self.child_creation_filetime
+    }
+
     /// The agent child's pid, for the test that has to watch its group die.
     #[cfg(test)]
     pub(crate) fn child_pid_for_tests(&self) -> Option<u32> {
@@ -1564,14 +1574,15 @@ impl SessionManager {
             private_fragments,
         ))
         .await;
-        let (attempted, group_id) = match observation.lock() {
-            Ok(value) => (value.attempted, value.group_id),
-            Err(_) => (true, None),
+        let (attempted, group_id, creation_filetime) = match observation.lock() {
+            Ok(value) => (value.attempted, value.group_id, value.creation_filetime),
+            Err(_) => (true, None, None),
         };
         let mut witness = crate::process_witness::ExecutionProcessWitness {
             target,
             attempted_target: None,
             group_id,
+            creation_filetime,
             quiesced: false,
         };
         if result.is_err() {
@@ -1658,6 +1669,7 @@ impl SessionManager {
         let (late_tx, late_rx) = mpsc::unbounded_channel();
         client.set_late_steer_sink(late_tx);
         let child_pid = client.child_pid();
+        let child_creation_filetime = client.child_creation_filetime();
         let instance = ActorInstance::next();
         let actor = SessionActor {
             client,
@@ -1707,6 +1719,7 @@ impl SessionManager {
                 shutdown,
                 fenced,
                 child_pid,
+                child_creation_filetime,
                 actor: Arc::new(Mutex::new(Some(task))),
             },
         })
@@ -1754,6 +1767,7 @@ impl SessionManager {
                 shutdown,
                 fenced: Arc::default(),
                 child_pid: None,
+                child_creation_filetime: None,
                 actor: Arc::new(Mutex::new(None)),
             },
         );
@@ -2257,6 +2271,8 @@ fn write_bundle_manifest(skills: &SeatSkills, files: &[SeatSkillFile]) {
 struct StartupObservation {
     attempted: bool,
     group_id: Option<u32>,
+    /// Windows: the spawned child's creation time, beside its PID in `group_id`.
+    creation_filetime: Option<u64>,
 }
 
 /// Spawn the adapter and open one ACP session in `request.cwd`.
@@ -2379,6 +2395,7 @@ async fn start_agent(
     if let Some(observation) = observation {
         if let Ok(mut observed) = observation.lock() {
             observed.group_id = client.child_pid();
+            observed.creation_filetime = client.child_creation_filetime();
         }
     }
     if let crate::execution_scope::ExecutionPlan::Prepared(prepared) = &request.execution {
@@ -4787,14 +4804,18 @@ server.serve_forever()
 
     /// Write an executable shell script and return its path.
     pub(crate) fn fake_agent(dir: &Path, name: &str, body: &str) -> String {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.join(name);
         let mut file = std::fs::File::create(&path).expect("create script");
         write!(file, "#!/bin/bash\n{body}").expect("write script");
         drop(file);
-        let mut perms = std::fs::metadata(&path).expect("stat").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).expect("chmod");
+        // Run as `bash <script>`; the executable bit only exists on Unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path).expect("stat").permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).expect("chmod");
+        }
         path.to_string_lossy().into_owned()
     }
 
@@ -8360,6 +8381,7 @@ pwd -P > '{}'
             shutdown,
             fenced: Arc::default(),
             child_pid: None,
+            child_creation_filetime: None,
             actor: Arc::new(Mutex::new(None)),
         };
         handle
@@ -8386,6 +8408,7 @@ pwd -P > '{}'
             shutdown,
             fenced: Arc::default(),
             child_pid: None,
+            child_creation_filetime: None,
             actor: Arc::new(Mutex::new(None)),
         };
         handle
@@ -8415,6 +8438,7 @@ pwd -P > '{}'
             shutdown,
             fenced: Arc::default(),
             child_pid: None,
+            child_creation_filetime: None,
             actor: Arc::new(Mutex::new(None)),
         };
         assert_eq!(
@@ -8439,6 +8463,7 @@ pwd -P > '{}'
                 shutdown: live_shutdown,
                 fenced: Arc::default(),
                 child_pid: None,
+                child_creation_filetime: None,
                 actor: Arc::new(Mutex::new(None)),
             },
         );
@@ -8454,6 +8479,7 @@ pwd -P > '{}'
                 shutdown: dead_shutdown,
                 fenced: Arc::default(),
                 child_pid: None,
+                child_creation_filetime: None,
                 actor: Arc::new(Mutex::new(None)),
             },
         );

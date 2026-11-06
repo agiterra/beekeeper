@@ -179,8 +179,11 @@ async fn turn_checkpoint_lists_a_shell_edit_and_leaves_the_repository_alone() {
     ] {
         let path = rig.cwd.join(".git/hooks").join(hook);
         std::fs::write(&path, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).expect("hook");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
     }
     // Stage a change in the real index: the capture must leave it staged.
     std::fs::write(rig.cwd.join("b.txt"), "staged\n").expect("write");

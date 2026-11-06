@@ -26,49 +26,53 @@
 
 //! # Platform
 //!
-//! Unix only, and the crate says so rather than failing to compile: the
-//! control socket is an `AF_UNIX` socket and the login registrations are
-//! launchd and systemd. A Windows host needs named pipes and a different
-//! service manager, which is separate work. `beekeeper-shell-host` already has
-//! this shape, and `beekeeper-host` follows it — including being absent from
-//! `tauri.windows.conf.json`.
+//! Unix uses authenticated AF_UNIX sockets; Windows uses user-restricted local
+//! named pipes and kill-on-close Job Objects. Windows supports foreground run
+//! and provider lifecycle controls; startup registration remains unsupported.
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod activity;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod census;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod cli;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod client;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod commission;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod control;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod discovery;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod identity;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod install;
 pub mod inventory;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod owner;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod protocol;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod restart_policy;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod server;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod sessions;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod spawn;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod state;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod supervisor;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod takeover;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod terminate;
+
+#[cfg(unix)]
+#[path = "transport_unix.rs"]
+mod transport;
+#[cfg(windows)]
+#[path = "transport_windows.rs"]
+mod transport;

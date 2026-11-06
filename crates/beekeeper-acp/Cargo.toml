@@ -76,6 +76,11 @@ evalexpr = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["signal"] }
 
+# The child's process creation time, read at spawn: with the PID it names one
+# process for its whole life, which a PID alone does not (Windows reuses PIDs).
+[target.'cfg(windows)'.dependencies]
+win-custody = "=0.1.1"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"

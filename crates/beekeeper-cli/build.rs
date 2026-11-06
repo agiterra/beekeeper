@@ -49,6 +49,15 @@ fn main() {
         _ => stamp_from_checkout(&manifest_dir),
     };
     println!("cargo:rustc-env=BEEKEEPER_CLI_GIT_SHA={stamped}");
+
+    // Windows MSVC gives the main thread 1 MiB; macOS and Linux give it 8 MiB.
+    // `bee`'s `#[tokio::main]` runs the whole command future on that thread, and
+    // in a debug build it does not fit in 1 MiB: `bee --version` overflowed the
+    // stack before reading its arguments. Ask the linker for the 8 MiB the other
+    // platforms already have. Nothing changes on Unix.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/STACK:8388608");
+    }
 }
 
 /// The checkout's own answer: its short commit, marked dirty when the tree it

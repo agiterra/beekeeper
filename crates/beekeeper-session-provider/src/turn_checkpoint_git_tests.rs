@@ -236,9 +236,12 @@ async fn no_hook_runs_during_a_capture() {
             ),
         )
         .expect("hook");
-        let mut perms = std::fs::metadata(&hook).expect("meta").permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-        std::fs::set_permissions(&hook, perms).expect("chmod");
+        #[cfg(unix)]
+        {
+            let mut perms = std::fs::metadata(&hook).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+            std::fs::set_permissions(&hook, perms).expect("chmod");
+        }
     }
     // A positive control: the hooks are live for ordinary git.
     repo.git(&["update-ref", "refs/control/probe", "HEAD"]);
@@ -288,6 +291,8 @@ async fn an_untracked_file_over_sixteen_mebibytes_is_omitted_by_name() {
     assert!(paths.iter().any(|p| p == "small.txt"));
 }
 
+// Mode 000 is a Unix permission; Windows has no equivalent unreadable-by-owner file.
+#[cfg(unix)]
 #[tokio::test]
 async fn an_unreadable_untracked_file_is_omitted_by_name() {
     let repo = Repo::new();
@@ -311,6 +316,7 @@ async fn an_unreadable_untracked_file_is_omitted_by_name() {
     assert!(!captured.complete);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn an_unreadable_tracked_file_is_omitted_by_name_and_keeps_its_committed_content() {
     let repo = Repo::new();

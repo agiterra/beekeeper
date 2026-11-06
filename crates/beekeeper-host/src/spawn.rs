@@ -107,7 +107,7 @@ pub fn spawn_provider_child(
     record: &CodingSessionProviderRecord,
     nsec: &str,
     log_path: &Path,
-) -> Result<std::process::Child, String> {
+) -> Result<ProviderChild, String> {
     let _ = append_log_marker(
         log_path,
         &format!(
@@ -122,13 +122,22 @@ pub fn spawn_provider_child(
         .try_clone()
         .map_err(|error| format!("failed to clone the provider log handle: {error}"))?;
 
+    #[allow(unused_mut)]
     let mut command = provider_command(binary, config, record, nsec)?;
-    command.stdin(std::process::Stdio::null());
-    command.stdout(std::process::Stdio::from(stdout));
-    command.stderr(std::process::Stdio::from(stderr));
-    command
-        .spawn()
-        .map_err(|error| format!("failed to spawn {PROVIDER_BINARY}: {error}"))
+    #[cfg(windows)]
+    {
+        windows_child::spawn(&command, &stdout, &stderr)
+            .map_err(|e| format!("failed to spawn {PROVIDER_BINARY}: {e}"))
+    }
+    #[cfg(unix)]
+    {
+        command.stdin(std::process::Stdio::null());
+        command.stdout(std::process::Stdio::from(stdout));
+        command.stderr(std::process::Stdio::from(stderr));
+        command
+            .spawn()
+            .map_err(|e| format!("failed to spawn {PROVIDER_BINARY}: {e}"))
+    }
 }
 
 /// The provider's command line and environment, for a start or a one-shot read.
@@ -212,6 +221,15 @@ pub(crate) fn provider_command(
     Ok(command)
 }
 
+/// A provider child whose lifetime and descendants belong to this Host.
+#[cfg(unix)]
+pub type ProviderChild = std::process::Child;
+#[cfg(windows)]
+#[path = "windows_child.rs"]
+mod windows_child;
+#[cfg(windows)]
+pub use windows_child::ProviderChild;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +300,7 @@ mod tests {
     /// The child must carry the marker, and it must be this host's pid — a
     /// stale value inherited from somewhere else would make the desktop spare
     /// a process no host owns.
+    #[cfg(unix)]
     #[test]
     fn the_child_marker_and_resolved_home_name_this_host() {
         // Proven through the same path the spawn uses: a real child, told to

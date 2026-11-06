@@ -44,6 +44,12 @@ use beekeeper_core::coding_session_payload::{BeeStamp, BeeStampSource};
 /// removes.
 pub const BEE_BINARY: &str = "bee";
 
+/// The file the host looks for on disk. `bee.exe` on Windows, where a bare
+/// `bee` is not an executable the loader would run (and `bee.exe` sat beside
+/// the provider unfound, so seats got no `BEE`); `bee` elsewhere. The logical
+/// name, [`BEE_BINARY`], is what `bee --version` prints and stays unchanged.
+pub const BEE_FILE_NAME: &str = if cfg!(windows) { "bee.exe" } else { BEE_BINARY };
+
 /// The variable carrying the absolute path of the chosen binary.
 ///
 /// Deliberately outside the `BUZZ_` prefix, because that is the name the packs
@@ -118,7 +124,7 @@ pub fn resolve_seat_bee(
     is_executable_file: &dyn Fn(&Path) -> bool,
 ) -> Option<SeatBee> {
     if let Some(parent) = exe_parent {
-        let candidate = parent.join(BEE_BINARY);
+        let candidate = parent.join(BEE_FILE_NAME);
         if is_executable_file(&candidate) {
             return Some(SeatBee {
                 path: candidate,
@@ -131,7 +137,7 @@ pub fn resolve_seat_bee(
         if entry.as_os_str().is_empty() {
             continue;
         }
-        let candidate = entry.join(BEE_BINARY);
+        let candidate = entry.join(BEE_FILE_NAME);
         if is_executable_file(&candidate) {
             return Some(SeatBee {
                 path: candidate,

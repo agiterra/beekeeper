@@ -50,11 +50,20 @@ pub(crate) struct InterruptedTurn {
     /// interrupted turn must still be able to prove its own group gone.
     #[serde(default)]
     pub(crate) group_id: Option<u32>,
+    /// Windows: the recorded child's process creation time, kept beside
+    /// `group_id` (the PID) for the same reason: the marker must still be able
+    /// to prove its own child gone after a resume rewrites the witness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) creation_filetime: Option<u64>,
 }
 
 /// Whether `group` is proved absent right now: `killpg(group, 0)` answers
-/// `ESRCH`. `None` is unprovable, never absent.
-fn group_proved_absent(group: Option<u32>) -> bool {
+/// `ESRCH`; on Windows the recorded (PID, creation time) pair is gone or the
+/// PID belongs to a different process. `None` is unprovable, never absent.
+fn group_proved_absent(group: Option<u32>, creation_filetime: Option<u64>) -> bool {
+    // A Unix group is probed by number alone; only Windows reads the creation time.
+    #[cfg(unix)]
+    let _ = creation_filetime;
     let Some(group) = group
         .and_then(|id| i32::try_from(id).ok())
         .filter(|id| *id > 0)
@@ -68,9 +77,14 @@ fn group_proved_absent(group: Option<u32>) -> bool {
             Err(nix::errno::Errno::ESRCH)
         )
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = group;
+        u32::try_from(group)
+            .is_ok_and(|pid| crate::process_identity::recorded_child_absent(pid, creation_filetime))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (group, creation_filetime);
         false
     }
 }
@@ -109,7 +123,16 @@ impl Provider {
                 Err(nix::errno::Errno::ESRCH)
             )
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            // As `EPERM` counts as present on Unix, anything not proved absent
+            // counts as present here: a legacy witness with a PID but no
+            // creation time is never read as "gone".
+            u32::try_from(group).is_ok_and(|pid| {
+                !crate::process_identity::recorded_child_absent(pid, witness.creation_filetime)
+            })
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = group;
             false
@@ -139,6 +162,11 @@ impl Provider {
                 .as_ref()
                 .filter(|witness| witness.target == *target)
                 .and_then(|witness| witness.group_id),
+            creation_filetime: record
+                .process_witness
+                .as_ref()
+                .filter(|witness| witness.target == *target)
+                .and_then(|witness| witness.creation_filetime),
         };
         beekeeper_host_core::atomic_write::atomic_write_json_restricted(
             &marker_path(&self.config.state_dir, &target.session_id),
@@ -182,7 +210,7 @@ impl Provider {
     /// rewritten for a newer generation — the marker's id is what survives
     /// that), else because the record itself is gone.
     fn interrupted_turn_settleable(&self, turn: &InterruptedTurn) -> bool {
-        group_proved_absent(turn.group_id)
+        group_proved_absent(turn.group_id, turn.creation_filetime)
             || self.recovered_group_absent(&turn.target)
             || self.state.session(&turn.target.session_id).is_none()
     }
@@ -373,6 +401,7 @@ mod tests {
                         target: target.clone(),
                         attempted_target: None,
                         group_id: Some(group),
+                        creation_filetime: None,
                         quiesced: false,
                     });
                 })
@@ -501,6 +530,7 @@ mod tests {
                         target: target.clone(),
                         attempted_target: None,
                         group_id: Some(group),
+                        creation_filetime: None,
                         quiesced: false,
                     });
                 })

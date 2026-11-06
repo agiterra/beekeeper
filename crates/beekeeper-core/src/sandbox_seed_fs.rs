@@ -102,6 +102,7 @@ impl SeedGit for NoGitAnswers {
 }
 
 /// Where `cp` lives. Absolute, so nothing on `PATH` can stand in for it.
+#[cfg(unix)]
 const CP: &str = "/bin/cp";
 
 /// [`SeedOps`] over `std::fs`, with git delegated and sizes opt-in.
@@ -130,12 +131,20 @@ impl<G: SeedGit> StdSeedOps<G> {
         self
     }
 
+    #[cfg(not(unix))]
+    fn same_volume(_from: &Path, _to: &Path) -> bool {
+        // No volume identity is read off this platform, and nothing here can
+        // clone anyway; "not the same volume" is the answer that refuses.
+        false
+    }
+
     /// Whether a copy-on-write clone could work between two paths.
     ///
     /// Same volume, on a platform that has `clonefile`. A same-volume path on
     /// a filesystem that cannot clone — an exFAT disk, say — passes this and
     /// then fails in [`SeedOps::clone_tree`], which is reported as a failure
     /// with the error `cp` gave rather than as a silent real copy.
+    #[cfg(unix)]
     fn same_volume(from: &Path, to: &Path) -> bool {
         use std::os::unix::fs::MetadataExt as _;
         let Some(from) = std::fs::metadata(from).ok().map(|meta| meta.dev()) else {
@@ -154,6 +163,15 @@ impl<G: SeedGit> StdSeedOps<G> {
         }
     }
 
+    #[cfg(not(unix))]
+    fn run_cp(_args: &[&std::ffi::OsStr]) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "copying a seeded tree shells out to /bin/cp, which this platform does not have",
+        ))
+    }
+
+    #[cfg(unix)]
     fn run_cp(args: &[&std::ffi::OsStr]) -> std::io::Result<()> {
         let output = std::process::Command::new(CP).args(args).output()?;
         if output.status.success() {
@@ -169,8 +187,17 @@ impl<G: SeedGit> StdSeedOps<G> {
         )))
     }
 
+    #[cfg(not(unix))]
+    fn allocated(_path: &Path) -> Option<u64> {
+        // Allocated blocks are not exposed by `std` here, and a length is not
+        // an allocation (sparse, compressed and cloned files differ). Unknown
+        // is the honest answer; a length would be a different quantity.
+        None
+    }
+
     /// Allocated size of a tree, the way `du` counts it: blocks, not lengths,
     /// and never following a link out of the tree.
+    #[cfg(unix)]
     fn allocated(path: &Path) -> Option<u64> {
         use std::os::unix::fs::MetadataExt as _;
         let meta = std::fs::symlink_metadata(path).ok()?;
@@ -280,7 +307,20 @@ impl<G: SeedGit> SeedOps for StdSeedOps<G> {
     }
 
     fn link(&self, target: &Path, at: &Path) -> std::io::Result<()> {
-        std::os::unix::fs::symlink(target, at)
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, at)
+        }
+        #[cfg(not(unix))]
+        {
+            // Creating a link on Windows needs a privilege or developer mode
+            // and a file-or-directory choice; seeding does not guess either.
+            let _ = (target, at);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "seeding a symbolic link is not supported on this platform",
+            ))
+        }
     }
 
     fn unlink(&self, path: &Path) -> std::io::Result<()> {

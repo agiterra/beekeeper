@@ -38,11 +38,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# Unix-only, and the crate says so at its entry point rather than failing to
-# compile: the control socket is an `AF_UNIX` socket and the login
-# registrations are launchd and systemd. A Windows host needs named pipes and a
-# different service manager, which is separate work — the same shape
-# `beekeeper-shell-host` already has.
+# Unix signal and peer-credential support.
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["fs", "signal", "process", "socket", "user"] }
 
@@ -54,3 +50,9 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 [[example]]
 name = "mint-test-identity"
 path = "examples/mint-test-identity.rs"
+
+[target.'cfg(windows)'.dependencies]
+interprocess = { version = "=2.4.4", features = ["tokio"] }
+widestring = "1"
+sha2 = "0.10"
+win-custody = "=0.1.1"

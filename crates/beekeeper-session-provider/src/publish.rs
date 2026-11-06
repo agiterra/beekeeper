@@ -38,6 +38,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::atomic_write;
 
+#[path = "publish_recovery.rs"]
+mod recovery;
+
 const OUTBOX_FILE: &str = "outbox.jsonl";
 /// Rewrite the ledger once it exceeds this size and nothing is pending.
 const COMPACT_THRESHOLD_BYTES: u64 = 256 * 1024;
@@ -207,6 +210,7 @@ impl EventSink for beekeeper_acp::relay::RelayEventPublisher {
 #[derive(Debug)]
 pub struct Outbox {
     path: PathBuf,
+    append_failed: std::sync::atomic::AtomicBool,
     signer: String,
     pending: Vec<Pending>,
     accepted: HashMap<(u32, String), OutboxEntry>,
@@ -251,32 +255,25 @@ impl Outbox {
         let mut parked = 0usize;
         let mut accepted = HashMap::new();
 
-        let body = match std::fs::read_to_string(&path) {
-            Ok(body) => body,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(error),
-        };
+        let ledger = recovery::recover::<LedgerRow>(&path)?;
         let mut rows: Vec<OutboxEntry> = Vec::new();
-        for line in body.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            match serde_json::from_str::<LedgerRow>(line) {
-                Ok(LedgerRow::Enqueue { entry }) => rows.push(*entry),
-                Ok(LedgerRow::Replace { entry, supersedes }) => {
+        for row in ledger {
+            match row {
+                LedgerRow::Enqueue { entry } => rows.push(*entry),
+                LedgerRow::Replace { entry, supersedes } => {
                     acked.extend(supersedes);
                     rows.push(*entry);
                 }
-                Ok(LedgerRow::Accepted { entry }) => {
+                LedgerRow::Accepted { entry } => {
                     acked.insert(entry.id.clone());
                     if entry.signer == signer || delegate(&entry.event) {
                         accepted.insert((entry.kind, entry.semantic_key.clone()), *entry);
                     }
                 }
-                Ok(LedgerRow::Ack { id }) => {
+                LedgerRow::Ack { id } => {
                     acked.insert(id);
                 }
-                Ok(LedgerRow::Park { id, .. }) => {
+                LedgerRow::Park { id, .. } => {
                     // A parked row is finished exactly as an acked row is; it
                     // is counted separately only so status can disclose it.
                     if let Some(entry) = rows
@@ -288,9 +285,6 @@ impl Outbox {
                     }
                     acked.insert(id);
                     parked = parked.saturating_add(1);
-                }
-                Err(error) => {
-                    tracing::warn!(target: "csp::outbox", "dropping unreadable outbox line: {error}");
                 }
             }
         }
@@ -362,6 +356,7 @@ impl Outbox {
 
         let mut outbox = Self {
             path,
+            append_failed: std::sync::atomic::AtomicBool::new(false),
             signer: signer.to_owned(),
             parked_events,
             pending,
@@ -882,21 +877,37 @@ impl Outbox {
     }
 
     fn append(&self, row: &LedgerRow) -> io::Result<()> {
+        use std::sync::atomic::Ordering;
+        if self.append_failed.load(Ordering::Acquire) {
+            return Err(io::Error::other(
+                "outbox append previously failed; reopen to recover before writing again",
+            ));
+        }
+        let mut line = serde_json::to_vec(row)?;
+        line.push(b'\n');
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)?;
-        // One `write` call for the whole line (payload + newline) on an
-        // O_APPEND handle: an interleaving writer can order lines, but it can
-        // never tear one in half.
-        let mut line = serde_json::to_string(row)?;
-        line.push('\n');
-        file.write_all(line.as_bytes())?;
-        file.sync_all()
+        // A partial write or failed sync is ambiguous. Refuse all further
+        // appends on this instance until replay reconciles the durable bytes.
+        self.append_failed.store(true, Ordering::Release);
+        file.write_all(&line)?;
+        file.sync_all()?;
+        self.append_failed.store(false, Ordering::Release);
+        Ok(())
     }
 
     /// Truncate a fully drained ledger once it has grown large.
     fn compact_if_idle(&self) -> io::Result<()> {
+        if self
+            .append_failed
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(io::Error::other(
+                "outbox append previously failed; reopen before compaction",
+            ));
+        }
         if !self.pending.is_empty() {
             return Ok(());
         }
@@ -937,6 +948,64 @@ mod tests {
     use nostr::{EventBuilder, Keys, Kind};
 
     use super::*;
+
+    #[tokio::test]
+    async fn torn_tail_preserves_accepted_rows_and_later_enqueues_across_reopens() {
+        let dir = tempfile::tempdir().expect("dir");
+        let keys = Keys::generate();
+        let signer = keys.public_key().to_hex();
+        let mut outbox = Outbox::open(dir.path(), &signer).expect("open");
+        outbox
+            .enqueue(
+                44224,
+                "accepted",
+                Priority::Normal,
+                EventBuilder::new(Kind::Custom(44224), "accepted")
+                    .sign_with_keys(&keys)
+                    .expect("sign receipt"),
+            )
+            .expect("enqueue");
+        outbox
+            .flush(&RecordingSink::default())
+            .await
+            .expect("flush");
+        let path = dir.path().join(OUTBOX_FILE);
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open tail");
+        file.write_all(b"{\"type\":\"enqueue\",\"content\":\"\xe2\x98")
+            .expect("torn utf8");
+        file.sync_all().expect("sync fixture");
+        drop(file);
+        drop(outbox);
+        let mut reopened = Outbox::open(dir.path(), &signer).expect("recover");
+        assert!(reopened.accepted.contains_key(&(44224, "accepted".into())));
+        reopened
+            .enqueue(44225, "later", Priority::Normal, signed(&keys, "later"))
+            .expect("append after repair");
+        drop(reopened);
+        let reopened = Outbox::open(dir.path(), &signer).expect("reopen appended row");
+        assert!(reopened.accepted.contains_key(&(44224, "accepted".into())));
+        assert_eq!(reopened.pending_content(44225, "later"), Some("later"));
+        assert_eq!(reopened.pending_len(), 1);
+    }
+
+    #[test]
+    fn failed_append_blocks_next_append_and_compaction_until_reopen() {
+        let dir = tempfile::tempdir().expect("dir");
+        let outbox = Outbox::open(dir.path(), "signer").expect("open");
+        // Represents an I/O failure after some bytes reached the file. This
+        // flag is set before the production write and only cleared after sync.
+        outbox
+            .append_failed
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(outbox
+            .append(&LedgerRow::Ack { id: "later".into() })
+            .is_err());
+        assert!(outbox.compact_if_idle().is_err());
+        assert!(!outbox.path.exists());
+    }
 
     #[derive(Default)]
     struct RecordingSink {

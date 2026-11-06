@@ -160,3 +160,34 @@ mod tests {
         assert!(!dir.path().join("provider.lock").exists());
     }
 }
+
+/// Hold exclusive Windows supervisor custody for the foreground Host lifetime.
+#[cfg(windows)]
+pub fn lock_directory(state_dir: &Path) -> Result<std::fs::File, String> {
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(state_dir.join("host-supervisor.lock"))
+        .map_err(|e| e.to_string())?;
+    file.try_lock().map_err(|e| {
+        format!("another Host owns the provider directory, or custody cannot be established: {e}")
+    })?;
+    Ok(file)
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    #[test]
+    fn only_one_host_can_own_a_directory_even_with_different_pipes() {
+        let dir = tempfile::tempdir().expect("home");
+        let first = super::lock_directory(dir.path()).expect("first claim");
+        assert!(super::lock_directory(dir.path()).is_err());
+        drop(first);
+        assert!(
+            super::lock_directory(dir.path()).is_ok(),
+            "crashed or exited owners release custody"
+        );
+    }
+}

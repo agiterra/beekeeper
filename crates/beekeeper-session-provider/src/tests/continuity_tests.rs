@@ -251,6 +251,8 @@ fn split_refusal(bind_failed: bool) -> Refusal {
     refusal
 }
 
+// Every caller is `cfg(unix)`: it runs a bash agent and `split_refusal`.
+#[cfg(unix)]
 async fn adapter_case(mode: u8) {
     let fails = mode == 1;
     let refused = mode == 2 || mode == 3;

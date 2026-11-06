@@ -759,6 +759,11 @@ pub struct AcpClient {
     logging: LoggingMode,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
+    /// The child's process creation time (a Windows `FILETIME`), read while
+    /// this client still held the child's handle at spawn. `None` off Windows
+    /// and whenever the read failed or gave zero: absence of the field means
+    /// "no identity", never a guessed one.
+    child_creation_filetime: Option<u64>,
     /// Write end of the agent's stdin pipe, shared with the router's
     /// answerer so a between-turn request can be answered while nobody holds
     /// the client.
@@ -1521,6 +1526,17 @@ impl AcpClient {
         self.child.id()
     }
 
+    /// The child's process creation time as a Windows `FILETIME` value, read at
+    /// spawn while this client held the child's handle. Together with
+    /// [`child_pid`](Self::child_pid) it names one process for its whole life
+    /// (a PID alone does not: Windows reuses them), which is what a recovering
+    /// provider needs to tell "that process is gone" from "the PID is someone
+    /// else's now". `None` off Windows, and when the read failed or gave zero.
+    #[must_use]
+    pub fn child_creation_filetime(&self) -> Option<u64> {
+        self.child_creation_filetime
+    }
+
     pub async fn shutdown(&mut self) {
         // Kill the entire process group when possible. The child was spawned
         // with process_group(0), so its PID == its PGID. Killing the group
@@ -1784,6 +1800,7 @@ impl AcpClient {
                 _ => None,
             };
         let mut child = cmd.spawn()?;
+        let child_creation_filetime = creation_filetime_of(&child);
 
         let stdin = child
             .stdin
@@ -1812,6 +1829,7 @@ impl AcpClient {
         Ok(Self {
             logging,
             child,
+            child_creation_filetime,
             stdin,
             inbox,
             router,
@@ -4324,6 +4342,27 @@ fn kill_process_group(pid: u32) -> bool {
 
     // pid == pgid because the child was spawned with process_group(0).
     killpg(Pid::from_raw(pid as i32), Signal::SIGKILL).is_ok()
+}
+
+/// The spawned child's creation time, or `None` when it cannot be read.
+///
+/// `child` still holds the process handle, so the PID cannot be recycled
+/// between `spawn()` and this call: opening by that PID reaches the very
+/// process object the handle names. Zero is not an identity.
+#[cfg(windows)]
+fn creation_filetime_of(child: &Child) -> Option<u64> {
+    let pid = child.id()?;
+    win_custody::Process::open(pid, win_custody::ProcessAccess::QueryLimited)
+        .ok()?
+        .creation_time()
+        .ok()
+        .filter(|filetime| *filetime != 0)
+}
+
+/// Off Windows there is no creation-time identity; groups are the witness.
+#[cfg(not(windows))]
+fn creation_filetime_of(_child: &Child) -> Option<u64> {
+    None
 }
 
 /// Fallback for non-Unix: process-group kill not available.
@@ -9534,3 +9573,54 @@ sleep 5
 #[cfg(test)]
 #[path = "acp_private_logging_tests.rs"]
 mod private_logging_tests;
+
+#[cfg(all(test, windows))]
+mod windows_identity_tests {
+    use super::*;
+
+    /// The creation time read at spawn is the spawned child's, not a guess: it
+    /// equals what a fresh query of that PID returns, is not zero, and the
+    /// child is a different process (a different time) from this one.
+    #[tokio::test]
+    async fn the_spawned_child_carries_its_creation_time() {
+        let system = std::env::var_os("SystemRoot").expect("Windows system root");
+        let cmd = std::path::Path::new(&system)
+            .join("System32")
+            .join("cmd.exe");
+        let client = AcpClient::spawn(
+            cmd.to_str().expect("utf8 path"),
+            &[
+                "/d".into(),
+                "/c".into(),
+                "ping".into(),
+                "-n".into(),
+                "30".into(),
+                "127.0.0.1".into(),
+            ],
+            &[],
+            false,
+        )
+        .await
+        .expect("spawn cmd.exe");
+        let pid = client.child_pid().expect("a running child has a pid");
+        let at_spawn = client
+            .child_creation_filetime()
+            .expect("the creation time was read at spawn");
+        assert_ne!(at_spawn, 0);
+
+        let now = win_custody::Process::open(pid, win_custody::ProcessAccess::QueryLimited)
+            .expect("open the child")
+            .creation_time()
+            .expect("query the child");
+        assert_eq!(at_spawn, now, "the recorded identity is the live child's");
+
+        let own = win_custody::Process::open(
+            std::process::id(),
+            win_custody::ProcessAccess::QueryLimited,
+        )
+        .expect("open self")
+        .creation_time()
+        .expect("query self");
+        assert_ne!(at_spawn, own, "a child is not this process");
+    }
+}

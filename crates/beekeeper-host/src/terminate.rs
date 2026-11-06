@@ -71,35 +71,37 @@ pub fn pid_is_running(pid: u32) -> bool {
     }
 }
 
-/// Windows has no way to deliver SIGINT to a console-less child, so the tree
-/// is terminated directly on the first escalation step. The provider's outbox
-/// is crash-safe (append-only JSONL), so this costs an orderly flush rather
-/// than events.
-#[cfg(not(unix))]
-pub fn signal_leader(pid: u32, _escalation: Escalation) {
-    taskkill_tree(pid);
+/// Query only; an unreadable process is conservatively considered alive.
+#[cfg(windows)]
+pub fn pid_is_running(pid: u32) -> bool {
+    match win_custody::Process::open(pid, win_custody::ProcessAccess::QueryLimited) {
+        Ok(process) => !matches!(process.exit_code(), Ok(Some(_))),
+        Err(error) => error.raw_os_error() != Some(87), // ERROR_INVALID_PARAMETER: absent PID
+    }
 }
 
-#[cfg(not(unix))]
-pub fn signal_group(pid: u32, _escalation: Escalation) {
-    taskkill_tree(pid);
-}
-
-#[cfg(not(unix))]
-pub fn pid_is_running(_pid: u32) -> bool {
-    false
-}
-
-#[cfg(not(unix))]
-fn taskkill_tree(pid: u32) {
-    let _ = std::process::Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+/// Windows stop is forced and handle-owned, not a graceful provider drain.
+#[cfg(windows)]
+pub async fn terminate_gracefully_async(child: &mut crate::spawn::ProviderChild) {
+    tracing::info!(
+        "Windows provider stop terminates the owned job; no graceful outbox drain is claimed"
+    );
+    if let Err(error) = child.kill_tree() {
+        tracing::error!("failed to terminate provider job: {error}");
+    }
+    // Do not report stopped until the held process handle signals exit.
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Err(error) => tracing::error!("failed to observe provider exit: {error}"),
+            Ok(None) => {}
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// SIGINT, then escalate — without blocking the async executor.
+#[cfg(unix)]
 pub async fn terminate_gracefully_async(child: &mut std::process::Child) {
     let pid = child.id();
     signal_leader(pid, Escalation::Interrupt);
@@ -114,6 +116,7 @@ pub async fn terminate_gracefully_async(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+#[cfg(unix)]
 async fn await_child_exit(child: &mut std::process::Child, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -129,6 +132,7 @@ async fn await_child_exit(child: &mut std::process::Child, timeout: Duration) ->
 
 /// Blocking variant for a pid this process does not own as a child — the
 /// stale-provider takeover, and the host's own shutdown path.
+#[cfg(unix)]
 pub fn terminate_gracefully_blocking(pid: u32) {
     signal_leader(pid, Escalation::Interrupt);
     if await_pid_exit(pid, GRACEFUL_SHUTDOWN_TIMEOUT) {
@@ -141,6 +145,7 @@ pub fn terminate_gracefully_blocking(pid: u32) {
     signal_group(pid, Escalation::Kill);
 }
 
+#[cfg(unix)]
 fn await_pid_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {

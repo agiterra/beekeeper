@@ -172,14 +172,24 @@ impl HostConfig {
 mod tests {
     use super::*;
 
+    /// An absolute base directory on the platform running the test: a leading
+    /// slash alone is not absolute on Windows, which needs a drive.
+    fn data_root() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\data\session-provider")
+        } else {
+            PathBuf::from("/data/session-provider")
+        }
+    }
+
     fn valid() -> HostConfig {
         HostConfig {
             version: HOST_CONFIG_VERSION,
             instance: Instance::Production,
             relay_url: "wss://hive.example.org".to_string(),
             provider_pubkey: "c".repeat(64),
-            session_provider_base_dir: PathBuf::from("/data/session-provider"),
-            provider_state_dir: PathBuf::from("/data/session-provider/cccc"),
+            session_provider_base_dir: data_root(),
+            provider_state_dir: data_root().join("cccc"),
             runtimes: Vec::new(),
             max_sessions: None,
             turn_idle_timeout_secs: None,
@@ -320,8 +330,8 @@ mod tests {
             "instance": "production",
             "relayUrl": "wss://hive.example.org",
             "providerPubkey": "c".repeat(64),
-            "sessionProviderBaseDir": "/data/session-provider",
-            "providerStateDir": "/data/session-provider/cccc",
+            "sessionProviderBaseDir": data_root(),
+            "providerStateDir": data_root().join("cccc"),
             "runtimes": [{
                 "instanceRef": "claude-primary",
                 "driver": "claude-agent-acp",
@@ -342,7 +352,7 @@ mod tests {
     fn the_record_store_sits_beside_the_state_directories() {
         assert_eq!(
             valid().record_store_path(),
-            PathBuf::from("/data/session-provider/coding-session-provider.json")
+            data_root().join("coding-session-provider.json")
         );
     }
 }

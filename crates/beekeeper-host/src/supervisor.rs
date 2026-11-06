@@ -316,7 +316,7 @@ impl Supervisor {
     /// `None` means the caller should stop: either a stop was requested (and
     /// the child has been signalled and reaped here), or the child could not
     /// be polled at all.
-    async fn wait_for_exit(&self, child: &mut std::process::Child) -> Option<ChildExit> {
+    async fn wait_for_exit(&self, child: &mut crate::spawn::ProviderChild) -> Option<ChildExit> {
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {

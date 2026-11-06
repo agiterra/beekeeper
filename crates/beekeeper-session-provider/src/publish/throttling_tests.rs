@@ -143,8 +143,10 @@ async fn accepted_status_survives_restart_compaction_but_discard_does_not_claim_
         .expect("queue");
     outbox.discard(|_| true).expect("discard");
     // Force actual compaction, then load the compacted accepted fact.
+    // `write`, not `append`: growing the file needs FILE_WRITE_DATA, which an
+    // append-only handle does not have on Windows.
     let file = OpenOptions::new()
-        .append(true)
+        .write(true)
         .open(&outbox.path)
         .expect("ledger");
     file.set_len(COMPACT_THRESHOLD_BYTES + 1).expect("grow");

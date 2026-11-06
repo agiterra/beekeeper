@@ -139,6 +139,12 @@ fn instance(dev: bool) -> Result<Instance, CliError> {
 }
 
 pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
+    if cfg!(windows) && matches!(command, HostCmd::Install { .. } | HostCmd::Uninstall { .. }) {
+        return Err(CliError::Other(
+            "Windows startup registration is unsupported; use beekeeper-host run in a terminal"
+                .into(),
+        ));
+    }
     let dev = dev
         || matches!(
             command,

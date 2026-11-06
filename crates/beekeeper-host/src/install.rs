@@ -53,6 +53,10 @@ use std::path::{Path, PathBuf};
 use beekeeper_host_core::layout::{self, Instance, HOME_VAR, INSTANCE_VAR};
 use beekeeper_host_core::logs::now_iso;
 
+#[cfg(unix)]
+pub mod launchd_daemon;
+#[cfg(windows)]
+#[path = "install/windows_daemon.rs"]
 pub mod launchd_daemon;
 
 /// Which background service a registration is for.
@@ -415,6 +419,17 @@ pub fn allow_login(home: &Path, instance: Instance) -> Result<(), String> {
 /// that reported one for the other would tell a person to start something they
 /// have not installed.
 pub fn status(service: Service, home: &Path, instance: Instance) -> Registration {
+    if cfg!(windows) {
+        return Registration {
+            installed: false,
+            path: registration_path(service, home, instance),
+            program: None,
+            warnings: vec![
+                "Windows startup registration is unsupported; run the Host in a terminal".into(),
+            ],
+            domain: Domain::User,
+        };
+    }
     let user = daemon_lookup_user(service, home);
     let lookup = user.as_deref().map(|user| DaemonLookup {
         dir: Path::new(launchd_daemon::DAEMON_DIR),
@@ -516,6 +531,12 @@ pub fn install(
     instance: Instance,
     program: &Path,
 ) -> Result<Registration, String> {
+    if cfg!(windows) {
+        return Err(
+            "Windows startup registration is unsupported; use beekeeper-host run in a terminal"
+                .into(),
+        );
+    }
     let user = daemon_lookup_user(service, home);
     let lookup = user.as_deref().map(|user| DaemonLookup {
         dir: Path::new(launchd_daemon::DAEMON_DIR),
@@ -627,6 +648,9 @@ fn install_at(
 /// then reports the daemon as an error rather than succeeding over a host that
 /// will still be running at the next boot.
 pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<(), String> {
+    if cfg!(windows) {
+        return Err("Windows startup registration is unsupported".into());
+    }
     let user = daemon_lookup_user(service, home);
     let lookup = user.as_deref().map(|user| DaemonLookup {
         dir: Path::new(launchd_daemon::DAEMON_DIR),
@@ -937,7 +961,7 @@ fn run_capture(program: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

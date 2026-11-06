@@ -569,6 +569,29 @@ fn known_runtime_for_driver(slug: &str) -> Option<&'static str> {
     }
 }
 
+/// The adapter's file name as a driver-slug candidate.
+///
+/// On Windows an executable's extension is not part of its name: `acme-acp.exe`
+/// is the `acme-acp` driver. Without this no Windows executable could ever be
+/// a plugged driver, because the dot fails the slug check. Elsewhere the file
+/// name is used as written, so a Unix file called `x.exe` is still refused.
+fn driver_file_name(adapter: &Path) -> Option<&str> {
+    let name = adapter.file_name()?.to_str()?;
+    if cfg!(windows) {
+        for extension in [".exe", ".cmd", ".bat", ".com"] {
+            let stem_len = name.len().checked_sub(extension.len());
+            if let Some((stem, tail)) =
+                stem_len.and_then(|at| Some((name.get(..at)?, name.get(at..)?)))
+            {
+                if !stem.is_empty() && tail.eq_ignore_ascii_case(extension) {
+                    return Some(stem);
+                }
+            }
+        }
+    }
+    Some(name)
+}
+
 /// A runtime word or driver slug: lowercase ASCII letters, digits, `-` and
 /// `_`, starting with a letter or digit, at most 32 bytes. It is minted into
 /// instance refs (`<word>-primary`) and session targets, so it has to be a
@@ -605,9 +628,7 @@ fn runtime_descriptor(
                     args.runtime
                 )));
             }
-            let slug = adapter
-                .file_name()
-                .and_then(|name| name.to_str())
+            let slug = driver_file_name(adapter)
                 .filter(|name| is_slug(name))
                 .ok_or_else(|| {
                     CliError::Usage(format!(
@@ -748,6 +769,33 @@ fn executable(path: &std::path::Path) -> Result<PathBuf, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_executable_extension_is_not_part_of_the_driver_slug() {
+        for (path, slug) in [
+            (r"C:\x\acme-acp.exe", "acme-acp"),
+            (r"C:\x\acme-acp.CMD", "acme-acp"),
+            (r"C:\x\acme-acp.bat", "acme-acp"),
+            (r"C:\x\acme-acp", "acme-acp"),
+            (r"C:\x\.exe", ".exe"),
+            (r"C:\x\acme.txt", "acme.txt"),
+        ] {
+            assert_eq!(driver_file_name(Path::new(path)), Some(slug), "{path}");
+        }
+        assert!(driver_file_name(Path::new(r"C:\x\acme.txt"))
+            .filter(|name| is_slug(name))
+            .is_none());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_unix_file_name_is_used_as_written() {
+        assert_eq!(
+            driver_file_name(Path::new("/x/acme-acp.exe")),
+            Some("acme-acp.exe")
+        );
+    }
     use nostr::ToBech32;
 
     fn args(runtime: &str) -> CommissionArgs {

@@ -5,6 +5,10 @@
 //! permissions are set on the temporary file *before* the bytes go in, and the
 //! rename is what publishes it.
 
+#[cfg(windows)]
+#[path = "windows_custody.rs"]
+mod windows_custody;
+
 use std::io::Write;
 use std::path::Path;
 
@@ -21,7 +25,15 @@ pub fn atomic_write_json_restricted(path: &Path, payload: &[u8]) -> Result<(), S
 pub fn atomic_write_with_mode(path: &Path, payload: &[u8], mode: u32) -> Result<(), String> {
     use atomic_write_file::AtomicWriteFile;
 
+    #[cfg(windows)]
+    windows_custody::ensure(path.parent().ok_or("private file has no parent")?)
+        .map_err(|error| format!("private file custody: {error}"))?;
+    #[cfg(not(windows))]
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Replace the leaf in the pinned private parent; never resolve a Windows
+    // leaf symlink into another tree before opening the atomic sibling temp.
+    #[cfg(windows)]
+    let resolved = path.to_path_buf();
     let mut file = AtomicWriteFile::open(&resolved)
         .map_err(|error| format!("open {} for atomic write: {error}", resolved.display()))?;
 
@@ -45,17 +57,27 @@ pub fn atomic_write_with_mode(path: &Path, payload: &[u8], mode: u32) -> Result<
 ///
 /// `create_dir_all` alone leaves the directory at the process umask, which on
 /// a default macOS or Linux account is world-readable. A directory holding a
-/// key file and a socket must not be.
+/// key file and a socket must not be. On Windows, validates and pins an
+/// existing protected current-user-only anchor, then creates descendants by
+/// inheritance. Existing ACLs are never rewritten; reparse paths are refused.
 pub fn create_dir_all_restricted(dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir)
-        .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| format!("failed to restrict {}: {error}", dir.display()))?;
+        return windows_custody::ensure(dir)
+            .map_err(|error| format!("private directory custody {}: {error}", dir.display()));
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        std::fs::create_dir_all(dir)
+            .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| format!("failed to restrict {}: {error}", dir.display()))?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -65,6 +87,8 @@ mod tests {
     #[test]
     fn a_written_file_is_owner_only_and_a_directory_is_too() {
         let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(windows)]
+        windows_custody::tests::provision_empty_fixture_root(dir.path());
         let nested = dir.path().join("host");
         create_dir_all_restricted(&nested).expect("mkdir");
         let path = nested.join("provider-key");

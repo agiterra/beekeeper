@@ -15,13 +15,23 @@ pub struct ExecutionProcessWitness {
     pub attempted_target: Option<CodingSessionTarget>,
     /// Actual ACP child group captured at spawn. None fences an interrupted reopen.
     pub group_id: Option<u32>,
+    /// Windows only: the ACP child's process creation time (a `FILETIME`),
+    /// read from the spawned child at spawn. With `group_id` (the PID) it names
+    /// one process for its whole life, so a recovering provider can tell the
+    /// recorded child gone from a PID that something else now holds. Absent on
+    /// Unix and in any witness written before this field existed; a Windows
+    /// witness without it is never proved absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_filetime: Option<u64>,
     /// Permanent exact-generation proof after a verified join or matching group absence.
     #[serde(default)]
     pub quiesced: bool,
 }
 impl ExecutionProcessWitness {
     /// Only an absent matching group proves quiescence without a live registry.
-    /// Presence, permission errors, PID reuse and unsupported platforms stay unproved.
+    /// Presence, permission errors and unsupported platforms stay unproved.
+    /// On Windows, a reused PID with a different creation time proves that the
+    /// exact recorded process generation is absent.
     pub(crate) fn proves_absent(&self, target: &CodingSessionTarget) -> bool {
         if self.target != *target {
             return false;
@@ -51,7 +61,14 @@ impl ExecutionProcessWitness {
                 Err(nix::errno::Errno::ESRCH)
             )
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            // PID plus creation time, never the PID alone (`process_identity`).
+            u32::try_from(group).is_ok_and(|pid| {
+                crate::process_identity::recorded_child_absent(pid, self.creation_filetime)
+            })
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = group;
             false
@@ -79,6 +96,7 @@ impl crate::Provider {
                 target: target.clone(),
                 attempted_target: None,
                 group_id: None,
+                creation_filetime: None,
                 quiesced: false,
             })
         })?;
@@ -100,11 +118,16 @@ impl crate::Provider {
             .process_witness
             .as_ref()
             .and_then(|witness| witness.group_id);
+        let creation_filetime = record
+            .process_witness
+            .as_ref()
+            .and_then(|witness| witness.creation_filetime);
         self.state.update_session(&target.session_id, |record| {
             record.process_witness = Some(ExecutionProcessWitness {
                 target: target.clone(),
                 attempted_target,
                 group_id,
+                creation_filetime,
                 quiesced: true,
             })
         })?;
@@ -142,6 +165,7 @@ impl crate::Provider {
             attempted_target: (observed.target.generation != prior.generation)
                 .then(|| observed.target.clone()),
             group_id: observed.group_id,
+            creation_filetime: observed.creation_filetime,
             quiesced: observed.quiesced,
         };
         self.state.update_session(&prior.session_id, |record| {
@@ -230,6 +254,9 @@ impl crate::Provider {
         })
     }
 }
+#[cfg(test)]
+#[path = "process_witness_identity_tests.rs"]
+mod identity_tests;
 #[cfg(all(test, unix))]
 #[path = "process_witness_tests.rs"]
 mod tests;

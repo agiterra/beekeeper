@@ -49,6 +49,8 @@ pub mod full_access;
 mod lifecycle_outcome;
 mod managed_configuration;
 mod managed_enrollment;
+#[cfg(any(windows, test))]
+mod process_identity;
 mod process_witness;
 mod project_deletion;
 mod provider_identity;

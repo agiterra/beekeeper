@@ -561,6 +561,10 @@ impl Provider {
                     .sessions
                     .handle(&target.session_id)
                     .and_then(session::SessionHandle::child_group),
+                creation_filetime: self
+                    .sessions
+                    .handle(&target.session_id)
+                    .and_then(session::SessionHandle::child_creation_filetime),
             }),
             authority_withdrawn: None,
             project_head_seen_at: plan

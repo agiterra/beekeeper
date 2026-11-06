@@ -494,6 +494,7 @@ impl Provider {
                     target: target.clone(),
                     attempted_target: None,
                     group_id: None,
+                    creation_filetime: None,
                     quiesced: true,
                 };
                 self.record_failed_startup(&record, &witness)?;
@@ -616,11 +617,16 @@ impl Provider {
             .sessions
             .handle(&target.session_id)
             .and_then(session::SessionHandle::child_group);
+        let creation_filetime = self
+            .sessions
+            .handle(&target.session_id)
+            .and_then(session::SessionHandle::child_creation_filetime);
         if let Err(error) = self.state.update_session(&record.session_id, |stored| {
             stored.process_witness = Some(crate::process_witness::ExecutionProcessWitness {
                 target: target.clone(),
                 attempted_target: None,
                 group_id,
+                creation_filetime,
                 quiesced: false,
             });
             if stored.resume_cursor.as_deref() != Some(startup.acp_session_id.as_str()) {

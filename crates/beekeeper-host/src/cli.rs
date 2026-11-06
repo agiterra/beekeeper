@@ -194,6 +194,12 @@ fn init_tracing() {
 }
 
 fn run(instance: Instance, command: Command) -> Result<(), String> {
+    if cfg!(windows) && matches!(command, Command::Install { .. } | Command::Uninstall { .. }) {
+        return Err(
+            "Windows startup registration is unsupported; use beekeeper-host run in a terminal"
+                .into(),
+        );
+    }
     // Before `$HOME` is read: under `sudo` it is not the persona's.
     match &command {
         Command::Install {
@@ -322,6 +328,12 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     }
     create_dir_all_restricted(&provider_state_dir)?;
 
+    // A second Windows Host using an alternate pipe must not supervise this
+    // directory. The lock lives until foreground run exits, including stopped
+    // provider periods; a crash releases it in the kernel.
+    #[cfg(windows)]
+    let _host_lock = crate::owner::lock_directory(&provider_state_dir)?;
+
     let control = Arc::new(HostControl::new(
         home,
         instance,
@@ -364,6 +376,7 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
         tracing::info!("{signal} received; stopping the provider");
         control.stop().await;
         serving.abort();
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&socket_path);
         Ok::<(), String>(())
     })?;

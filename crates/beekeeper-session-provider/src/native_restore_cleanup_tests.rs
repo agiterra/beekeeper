@@ -322,6 +322,7 @@ async fn failed_startup_proof_cannot_replace_changed_cursor_binding_or_newer_wit
         target: target.clone(),
         attempted_target: None,
         group_id: None,
+        creation_filetime: None,
         quiesced: true,
     };
     provider

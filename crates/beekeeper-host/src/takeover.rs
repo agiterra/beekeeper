@@ -19,11 +19,14 @@
 //! another `beekeeper-host` that said so in `host-owner.json`.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 use beekeeper_host_core::logs::{append_log_marker, now_iso};
 
 use crate::state::LockOwnerKind;
+#[cfg(unix)]
 use crate::terminate::{pid_is_running, terminate_gracefully_blocking};
 
 /// Lock file the provider holds inside its state directory (see
@@ -31,6 +34,7 @@ use crate::terminate::{pid_is_running, terminate_gracefully_blocking};
 /// are the owner's pid, written while holding the lock.
 pub const PROVIDER_LOCK_FILE: &str = "provider.lock";
 /// How long a stale owner's lock is given to clear after it was signalled.
+#[cfg(unix)]
 const TAKEOVER_LOCK_WAIT: Duration = Duration::from_secs(5);
 
 /// The owning pid recorded in a provider lock file, if the contents are one.
@@ -63,6 +67,7 @@ pub enum Takeover {
 /// when a takeover fails the child spawned next fails its own lock with a
 /// clear log line rather than corrupting shared state. The graceful SIGINT
 /// first lets a stale provider flush its durable outbox before it dies.
+#[cfg(unix)]
 pub fn take_over_stale_provider(state_dir: &Path, log_path: &Path) -> Takeover {
     // Another host that announced itself is refused by name, before anything
     // is signalled. This is the restart-war guard.
@@ -238,6 +243,7 @@ mod tests {
 
     /// A held lock whose recorded pid is gone must not be signalled: that pid
     /// may have been reused by something unrelated.
+    #[cfg(unix)]
     #[test]
     fn a_held_lock_with_a_dead_recorded_pid_is_refused_rather_than_signalled() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -263,5 +269,67 @@ mod tests {
             .expect("log")
             .contains("may have been reused"));
         let _ = holder.unlock();
+    }
+
+    /// Windows never signals a pid read off disk. A held lock is a refusal
+    /// that names no signalled process, and a free one is not. While another
+    /// handle holds the exclusive lock the recorded pid cannot be read back
+    /// (the lock is mandatory), so the pid is either absent or the recorded one;
+    /// it is never invented.
+    #[cfg(windows)]
+    #[test]
+    fn a_held_lock_is_refused_and_a_recorded_pid_is_never_signalled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("provider.log");
+        let lock_path = dir.path().join(PROVIDER_LOCK_FILE);
+        std::fs::write(&lock_path, format!("{}\n", u32::MAX - 1)).expect("lock file");
+        let holder = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("open");
+        holder.lock().expect("hold the lock");
+        match take_over_stale_provider(dir.path(), &log) {
+            Takeover::Refused { pid, kind } => {
+                assert_eq!(kind, LockOwnerKind::UnclaimedProvider);
+                assert!(pid.is_none() || pid == Some(u32::MAX - 1), "{pid:?}");
+            }
+            other => panic!("a held lock must be refused, got {other:?}"),
+        }
+        assert!(
+            !log.exists(),
+            "a refusal on Windows signals and logs nothing"
+        );
+        holder.unlock().expect("release");
+        assert_eq!(
+            take_over_stale_provider(dir.path(), &log),
+            Takeover::Free,
+            "a released lock is free"
+        );
+    }
+}
+
+/// Windows never terminates an owner named by an on-disk PID.
+#[cfg(windows)]
+pub fn take_over_stale_provider(state_dir: &Path, _log_path: &Path) -> Takeover {
+    let path = state_dir.join(PROVIDER_LOCK_FILE);
+    let file = match std::fs::File::options().read(true).write(true).open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Takeover::Free,
+        Err(_) => {
+            return Takeover::Refused {
+                pid: None,
+                kind: LockOwnerKind::Unknown,
+            }
+        }
+    };
+    if file.try_lock().is_ok() {
+        return Takeover::Free;
+    }
+    Takeover::Refused {
+        pid: std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| parse_lock_owner_pid(&s)),
+        kind: LockOwnerKind::UnclaimedProvider,
     }
 }

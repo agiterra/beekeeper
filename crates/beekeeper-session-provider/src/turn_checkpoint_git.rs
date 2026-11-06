@@ -106,7 +106,11 @@ mod diff;
 mod omit;
 #[path = "turn_checkpoint_git_pin.rs"]
 mod pin;
+#[cfg(unix)]
 #[path = "turn_checkpoint_restore.rs"]
+pub(crate) mod restore;
+#[cfg(windows)]
+#[path = "turn_checkpoint_restore_windows.rs"]
 pub(crate) mod restore;
 #[path = "turn_checkpoint_git_run.rs"]
 mod run;

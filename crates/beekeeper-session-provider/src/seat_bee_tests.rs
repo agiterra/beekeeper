@@ -25,6 +25,11 @@ impl FakeTree {
     }
 }
 
+/// `dir` plus the platform's file name for `bee` (`bee.exe` on Windows).
+fn bee_at(dir: &str) -> String {
+    format!("{dir}/{BEE_FILE_NAME}")
+}
+
 fn path_var(entries: &[&str]) -> OsString {
     std::env::join_paths(entries.iter().map(Path::new)).expect("a joinable PATH")
 }
@@ -36,8 +41,8 @@ fn path_var(entries: &[&str]) -> OsString {
 #[test]
 fn a_stale_target_debug_bee_first_on_path_does_not_win_and_is_not_confiscated() {
     let tree = FakeTree::with(&[
-        "/Applications/Beekeeper.app/Contents/MacOS/bee",
-        "/Users/brian/Projects/beekeeper/beekeeper/target/debug/bee",
+        &bee_at("/Applications/Beekeeper.app/Contents/MacOS"),
+        &bee_at("/Users/brian/Projects/beekeeper/beekeeper/target/debug"),
     ]);
     let inherited = path_var(&[
         "/Users/brian/Projects/beekeeper/beekeeper/target/debug",
@@ -53,7 +58,7 @@ fn a_stale_target_debug_bee_first_on_path_does_not_win_and_is_not_confiscated() 
 
     assert_eq!(
         chosen.path,
-        PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/bee"),
+        PathBuf::from(bee_at("/Applications/Beekeeper.app/Contents/MacOS")),
         "the bundled sidecar outranks a stale debug build that happens to be first"
     );
     assert_eq!(chosen.source, BeeStampSource::Bundled);
@@ -110,7 +115,7 @@ fn the_composed_path_holds_the_chosen_directory_exactly_once() {
 /// `bundled` and the surfaces render it differently.
 #[test]
 fn with_no_sidecar_the_first_bee_on_path_is_chosen_and_recorded_as_such() {
-    let tree = FakeTree::with(&["/opt/homebrew/bin/bee", "/usr/local/bin/bee"]);
+    let tree = FakeTree::with(&[&bee_at("/opt/homebrew/bin"), &bee_at("/usr/local/bin")]);
     let inherited = path_var(&["/usr/bin", "/opt/homebrew/bin", "/usr/local/bin"]);
     let chosen = resolve_seat_bee(
         Some(Path::new("/Applications/Beekeeper.app/Contents/MacOS")),
@@ -118,7 +123,7 @@ fn with_no_sidecar_the_first_bee_on_path_is_chosen_and_recorded_as_such() {
         &tree.probe(),
     )
     .expect("PATH holds one");
-    assert_eq!(chosen.path, PathBuf::from("/opt/homebrew/bin/bee"));
+    assert_eq!(chosen.path, PathBuf::from(bee_at("/opt/homebrew/bin")));
     assert_eq!(chosen.source, BeeStampSource::Path);
     assert_eq!(chosen.source.as_wire(), "path");
 }
@@ -164,8 +169,12 @@ fn the_seat_env_names_the_chosen_binary_and_replaces_an_ambient_value() {
         .find(|(key, _)| key == "PATH")
         .map(|(_, value)| value.as_str())
         .expect("a PATH is composed");
+    // `PATH` is joined with the platform's separator (`;` on Windows).
+    let separator = if cfg!(windows) { ';' } else { ':' };
     assert!(
-        path.starts_with("/Applications/Beekeeper.app/Contents/MacOS:"),
+        path.starts_with(&format!(
+            "/Applications/Beekeeper.app/Contents/MacOS{separator}"
+        )),
         "the chosen directory leads the seat's PATH: {path}"
     );
     assert_eq!(
@@ -242,4 +251,47 @@ fn a_binary_that_cannot_answer_records_unknown_and_never_fails_the_seat() {
 #[test]
 fn nothing_to_compose_sets_no_path_at_all() {
     assert!(compose_seat_path(None, None).is_none());
+}
+
+/// The lookup names the file the platform runs, and the sidecar beside the
+/// executable is found under that name.
+#[test]
+fn the_lookup_asks_for_the_platform_file_name() {
+    let tree = FakeTree::with(&[&bee_at("/opt/bundle")]);
+    let chosen = resolve_seat_bee(Some(Path::new("/opt/bundle")), None, &tree.probe())
+        .expect("the sidecar under the platform file name");
+    assert_eq!(
+        chosen.path.file_name().and_then(|name| name.to_str()),
+        Some(BEE_FILE_NAME)
+    );
+    assert_eq!(chosen.source, BeeStampSource::Bundled);
+    // The logical name `bee --version` prints is not the file name's business.
+    assert_eq!(BEE_BINARY, "bee");
+}
+
+/// Windows: the seat found no `bee` although `bee.exe` sat beside the provider,
+/// because the lookup joined the bare name. Real files, the real probe.
+#[cfg(windows)]
+#[test]
+fn a_bee_exe_beside_the_provider_is_found_and_a_bare_bee_is_not() {
+    let with_exe = tempfile::tempdir().expect("dir");
+    std::fs::write(with_exe.path().join("bee.exe"), b"MZ").expect("bee.exe");
+    let found = resolve_seat_bee(Some(with_exe.path()), None, &is_executable_file)
+        .expect("bee.exe beside the executable is the sidecar");
+    assert_eq!(found.path, with_exe.path().join("bee.exe"));
+    assert_eq!(found.source, BeeStampSource::Bundled);
+
+    let bare = tempfile::tempdir().expect("dir");
+    std::fs::write(bare.path().join("bee"), b"#!/bin/sh").expect("bare bee");
+    assert!(
+        resolve_seat_bee(Some(bare.path()), None, &is_executable_file).is_none(),
+        "a file named `bee` is not something Windows runs"
+    );
+
+    let on_path = tempfile::tempdir().expect("dir");
+    std::fs::write(on_path.path().join("bee.exe"), b"MZ").expect("bee.exe");
+    let inherited = std::env::join_paths([on_path.path()]).expect("PATH");
+    let found =
+        resolve_seat_bee(None, Some(&inherited), &is_executable_file).expect("bee.exe on PATH");
+    assert_eq!(found.source, BeeStampSource::Path);
 }

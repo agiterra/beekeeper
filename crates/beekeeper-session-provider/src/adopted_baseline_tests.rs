@@ -182,6 +182,7 @@ fn a_named_record_this_host_has_run_counts_again() {
                 target,
                 attempted_target: None,
                 group_id: None,
+                creation_filetime: None,
                 quiesced: false,
             })
         })

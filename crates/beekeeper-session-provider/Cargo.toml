@@ -70,6 +70,11 @@ nix = { version = "0.31", default-features = false, features = ["signal", "proce
 # implementation rather than two that can drift.
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# Process identity (PID + creation time) for the Windows execution witness; the
+# same version the Host pins for its child custody.
+win-custody = "=0.1.1"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 axum = { workspace = true }

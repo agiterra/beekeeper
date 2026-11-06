@@ -21,8 +21,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::transport;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 
 use crate::protocol::{Request, Response};
 
@@ -104,10 +104,21 @@ pub async fn call(
     request: &Request,
     read_timeout: Duration,
 ) -> Result<serde_json::Value, ClientError> {
-    let stream = match tokio::time::timeout(CONNECT_TIMEOUT, UnixStream::connect(socket)).await {
+    let stream = match tokio::time::timeout(CONNECT_TIMEOUT, transport::connect(socket)).await {
         Ok(Ok(stream)) => stream,
         // A refused or absent socket is "not running", which is a fact a
         // client renders — not an error it reports as a malfunction.
+        #[cfg(windows)]
+        Ok(Err(error))
+            if !matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            return Err(ClientError::Transport {
+                message: format!("connect: {error}"),
+            });
+        }
         Ok(Err(_)) => {
             return Err(ClientError::NotRunning {
                 socket: socket.to_path_buf(),
@@ -120,7 +131,7 @@ pub async fn call(
         }
     };
 
-    let (read_half, mut write_half) = stream.into_split();
+    let (read_half, mut write_half) = tokio::io::split(stream);
     let mut line = serde_json::to_string(request).map_err(|error| ClientError::Transport {
         message: format!("encode: {error}"),
     })?;
@@ -231,7 +242,7 @@ fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T,
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -307,7 +318,7 @@ mod tests {
         let listener = tokio::net::UnixListener::bind(&socket).expect("bind");
         let serving = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept");
-            let (read_half, mut write_half) = stream.into_split();
+            let (read_half, mut write_half) = tokio::io::split(stream);
             let mut reader = BufReader::new(read_half);
             let mut line = String::new();
             let _ = reader.read_line(&mut line).await;
@@ -352,7 +363,7 @@ mod tests {
             let (silent, _) = listener.accept().await.expect("accept");
             // Second connection: answer.
             let (stream, _) = listener.accept().await.expect("accept");
-            let (read_half, mut write_half) = stream.into_split();
+            let (read_half, mut write_half) = tokio::io::split(stream);
             let mut reader = BufReader::new(read_half);
             let mut line = String::new();
             let _ = reader.read_line(&mut line).await;
